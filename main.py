@@ -85,6 +85,12 @@ def check_signal(symbol, ema9, ema21):
 
     state = "BUY" if ema9 > ema21 else "SELL"
 
+    ema_distance = abs(ema9 - ema21)
+
+# Ignorar cruzamentos muito fracos
+if ema_distance < 0.02:
+    return
+    
     previous = last_states[symbol]
 
     now_time = time.time()
@@ -98,7 +104,7 @@ def check_signal(symbol, ema9, ema21):
 
     if state != previous:
 
-        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        now = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
 
         emoji = "🟢" if state == "BUY" else "🔴"
 
