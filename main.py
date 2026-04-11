@@ -4,11 +4,20 @@ import requests
 from datetime import datetime, timedelta
 from collections import deque
 
-# CONFIG
-SYMBOL = "ethereum"
+# ===== CONFIG =====
+
+SYMBOLS = {
+    "bitcoin": "BTC",
+    "ethereum": "ETH",
+    "solana": "SOL",
+    "binancecoin": "BNB",
+    "ripple": "XRP"
+}
 
 EMA_SHORT = 9
-EMA_LONG = 21
+EMA_MEDIUM = 21
+EMA_LONG = 50
+
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
@@ -17,20 +26,22 @@ TIMEZONE_OFFSET = -3
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-prices = deque(maxlen=200)
+prices = {k: deque(maxlen=300) for k in SYMBOLS}
+last_signal = {k: None for k in SYMBOLS}
 
-last_signal = None
 
+# ===== PREÇO =====
 
-# PEGAR PREÇO (corrigido)
-def get_price():
+def get_prices():
 
     try:
+
+        ids = ",".join(SYMBOLS.keys())
 
         url = "https://api.coingecko.com/api/v3/simple/price"
 
         params = {
-            "ids": "ethereum",
+            "ids": ids,
             "vs_currencies": "usd"
         }
 
@@ -39,14 +50,7 @@ def get_price():
         if r.status_code != 200:
             return None
 
-        data = r.json()
-
-        if "ethereum" not in data:
-            return None
-
-        price = float(data["ethereum"]["usd"])
-
-        return price
+        return r.json()
 
     except Exception as e:
 
@@ -55,7 +59,8 @@ def get_price():
         return None
 
 
-# EMA
+# ===== EMA =====
+
 def calculate_ema(data, period):
 
     if len(data) < period:
@@ -71,7 +76,8 @@ def calculate_ema(data, period):
     return ema
 
 
-# RSI
+# ===== RSI =====
+
 def calculate_rsi(data, period=14):
 
     if len(data) < period + 1:
@@ -102,13 +108,15 @@ def calculate_rsi(data, period=14):
     return rsi
 
 
-# HORA BRASIL
+# ===== HORA =====
+
 def now_brazil():
 
     return datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
 
 
-# TELEGRAM
+# ===== TELEGRAM =====
+
 def send_telegram(msg):
 
     try:
@@ -128,39 +136,45 @@ def send_telegram(msg):
         print("Erro Telegram:", e)
 
 
-# VERIFICAR SINAL
-def check_signal():
+# ===== SINAL =====
 
-    global last_signal
+def check_signal(symbol_key):
 
-    ema9 = calculate_ema(prices, EMA_SHORT)
-    ema21 = calculate_ema(prices, EMA_LONG)
+    data = prices[symbol_key]
 
-    rsi = calculate_rsi(list(prices), RSI_PERIOD)
+    ema9 = calculate_ema(data, EMA_SHORT)
+    ema21 = calculate_ema(data, EMA_MEDIUM)
+    ema50 = calculate_ema(data, EMA_LONG)
 
-    if ema9 is None or ema21 is None or rsi is None:
+    rsi = calculate_rsi(list(data), RSI_PERIOD)
+
+    if None in (ema9, ema21, ema50, rsi):
         return
 
     distance = abs(ema9 - ema21)
 
-    # FILTRO — reduz sinais falsos
+    # evita sinal fraco
     if distance < 0.15:
         return
 
+    symbol = SYMBOLS[symbol_key]
+
     now = now_brazil().strftime("%H:%M:%S")
 
-    # BUY
-    if ema9 > ema21 and rsi > 55:
+    # ===== BUY =====
 
-        if last_signal != "BUY":
+    if ema9 > ema21 > ema50 and rsi > 55:
+
+        if last_signal[symbol_key] != "BUY":
 
             msg = f"""
-🟢 <b>PREVISÃO BUY ETH</b>
+🟢 <b>BUY PREVISTO</b>
 
-Entrada em ~2 candles
+Cripto: {symbol}
 
-EMA9: {ema9:.2f}
-EMA21: {ema21:.2f}
+Entrada ~2 candles
+
+EMA9 > EMA21 > EMA50
 RSI14: {rsi:.1f}
 
 Hora: {now}
@@ -168,20 +182,22 @@ Hora: {now}
 
             send_telegram(msg)
 
-            last_signal = "BUY"
+            last_signal[symbol_key] = "BUY"
 
-    # SELL
-    elif ema9 < ema21 and rsi < 45:
+    # ===== SELL =====
 
-        if last_signal != "SELL":
+    elif ema9 < ema21 < ema50 and rsi < 45:
+
+        if last_signal[symbol_key] != "SELL":
 
             msg = f"""
-🔴 <b>PREVISÃO SELL ETH</b>
+🔴 <b>SELL PREVISTO</b>
 
-Entrada em ~2 candles
+Cripto: {symbol}
 
-EMA9: {ema9:.2f}
-EMA21: {ema21:.2f}
+Entrada ~2 candles
+
+EMA9 < EMA21 < EMA50
 RSI14: {rsi:.1f}
 
 Hora: {now}
@@ -189,35 +205,49 @@ Hora: {now}
 
             send_telegram(msg)
 
-            last_signal = "SELL"
+            last_signal[symbol_key] = "SELL"
 
 
-# LOOP
+# ===== LOOP =====
+
 def main():
 
-    print("BOT ETH INICIADO")
+    print("BOT AVANÇADO INICIADO")
 
-    send_telegram("🤖 BOT ETH INICIADO")
+    send_telegram(
+        "🚀 BOT AVANÇADO INICIADO\nBTC ETH SOL BNB XRP"
+    )
 
     while True:
 
-        price = get_price()
+        data = get_prices()
 
-        if price:
+        if data:
 
-            prices.append(price)
+            for key in SYMBOLS:
 
-            print(
-                now_brazil().strftime("%H:%M:%S"),
-                "Preço:",
-                price
-            )
+                try:
 
-            check_signal()
+                    price = float(
+                        data[key]["usd"]
+                    )
+
+                    prices[key].append(price)
+
+                    print(
+                        now_brazil().strftime("%H:%M:%S"),
+                        SYMBOLS[key],
+                        price
+                    )
+
+                    check_signal(key)
+
+                except:
+                    pass
 
         else:
 
-            print("Sem preço...")
+            print("Sem dados...")
 
         time.sleep(CHECK_INTERVAL)
 
