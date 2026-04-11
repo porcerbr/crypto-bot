@@ -2,228 +2,149 @@ import os
 import time
 import requests
 from datetime import datetime, timezone
-from collections import deque
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "ADAUSDT",
-    "XRPUSDT"
-]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT"]
 
 EMA_SHORT = 9
 EMA_LONG = 21
 CHECK_INTERVAL = 60
 
-BINANCE_ENDPOINT = "https://api.binance.com/api/v3/klines"
+BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
 
-price_histories = {}
-last_crossover_state = {}
+last_states = {}
 last_signal_time = {}
 
 for symbol in SYMBOLS:
-    price_histories[symbol] = deque(maxlen=50)
-    last_crossover_state[symbol] = None
+    last_states[symbol] = None
     last_signal_time[symbol] = 0
 
 
 def fetch_prices(symbol):
-    params = {
-        "symbol": symbol,
-        "interval": "1m",
-        "limit": 50
-    }
-
     try:
-        resp = requests.get(
-            BINANCE_ENDPOINT,
+        params = {
+            "symbol": symbol,
+            "interval": "1m",
+            "limit": 50
+        }
+
+        r = requests.get(
+            BINANCE_URL,
             params=params,
             timeout=10
         )
 
-        if resp.status_code == 200:
-            klines = resp.json()
+        if r.status_code != 200:
+            print(f"Erro HTTP {r.status_code} em {symbol}")
+            return None
 
-            return [
-                float(k[4])
-                for k in klines
-            ]
+        data = r.json()
+
+        prices = [float(c[4]) for c in data]
+
+        return prices
 
     except Exception as e:
-        print("Erro ao buscar preços:", e)
-
-    return None
+        print("Erro ao buscar:", symbol, e)
+        return None
 
 
 def calculate_ema(prices, period):
-
-    if len(prices) < period:
-        return None
 
     multiplier = 2 / (period + 1)
 
     ema = sum(prices[:period]) / period
 
     for price in prices[period:]:
-        ema = (
-            (price - ema)
-            * multiplier
-            + ema
-        )
+        ema = (price - ema) * multiplier + ema
 
     return ema
 
 
-def send_telegram_message(message):
+def send_telegram(msg):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
+        "text": msg,
         "parse_mode": "HTML"
     }
 
     try:
-        requests.post(
-            url,
-            json=payload,
-            timeout=10
-        )
-
-        print("[Telegram] Message sent")
+        requests.post(url, json=payload, timeout=10)
+        print("Mensagem enviada Telegram")
 
     except Exception as e:
-        print("[Telegram Error]", e)
+        print("Erro Telegram:", e)
 
 
-def check_crossover(symbol, ema_short, ema_long):
+def check_signal(symbol, ema9, ema21):
 
-    current_state = (
-        "BULLISH"
-        if ema_short > ema_long
-        else "BEARISH"
-    )
+    state = "BUY" if ema9 > ema21 else "SELL"
 
-    ema_distance = abs(
-        ema_short - ema_long
-    )
+    previous = last_states[symbol]
 
-    # Filtro forte
-    if ema_distance < 0.03:
+    now_time = time.time()
+
+    if now_time - last_signal_time[symbol] < 60:
         return
 
-    previous_state = last_crossover_state[symbol]
-
-    current_time = time.time()
-
-    # Evita repetição (5 minutos)
-    if current_time - last_signal_time[symbol] < 60:
+    if previous is None:
+        last_states[symbol] = state
         return
 
-    if previous_state is None:
-        last_crossover_state[symbol] = current_state
-        return
+    if state != previous:
 
-    if current_state != previous_state:
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
-        now = datetime.now(
-            timezone.utc
-        ).strftime("%H:%M:%S")
+        emoji = "🟢" if state == "BUY" else "🔴"
 
-        if current_state == "BULLISH":
-            emoji = "🟢"
-            action = "COMPRA FORTE"
-        else:
-            emoji = "🔴"
-            action = "VENDA FORTE"
-
-        message = (
-            f"{emoji} <b>{action}</b>\n\n"
+        msg = (
+            f"{emoji} <b>{state}</b>\n\n"
             f"<b>Cripto:</b> {symbol}\n"
-            f"<b>EMA9:</b> {ema_short:.2f}\n"
-            f"<b>EMA21:</b> {ema_long:.2f}\n"
-            f"<b>Hora:</b> {now}\n"
-            f"<b>Timeframe:</b> 1m"
+            f"<b>EMA9:</b> {ema9:.2f}\n"
+            f"<b>EMA21:</b> {ema21:.2f}\n"
+            f"<b>Hora:</b> {now}"
         )
 
-        send_telegram_message(message)
+        send_telegram(msg)
 
-        last_crossover_state[symbol] = current_state
-        last_signal_time[symbol] = current_time
+        last_states[symbol] = state
+        last_signal_time[symbol] = now_time
 
 
 def main():
 
-    print("MULTI-CRYPTO BOT INICIADO")
+    print("BOT INICIADO")
 
-    startup_msg = (
-        "<b>BOT INICIADO</b>\n\n"
-        "Monitorando:\n"
-        "BTC, ETH, SOL, ADA, XRP\n"
-        "EMA 9 / EMA 21\n"
-        "Filtro ativo\n"
-        "Timeframe 1m"
+    send_telegram(
+        "<b>BOT INICIADO</b>\nMonitorando múltiplas criptos 1m"
     )
-
-    send_telegram_message(startup_msg)
 
     while True:
 
-        try:
+        now = datetime.now().strftime("%H:%M:%S")
 
-            now = datetime.now(
-                timezone.utc
-            ).strftime("%H:%M:%S")
+        for symbol in SYMBOLS:
 
-            for symbol in SYMBOLS:
+            print(f"[{now}] Verificando {symbol}")
 
-                print(f"[{now}] Verificando {symbol}")
+            prices = fetch_prices(symbol)
 
-                prices = fetch_prices(symbol)
+            if prices is None:
+                continue
 
-                if prices is None:
-                    continue
+            ema9 = calculate_ema(prices, EMA_SHORT)
+            ema21 = calculate_ema(prices, EMA_LONG)
 
-                price_histories[symbol] = deque(
-                    prices,
-                    maxlen=50
-                )
+            print(
+                f"{symbol} EMA9={ema9:.2f} EMA21={ema21:.2f}"
+            )
 
-                prices_list = list(
-                    price_histories[symbol]
-                )
-
-                ema_short = calculate_ema(
-                    prices_list,
-                    EMA_SHORT
-                )
-
-                ema_long = calculate_ema(
-                    prices_list,
-                    EMA_LONG
-                )
-
-                if ema_short and ema_long:
-
-                    print(
-                        f"{symbol} | "
-                        f"EMA9: {ema_short:.2f} | "
-                        f"EMA21: {ema_long:.2f}"
-                    )
-
-                    check_crossover(
-                        symbol,
-                        ema_short,
-                        ema_long
-                    )
-
-        except Exception as e:
-            print("[Error]", e)
+            check_signal(symbol, ema9, ema21)
 
         time.sleep(CHECK_INTERVAL)
 
