@@ -51,6 +51,8 @@ def enviar(msg):
 
 def get_candles(symbol):
 
+    print("Buscando candles:", symbol)
+
     url = "https://data-api.binance.vision/api/v3/klines"
 
     params = {
@@ -63,13 +65,21 @@ def get_candles(symbol):
 
         r = requests.get(url, params=params, timeout=10)
 
+        if r.status_code != 200:
+            print("Erro API:", symbol)
+            return None
+
         data = r.json()
 
         closes = [float(c[4]) for c in data]
 
+        print("Candles recebidos:", symbol)
+
         return closes
 
-    except Exception:
+    except Exception as e:
+
+        print("Erro candles:", symbol, e)
 
         return None
 
@@ -119,52 +129,7 @@ def rsi(prices):
     return 100 - (100 / (1 + rs))
 
 
-# ==========================
-# SCORE DO SINAL
-# ==========================
-
-def calcular_score(e9, e21, e50, r, prices):
-
-    score = 0
-
-    # tendência alinhada
-    if e9 > e21 > e50 or e9 < e21 < e50:
-        score += 40
-
-    # força da distância
-    distancia = abs(e9 - e21)
-
-    if distancia > 0.4:
-        score += 25
-
-    # RSI saudável
-    if 55 < r < 70 or 30 < r < 45:
-        score += 20
-
-    # momentum
-    momentum = abs(prices[-1] - prices[-2])
-
-    if momentum > 0.2:
-        score += 15
-
-    return score
-
-
-def qualidade(score):
-
-    if score >= 75:
-        return "ALTA"
-
-    if score >= 60:
-        return "MÉDIA"
-
-    return "BAIXA"
-
-
 def verificar(symbol, prices):
-
-    global last_signal
-    global prediction_flag
 
     e9 = ema(prices, EMA_SHORT)
     e21 = ema(prices, EMA_MEDIUM)
@@ -173,69 +138,18 @@ def verificar(symbol, prices):
     r = rsi(prices)
 
     if not e9 or not e21 or not e50 or not r:
+        print("Indicadores insuficientes:", symbol)
         return
 
     agora_str = agora().strftime("%H:%M")
 
-    distancia = abs(e9 - e21)
-
-    # FILTRO LATERAL
-    if distancia < 0.20:
-        prediction_flag[symbol] = False
-        return
-
-    estado = None
-
-    if e9 > e21 > e50 and r > 55:
-        estado = "BUY"
-
-    elif e9 < e21 < e50 and r < 45:
-        estado = "SELL"
-
-    if not estado:
-        return
-
-    score = calcular_score(e9, e21, e50, r, prices)
-
-    qual = qualidade(score)
-
-    if score < 60:
-        return
-
-    # PREVISÃO
-
-    if not prediction_flag[symbol]:
-
-        enviar(
-            f"⚠️ <b>POSSÍVEL {estado}</b>\n\n"
-            f"{symbol}\n"
-            f"Score: {score}/100\n"
-            f"Qualidade: {qual}\n"
-            f"RSI:{r:.1f}\n"
-            f"Hora:{agora_str}"
-        )
-
-        prediction_flag[symbol] = True
-
-    # ALERTA FINAL
-
-    segundos = agora().second
-
-    if segundos >= 58:
-
-        if estado != last_signal[symbol]:
-
-            enviar(
-                f"⏰ <b>ENTRAR AGORA</b>\n\n"
-                f"{symbol}\n"
-                f"Tipo: {estado}\n"
-                f"Score: {score}/100\n"
-                f"Qualidade: {qual}\n"
-                f"Stop: candle anterior\n"
-                f"Hora:{agora_str}"
-            )
-
-            last_signal[symbol] = estado
+    print(
+        f"{agora_str} | {symbol} | "
+        f"E9:{e9:.2f} "
+        f"E21:{e21:.2f} "
+        f"E50:{e50:.2f} "
+        f"RSI:{r:.1f}"
+    )
 
 
 def main():
@@ -243,8 +157,7 @@ def main():
     print("BOT PROFISSIONAL INICIADO")
 
     enviar(
-        "🚀 <b>BOT PROFISSIONAL ATIVO</b>\n\n"
-        "Score + Rompimento + Filtro lateral"
+        "🚀 BOT PROFISSIONAL INICIADO"
     )
 
     while True:
@@ -258,6 +171,10 @@ def main():
                 if prices:
 
                     verificar(symbol, prices)
+
+                else:
+
+                    print("Sem dados:", symbol)
 
         except Exception as e:
 
