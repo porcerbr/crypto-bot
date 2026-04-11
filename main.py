@@ -114,7 +114,7 @@ def check_crossover(symbol, ema_short, ema_long):
     )
 
     # Filtro forte
-    if ema_distance < 0.1:
+    if ema_distance < 0.03:
         return
 
     previous_state = last_crossover_state[symbol]
