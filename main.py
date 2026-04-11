@@ -1,76 +1,113 @@
-def check_signal(symbol, prices):
+def calculate_rsi(prices, period=14):
 
-    global last_states
+    if len(prices) < period + 1:
+        return None
+
+    gains = []
+    losses = []
+
+    for i in range(1, period + 1):
+
+        diff = prices[i] - prices[i - 1]
+
+        if diff >= 0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
+
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    if avg_loss == 0:
+        return 100
+
+    rs = avg_gain / avg_loss
+
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi
+
+
+def check_signal(prices):
+
+    global last_state
     global last_signal_time
     global last_warning_time
 
-    if len(prices) < EMA_LONG + 2:
+    if len(prices) < EMA_LONG + 15:
         return
 
-    # EMA atual
     ema9 = calculate_ema(prices, EMA_SHORT)
     ema21 = calculate_ema(prices, EMA_LONG)
 
-    # EMA anterior
     ema9_prev = calculate_ema(prices[:-1], EMA_SHORT)
     ema21_prev = calculate_ema(prices[:-1], EMA_LONG)
 
-    if None in [ema9, ema21, ema9_prev, ema21_prev]:
+    rsi = calculate_rsi(prices[-15:])
+    rsi_prev = calculate_rsi(prices[-16:-1])
+
+    if None in [ema9, ema21, ema9_prev, ema21_prev, rsi, rsi_prev]:
         return
 
     now_time = time.time()
 
-    state = "BUY" if ema9 > ema21 else "SELL"
-
-    # Distâncias
+    # Distância entre EMAs
     dist_now = abs(ema9 - ema21)
     dist_prev = abs(ema9_prev - ema21_prev)
 
-    # Velocidade EMA
-    speed_ema9 = ema9 - ema9_prev
-    speed_ema21 = ema21 - ema21_prev
+    # Velocidade de aproximação
+    speed = dist_prev - dist_now
 
-    # 🟡 PREVISÃO REAL
-    approaching = dist_now < dist_prev
+    # 🧠 PREVISÃO 2 CANDLES
+    if speed > 0:
 
-    strong_movement = (
-        abs(speed_ema9) > 0.01
-        or abs(speed_ema21) > 0.01
-    )
+        candles_to_cross = dist_now / speed
 
-    if approaching and strong_movement:
+        if 1 <= candles_to_cross <= 2.5:
 
-        if now_time - last_warning_time[symbol] > 120:
+            if now_time - last_warning_time > 120:
 
-            now = (
-                datetime.now(timezone.utc)
-                - timedelta(hours=3)
-            ).strftime("%H:%M:%S")
+                now = (
+                    datetime.now(timezone.utc)
+                    - timedelta(hours=3)
+                ).strftime("%H:%M:%S")
 
-            msg = (
-                f"⏳ <b>POSSÍVEL CRUZAMENTO</b>\n\n"
-                f"<b>Cripto:</b> {symbol}\n"
-                f"<b>EMAs se aproximando</b>\n"
-                f"<b>Preparar entrada</b>\n"
-                f"<b>Hora:</b> {now}"
-            )
+                msg = (
+                    f"⏳ <b>PREPARAR ENTRADA</b>\n\n"
+                    f"Cripto: ETHUSDT\n"
+                    f"RSI: {rsi:.1f}\n"
+                    f"Cruzamento em ~{candles_to_cross:.1f} candles\n"
+                    f"Hora: {now}"
+                )
 
-            send_telegram(msg)
+                send_telegram(msg)
 
-            last_warning_time[symbol] = now_time
+                last_warning_time = now_time
 
-    # 🔵 CRUZAMENTO REAL
+    # 🎯 CRUZAMENTO REAL
 
-    previous = last_states[symbol]
+    state = "BUY" if ema9 > ema21 else "SELL"
 
-    if now_time - last_signal_time[symbol] < 60:
+    if last_state is None:
+        last_state = state
         return
 
-    if previous is None:
-        last_states[symbol] = state
+    if now_time - last_signal_time < 60:
         return
 
-    if state != previous:
+    rsi_buy_ok = rsi > 50 and rsi > rsi_prev
+    rsi_sell_ok = rsi < 50 and rsi < rsi_prev
+
+    if state != last_state:
+
+        # FILTRO RSI
+        if state == "BUY" and not rsi_buy_ok:
+            return
+
+        if state == "SELL" and not rsi_sell_ok:
+            return
 
         now = (
             datetime.now(timezone.utc)
@@ -81,11 +118,12 @@ def check_signal(symbol, prices):
 
         msg = (
             f"{emoji} <b>{state} CONFIRMADO</b>\n\n"
-            f"<b>Cripto:</b> {symbol}\n"
-            f"<b>Hora:</b> {now}"
+            f"Cripto: ETHUSDT\n"
+            f"RSI: {rsi:.1f}\n"
+            f"Hora: {now}"
         )
 
         send_telegram(msg)
 
-        last_states[symbol] = state
-        last_signal_time[symbol] = now_time
+        last_state = state
+        last_signal_time = now_time
