@@ -17,7 +17,7 @@ RSI_PERIOD = 14
 ATR_PERIOD = 14
 
 CHECK_INTERVAL = 60
-COOLDOWN_MINUTES = 5
+COOLDOWN_MINUTES = 3
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -26,8 +26,6 @@ BOT_ATIVO = False
 LAST_UPDATE_ID = None
 
 last_signal_time = {s: None for s in SYMBOLS}
-
-pre_alerts = {s: None for s in SYMBOLS}
 
 
 # ==========================
@@ -44,12 +42,20 @@ def agora():
 
 def enviar(msg):
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
 
-    requests.post(url,json={
-        "chat_id":CHAT_ID,
-        "text":msg
-    })
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+        requests.post(url,json={
+            "chat_id":CHAT_ID,
+            "text":msg
+        })
+
+        print("[Telegram] Mensagem enviada")
+
+    except Exception as e:
+
+        print("Erro Telegram:",e)
 
 
 def verificar_comandos():
@@ -57,33 +63,39 @@ def verificar_comandos():
     global BOT_ATIVO
     global LAST_UPDATE_ID
 
-    url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    try:
 
-    data=requests.get(url).json()
+        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-    for update in data["result"]:
+        data=requests.get(url).json()
 
-        uid=update["update_id"]
+        for update in data["result"]:
 
-        if LAST_UPDATE_ID and uid<=LAST_UPDATE_ID:
-            continue
+            uid=update["update_id"]
 
-        LAST_UPDATE_ID=uid
+            if LAST_UPDATE_ID and uid<=LAST_UPDATE_ID:
+                continue
 
-        if "message" not in update:
-            continue
+            LAST_UPDATE_ID=uid
 
-        texto=update["message"].get("text","")
+            if "message" not in update:
+                continue
 
-        if texto=="/start":
+            texto=update["message"].get("text","")
 
-            BOT_ATIVO=True
-            enviar("🟢 BOT ATIVADO")
+            if texto=="/start":
 
-        elif texto=="/stop":
+                BOT_ATIVO=True
+                enviar("🟢 BOT ATIVADO")
 
-            BOT_ATIVO=False
-            enviar("🔴 BOT PARADO")
+            elif texto=="/stop":
+
+                BOT_ATIVO=False
+                enviar("🔴 BOT PARADO")
+
+    except Exception as e:
+
+        print("Erro comandos:",e)
 
 
 # ==========================
@@ -92,21 +104,31 @@ def verificar_comandos():
 
 def get_data(symbol):
 
-    url="https://data-api.binance.vision/api/v3/klines"
+    try:
 
-    params={
-        "symbol":symbol,
-        "interval":"1m",
-        "limit":100
-    }
+        print(f"Buscando {symbol}")
 
-    data=requests.get(url,params=params).json()
+        url="https://data-api.binance.vision/api/v3/klines"
 
-    closes=[float(c[4]) for c in data]
-    highs=[float(c[2]) for c in data]
-    lows=[float(c[3]) for c in data]
+        params={
+            "symbol":symbol,
+            "interval":"1m",
+            "limit":100
+        }
 
-    return closes,highs,lows
+        data=requests.get(url,params=params).json()
+
+        closes=[float(c[4]) for c in data]
+        highs=[float(c[2]) for c in data]
+        lows=[float(c[3]) for c in data]
+
+        return closes,highs,lows
+
+    except Exception as e:
+
+        print("Erro dados:",symbol,e)
+
+        return None,None,None
 
 
 # ==========================
@@ -160,54 +182,72 @@ def atr(highs,lows):
 
 
 # ==========================
-# LÓGICA
+# LÓGICA AJUSTADA
 # ==========================
 
 def gerar_sinal(symbol, closes, highs, lows):
 
-    e9=ema(closes,EMA_FAST)
-    e21=ema(closes,EMA_SLOW)
-    e50=ema(closes,EMA_TREND)
+    try:
 
-    r=rsi(closes)
-    vol=atr(highs,lows)
+        e9=ema(closes,EMA_FAST)
+        e21=ema(closes,EMA_SLOW)
+        e50=ema(closes,EMA_TREND)
 
-    distancia=abs(e9-e21)
+        r=rsi(closes)
+        vol=atr(highs,lows)
 
-    # filtro lateral
-    if vol<0.25:
+        distancia=abs(e9-e21)
+
+        print(
+            f"{symbol} | "
+            f"EMA9:{round(e9,2)} "
+            f"EMA21:{round(e21,2)} "
+            f"RSI:{round(r,1)}"
+        )
+
+        # ⚙️ AJUSTE INTELIGENTE
+
+        if vol < 0.15:
+            return None
+
+        if distancia < 0.04:
+            return None
+
+        # BUY
+
+        if e9>e21 and e9>e50 and r>52:
+
+            return "BUY"
+
+        # SELL
+
+        if e9<e21 and e9<e50 and r<48:
+
+            return "SELL"
+
         return None
 
-    if distancia<0.07:
+    except Exception as e:
+
+        print("Erro sinal:",symbol,e)
+
         return None
-
-    # multi-candle confirmação
-    if closes[-1] < closes[-2]:
-        candle_dir="DOWN"
-    else:
-        candle_dir="UP"
-
-    # BUY
-    if e9>e21 and e9>e50 and r>55 and candle_dir=="UP":
-        return "BUY"
-
-    # SELL
-    if e9<e21 and e9<e50 and r<45 and candle_dir=="DOWN":
-        return "SELL"
-
-    return None
 
 
 # ==========================
 # FORMATAR
 # ==========================
 
-def preparar_msg(symbol,direcao,entrada):
+def preparar_msg(symbol,direcao):
+
+    entrada=agora()+timedelta(minutes=2)
 
     emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
 
     return(
+
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
+
         f"🌎 Ativo: {symbol}\n"
         f"📊 Estratégia: {emoji}\n"
         f"⏰ Entrada prevista: {entrada.strftime('%H:%M')}"
@@ -216,9 +256,8 @@ def preparar_msg(symbol,direcao,entrada):
 
 def confirmar_msg(symbol,direcao):
 
-    agora_time=agora()
+    entrada=agora()+timedelta(minutes=1)
 
-    entrada=agora_time+timedelta(minutes=1)
     p1=entrada+timedelta(minutes=1)
     p2=entrada+timedelta(minutes=2)
 
@@ -244,7 +283,7 @@ def confirmar_msg(symbol,direcao):
 
 def main():
 
-    enviar("🤖 BOT AVANÇADO COM ALERTA ANTECIPADO")
+    enviar("🤖 BOT ATIVO COM LOGS")
 
     while True:
 
@@ -255,6 +294,9 @@ def main():
             for symbol in SYMBOLS:
 
                 closes,highs,lows=get_data(symbol)
+
+                if not closes:
+                    continue
 
                 direcao=gerar_sinal(
                     symbol,
@@ -271,16 +313,14 @@ def main():
 
                     if(
                         ultimo is None or
-                        (agora_time-ultimo).seconds>COOLDOWN_MINUTES*60
+                        (agora_time-ultimo).seconds >
+                        COOLDOWN_MINUTES*60
                     ):
-
-                        entrada=agora_time+timedelta(minutes=2)
 
                         enviar(
                             preparar_msg(
                                 symbol,
-                                direcao,
-                                entrada
+                                direcao
                             )
                         )
 
