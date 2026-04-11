@@ -20,9 +20,10 @@ EMA_MEDIUM = 21
 EMA_LONG = 50
 
 RSI_PERIOD = 14
+ATR_PERIOD = 14
 
 CHECK_INTERVAL = 60
-INTERVALO_SINAIS = 20  # minutos
+INTERVALO_SINAIS = 5  # minutos
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -72,7 +73,7 @@ def verificar_comandos():
 
     try:
 
-        r = requests.get(url, timeout=10)
+        r = requests.get(url)
 
         data = r.json()
 
@@ -123,17 +124,20 @@ def get_candles(symbol):
 
     try:
 
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params)
 
         data = r.json()
 
         closes = [float(c[4]) for c in data]
 
-        return closes
+        highs = [float(c[2]) for c in data]
+        lows = [float(c[3]) for c in data]
+
+        return closes, highs, lows
 
     except Exception:
 
-        return None
+        return None, None, None
 
 
 # ==========================
@@ -141,9 +145,6 @@ def get_candles(symbol):
 # ==========================
 
 def ema(prices, period):
-
-    if len(prices) < period:
-        return None
 
     k = 2 / (period + 1)
 
@@ -160,9 +161,6 @@ def ema(prices, period):
 # ==========================
 
 def rsi(prices):
-
-    if len(prices) < RSI_PERIOD + 1:
-        return None
 
     gains = []
     losses = []
@@ -190,54 +188,77 @@ def rsi(prices):
 
 
 # ==========================
-# CALCULAR SCORE
+# ATR
 # ==========================
 
-def calcular_score(e9, e21, e50, r):
+def atr(highs, lows):
+
+    trs = []
+
+    for i in range(1, ATR_PERIOD):
+
+        tr = highs[i] - lows[i]
+
+        trs.append(tr)
+
+    return sum(trs) / len(trs)
+
+
+# ==========================
+# SCORE
+# ==========================
+
+def calcular_score(e9, e21, e50, r, volatilidade):
 
     score = 0
 
     if e9 > e21:
-        score += 30
+        score += 25
 
     if e9 > e50:
-        score += 30
+        score += 25
 
     if r > 52:
         score += 20
 
-    score += 20
+    if volatilidade > 0:
+        score += 30
 
     return score
 
 
 # ==========================
-# ANALISAR TODOS
+# ANALISAR
 # ==========================
 
-def analisar_ativos():
+def analisar():
 
     resultados = []
 
     for symbol in SYMBOLS:
 
-        prices = get_candles(symbol)
+        closes, highs, lows = get_candles(symbol)
 
-        if not prices:
+        if not closes:
             continue
 
-        e9 = ema(prices, EMA_SHORT)
-        e21 = ema(prices, EMA_MEDIUM)
-        e50 = ema(prices, EMA_LONG)
+        e9 = ema(closes, EMA_SHORT)
+        e21 = ema(closes, EMA_MEDIUM)
+        e50 = ema(closes, EMA_LONG)
 
-        r = rsi(prices)
+        r = rsi(closes)
 
-        if not e9 or not e21 or not e50 or not r:
-            continue
+        volatilidade = atr(highs, lows)
 
         estado = "BUY" if e9 > e21 else "SELL"
 
-        score = calcular_score(e9, e21, e50, r)
+        score = calcular_score(
+            e9,
+            e21,
+            e50,
+            r,
+            volatilidade
+        )
 
         resultados.append(
             (symbol, estado, score, r)
@@ -259,7 +280,7 @@ def main():
 
     global ultimo_envio
 
-    enviar("🤖 BOT PRONTO")
+    enviar("🤖 BOT AVANÇADO PRONTO")
 
     while True:
 
@@ -274,18 +295,18 @@ def main():
                 (agora_time - ultimo_envio).seconds >= INTERVALO_SINAIS * 60
             ):
 
-                sinais = analisar_ativos()
+                sinais = analisar()
 
                 if sinais:
 
-                    msg = "📊 TOP OPORTUNIDADES\n\n"
+                    msg = "⚠️ PREPARAR OPERAÇÃO\n\n"
 
-                    for i, s in enumerate(sinais):
+                    for s in sinais:
 
                         symbol, estado, score, r = s
 
                         msg += (
-                            f"{i+1}️⃣ {symbol}\n"
+                            f"{symbol}\n"
                             f"{estado}\n"
                             f"Score:{score}\n"
                             f"RSI:{r:.1f}\n\n"
