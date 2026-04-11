@@ -22,6 +22,7 @@ EMA_LONG = 50
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
+INTERVALO_SINAIS = 20  # minutos
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -29,7 +30,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BOT_ATIVO = False
 LAST_UPDATE_ID = None
 
-last_signal = {s: None for s in SYMBOLS}
+ultimo_envio = None
 
 
 # ==========================
@@ -100,12 +101,6 @@ def verificar_comandos():
                 BOT_ATIVO = False
 
                 enviar("🔴 BOT PARADO")
-
-            elif texto == "/status":
-
-                status = "ATIVO" if BOT_ATIVO else "PARADO"
-
-                enviar(f"📊 STATUS: {status}")
 
     except Exception as e:
 
@@ -195,50 +190,65 @@ def rsi(prices):
 
 
 # ==========================
-# VERIFICAR SINAL
+# CALCULAR SCORE
 # ==========================
 
-def verificar(symbol, prices):
+def calcular_score(e9, e21, e50, r):
 
-    e9 = ema(prices, EMA_SHORT)
-    e21 = ema(prices, EMA_MEDIUM)
-    e50 = ema(prices, EMA_LONG)
-
-    r = rsi(prices)
-
-    if not e9 or not e21 or not e50 or not r:
-        return
-
-    distancia = abs(e9 - e21)
-
-    if distancia < 0.08:
-        return
-
-    estado = None
+    score = 0
 
     if e9 > e21:
-        estado = "BUY"
+        score += 30
 
-    elif e9 < e21:
-        estado = "SELL"
+    if e9 > e50:
+        score += 30
 
-    if not estado:
-        return
+    if r > 52:
+        score += 20
 
-    segundos = agora().second
+    score += 20
 
-    if segundos >= 58:
+    return score
 
-        if estado != last_signal[symbol]:
 
-            enviar(
-                f"⏰ ENTRAR AGORA\n\n"
-                f"{symbol}\n"
-                f"Tipo: {estado}\n"
-                f"RSI:{r:.1f}"
-            )
+# ==========================
+# ANALISAR TODOS
+# ==========================
 
-            last_signal[symbol] = estado
+def analisar_ativos():
+
+    resultados = []
+
+    for symbol in SYMBOLS:
+
+        prices = get_candles(symbol)
+
+        if not prices:
+            continue
+
+        e9 = ema(prices, EMA_SHORT)
+        e21 = ema(prices, EMA_MEDIUM)
+        e50 = ema(prices, EMA_LONG)
+
+        r = rsi(prices)
+
+        if not e9 or not e21 or not e50 or not r:
+            continue
+
+        estado = "BUY" if e9 > e21 else "SELL"
+
+        score = calcular_score(e9, e21, e50, r)
+
+        resultados.append(
+            (symbol, estado, score, r)
+        )
+
+    resultados.sort(
+        key=lambda x: x[2],
+        reverse=True
+    )
+
+    return resultados[:3]
 
 
 # ==========================
@@ -247,15 +257,9 @@ def verificar(symbol, prices):
 
 def main():
 
-    print("BOT COM CONTROLE TELEGRAM")
+    global ultimo_envio
 
-    enviar(
-        "🤖 BOT PRONTO\n"
-        "Use:\n"
-        "/start → iniciar\n"
-        "/stop → parar\n"
-        "/status → status"
-    )
+    enviar("🤖 BOT PRONTO")
 
     while True:
 
@@ -263,19 +267,33 @@ def main():
 
         if BOT_ATIVO:
 
-            print("BOT ATIVO")
+            agora_time = agora()
 
-            for symbol in SYMBOLS:
+            if (
+                ultimo_envio is None or
+                (agora_time - ultimo_envio).seconds >= INTERVALO_SINAIS * 60
+            ):
 
-                prices = get_candles(symbol)
+                sinais = analisar_ativos()
 
-                if prices:
+                if sinais:
 
-                    verificar(symbol, prices)
+                    msg = "📊 TOP OPORTUNIDADES\n\n"
 
-        else:
+                    for i, s in enumerate(sinais):
 
-            print("BOT PARADO")
+                        symbol, estado, score, r = s
+
+                        msg += (
+                            f"{i+1}️⃣ {symbol}\n"
+                            f"{estado}\n"
+                            f"Score:{score}\n"
+                            f"RSI:{r:.1f}\n\n"
+                        )
+
+                    enviar(msg)
+
+                    ultimo_envio = agora_time
 
         time.sleep(CHECK_INTERVAL)
 
