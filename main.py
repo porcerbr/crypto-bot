@@ -16,14 +16,18 @@ BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
 
 last_states = {}
 last_signal_time = {}
+last_warning_time = {}
 
 for symbol in SYMBOLS:
     last_states[symbol] = None
     last_signal_time[symbol] = 0
+    last_warning_time[symbol] = 0
 
 
 def fetch_prices(symbol):
+
     try:
+
         params = {
             "symbol": symbol,
             "interval": "1m",
@@ -37,7 +41,6 @@ def fetch_prices(symbol):
         )
 
         if r.status_code != 200:
-            print(f"Erro HTTP {r.status_code} em {symbol}")
             return None
 
         data = r.json()
@@ -46,15 +49,11 @@ def fetch_prices(symbol):
 
         return prices
 
-    except Exception as e:
-        print("Erro ao buscar:", symbol, e)
+    except Exception:
         return None
 
 
 def calculate_ema(prices, period):
-
-    if len(prices) < period:
-        return None
 
     multiplier = 2 / (period + 1)
 
@@ -78,7 +77,7 @@ def send_telegram(msg):
 
     try:
         requests.post(url, json=payload, timeout=10)
-        print("Mensagem enviada Telegram")
+        print("Telegram enviado")
 
     except Exception as e:
         print("Erro Telegram:", e)
@@ -88,17 +87,38 @@ def check_signal(symbol, ema9, ema21):
 
     state = "BUY" if ema9 > ema21 else "SELL"
 
-    # FILTRO DE DISTÂNCIA (remove sinais fracos)
     ema_distance = abs(ema9 - ema21)
 
+    now_time = time.time()
+
+    # 🟡 ALERTA ANTECIPADO
+    if ema_distance < 0.05:
+
+        if now_time - last_warning_time[symbol] > 120:
+
+            now = (
+                datetime.now(timezone.utc)
+                - timedelta(hours=3)
+            ).strftime("%H:%M:%S")
+
+            msg = (
+                f"⏳ <b>PREPARAR POSSÍVEL ENTRADA</b>\n\n"
+                f"<b>Cripto:</b> {symbol}\n"
+                f"<b>EMAs próximas</b>\n"
+                f"<b>Possível entrada em:</b> ~2 minutos\n"
+                f"<b>Hora:</b> {now}"
+            )
+
+            send_telegram(msg)
+
+            last_warning_time[symbol] = now_time
+
+    # 🔵 FILTRO DE QUALIDADE
     if ema_distance < 0.02:
         return
 
     previous = last_states[symbol]
 
-    now_time = time.time()
-
-    # Evita spam excessivo
     if now_time - last_signal_time[symbol] < 60:
         return
 
@@ -108,7 +128,6 @@ def check_signal(symbol, ema9, ema21):
 
     if state != previous:
 
-        # Hora Brasil (UTC-3)
         now = (
             datetime.now(timezone.utc)
             - timedelta(hours=3)
@@ -117,12 +136,11 @@ def check_signal(symbol, ema9, ema21):
         emoji = "🟢" if state == "BUY" else "🔴"
 
         msg = (
-            f"{emoji} <b>{state}</b>\n\n"
+            f"{emoji} <b>{state} CONFIRMADO</b>\n\n"
             f"<b>Cripto:</b> {symbol}\n"
             f"<b>EMA9:</b> {ema9:.2f}\n"
             f"<b>EMA21:</b> {ema21:.2f}\n"
-            f"<b>Hora:</b> {now}\n"
-            f"<b>Timeframe:</b> 1m"
+            f"<b>Hora:</b> {now}"
         )
 
         send_telegram(msg)
@@ -137,23 +155,13 @@ def main():
 
     send_telegram(
         "<b>BOT INICIADO</b>\n\n"
-        "Monitorando:\n"
-        "BTC, ETH, SOL, ADA, XRP\n"
-        "EMA 9 / EMA 21\n"
-        "Filtro ativo\n"
+        "Modo com ALERTA ANTECIPADO ativo\n"
         "Timeframe 1m"
     )
 
     while True:
 
-        now = (
-            datetime.now(timezone.utc)
-            - timedelta(hours=3)
-        ).strftime("%H:%M:%S")
-
         for symbol in SYMBOLS:
-
-            print(f"[{now}] Verificando {symbol}")
 
             prices = fetch_prices(symbol)
 
@@ -165,10 +173,6 @@ def main():
 
             if ema9 is None or ema21 is None:
                 continue
-
-            print(
-                f"{symbol} EMA9={ema9:.2f} EMA21={ema21:.2f}"
-            )
 
             check_signal(symbol, ema9, ema21)
 
