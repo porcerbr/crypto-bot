@@ -1,11 +1,11 @@
 import os
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import deque
 
 # =============================
-# CONFIGURAÇÕES
+# CONFIG
 # =============================
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -18,8 +18,6 @@ EMA_LONG = 21
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
-
-price_history = deque(maxlen=100)
 
 last_signal = None
 
@@ -38,33 +36,43 @@ def send_telegram(msg):
     }
 
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
         print("Mensagem enviada")
+
     except Exception as e:
         print("Erro Telegram:", e)
 
 
 # =============================
-# BINANCE
+# PREÇO (CORRIGIDO)
 # =============================
 
 def get_prices():
 
-    url = "https://api.binance.com/api/v3/klines"
-
-    params = {
-        "symbol": SYMBOL,
-        "interval": "1m",
-        "limit": 100
-    }
-
     try:
+
+        url = "https://api.binance.com/api/v3/klines"
+
+        params = {
+            "symbol": SYMBOL,
+            "interval": "1m",
+            "limit": 100
+        }
 
         r = requests.get(url, params=params, timeout=10)
 
         data = r.json()
 
-        closes = [float(c[4]) for c in data]
+        # se Binance retornar erro
+        if isinstance(data, dict):
+            print("Erro Binance:", data)
+            return None
+
+        closes = []
+
+        for candle in data:
+
+            closes.append(float(candle[4]))
 
         return closes
 
@@ -96,12 +104,12 @@ def calculate_ema(prices, period):
 # RSI
 # =============================
 
-def calculate_rsi(prices, period=14):
+def calculate_rsi(prices):
 
     gains = []
     losses = []
 
-    for i in range(1, period+1):
+    for i in range(1, len(prices)):
 
         diff = prices[i] - prices[i-1]
 
@@ -112,28 +120,28 @@ def calculate_rsi(prices, period=14):
             gains.append(0)
             losses.append(abs(diff))
 
-    avg_gain = sum(gains)/period
-    avg_loss = sum(losses)/period
+    avg_gain = sum(gains) / RSI_PERIOD
+    avg_loss = sum(losses) / RSI_PERIOD
 
     if avg_loss == 0:
         return 100
 
-    rs = avg_gain/avg_loss
+    rs = avg_gain / avg_loss
 
-    rsi = 100 - (100/(1+rs))
+    rsi = 100 - (100 / (1 + rs))
 
     return rsi
 
 
 # =============================
-# PREVISÃO CRUZAMENTO
+# PREVISÃO
 # =============================
 
 def predict_crossover(ema9, ema21):
 
     distance = ema9 - ema21
 
-    if abs(distance) < 0.02:
+    if abs(distance) < 0.03:
 
         if distance > 0:
             return "SELL_PREP"
@@ -144,7 +152,7 @@ def predict_crossover(ema9, ema21):
 
 
 # =============================
-# LOOP PRINCIPAL
+# LOOP
 # =============================
 
 def main():
@@ -156,7 +164,7 @@ def main():
     send_telegram(
         "<b>BOT ETH INICIADO</b>\n"
         "EMA 9/21 + RSI 14\n"
-        "Previsão 2 candles antes"
+        "Previsão antecipada"
     )
 
     while True:
@@ -166,84 +174,20 @@ def main():
             prices = get_prices()
 
             if prices is None:
+
+                print("Sem preço... tentando novamente")
+
                 time.sleep(10)
+
                 continue
 
             ema9 = calculate_ema(prices, EMA_SHORT)
             ema21 = calculate_ema(prices, EMA_LONG)
 
-            rsi = calculate_rsi(prices[-(RSI_PERIOD+1):])
+            rsi = calculate_rsi(prices[-15:])
 
             price = prices[-1]
 
             print(
-                f"{datetime.now()} | "
-                f"Price {price:.2f} | "
-                f"EMA9 {ema9:.2f} | "
-                f"EMA21 {ema21:.2f} | "
-                f"RSI {rsi:.2f}"
-            )
-
-            prediction = predict_crossover(ema9, ema21)
-
-            # =====================
-            # PRÉ-SINAL
-            # =====================
-
-            if prediction == "BUY_PREP" and rsi < 55:
-
-                if last_signal != "BUY_PREP":
-
-                    send_telegram(
-                        "🟡 <b>PREPARAR COMPRA</b>\n"
-                        "Possível cruzamento em até 2 candles"
-                    )
-
-                    last_signal = "BUY_PREP"
-
-            elif prediction == "SELL_PREP" and rsi > 45:
-
-                if last_signal != "SELL_PREP":
-
-                    send_telegram(
-                        "🟡 <b>PREPARAR VENDA</b>\n"
-                        "Possível cruzamento em até 2 candles"
-                    )
-
-                    last_signal = "SELL_PREP"
-
-            # =====================
-            # CRUZAMENTO REAL
-            # =====================
-
-            if ema9 > ema21 and rsi > 50:
-
-                if last_signal != "BUY":
-
-                    send_telegram(
-                        "🟢 <b>BUY</b>\n"
-                        "Entrada 1 segundo antes do fechamento"
-                    )
-
-                    last_signal = "BUY"
-
-            elif ema9 < ema21 and rsi < 50:
-
-                if last_signal != "SELL":
-
-                    send_telegram(
-                        "🔴 <b>SELL</b>\n"
-                        "Entrada 1 segundo antes do fechamento"
-                    )
-
-                    last_signal = "SELL"
-
-        except Exception as e:
-
-            print("Erro geral:", e)
-
-        time.sleep(CHECK_INTERVAL)
-
-
-if __name__ == "__main__":
-    main()
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Price
