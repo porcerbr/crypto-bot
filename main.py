@@ -7,23 +7,17 @@ from datetime import datetime, timedelta, timezone
 # CONFIG
 # ==========================
 
-SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "ADAUSDT",
-    "XRPUSDT"
-]
+SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT"]
 
-EMA_SHORT = 9
-EMA_MEDIUM = 21
-EMA_LONG = 50
+EMA_FAST = 9
+EMA_SLOW = 21
+EMA_TREND = 50
 
 RSI_PERIOD = 14
 ATR_PERIOD = 14
 
 CHECK_INTERVAL = 60
-INTERVALO_SINAIS = 5  # minutos
+COOLDOWN_MINUTES = 5
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -31,11 +25,11 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BOT_ATIVO = False
 LAST_UPDATE_ID = None
 
-ultimo_envio = None
+last_signal_time = {s: None for s in SYMBOLS}
 
 
 # ==========================
-# HORÁRIO BRASIL
+# HORÁRIO BR
 # ==========================
 
 def agora():
@@ -47,21 +41,8 @@ def agora():
 # ==========================
 
 def enviar(msg):
-
-    try:
-
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
-
-        requests.post(url, json=payload)
-
-    except Exception as e:
-
-        print("Erro Telegram:", e)
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
 
 def verificar_comandos():
@@ -71,48 +52,38 @@ def verificar_comandos():
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-    try:
+    data = requests.get(url).json()
 
-        r = requests.get(url)
+    for update in data["result"]:
 
-        data = r.json()
+        uid = update["update_id"]
 
-        for update in data["result"]:
+        if LAST_UPDATE_ID and uid <= LAST_UPDATE_ID:
+            continue
 
-            update_id = update["update_id"]
+        LAST_UPDATE_ID = uid
 
-            if LAST_UPDATE_ID and update_id <= LAST_UPDATE_ID:
-                continue
+        if "message" not in update:
+            continue
 
-            LAST_UPDATE_ID = update_id
+        texto = update["message"].get("text","")
 
-            if "message" not in update:
-                continue
+        if texto == "/start":
 
-            texto = update["message"].get("text", "")
+            BOT_ATIVO = True
+            enviar("🟢 BOT ATIVADO")
 
-            if texto == "/start":
+        elif texto == "/stop":
 
-                BOT_ATIVO = True
-
-                enviar("🟢 BOT ATIVADO")
-
-            elif texto == "/stop":
-
-                BOT_ATIVO = False
-
-                enviar("🔴 BOT PARADO")
-
-    except Exception as e:
-
-        print("Erro comandos:", e)
+            BOT_ATIVO = False
+            enviar("🔴 BOT PARADO")
 
 
 # ==========================
-# CANDLES
+# DADOS
 # ==========================
 
-def get_candles(symbol):
+def get_data(symbol):
 
     url = "https://data-api.binance.vision/api/v3/klines"
 
@@ -122,154 +93,135 @@ def get_candles(symbol):
         "limit": 100
     }
 
-    try:
+    data = requests.get(url, params=params).json()
 
-        r = requests.get(url, params=params)
+    closes = [float(c[4]) for c in data]
+    highs  = [float(c[2]) for c in data]
+    lows   = [float(c[3]) for c in data]
 
-        data = r.json()
-
-        closes = [float(c[4]) for c in data]
-
-        highs = [float(c[2]) for c in data]
-        lows = [float(c[3]) for c in data]
-
-        return closes, highs, lows
-
-    except Exception:
-
-        return None, None, None
+    return closes, highs, lows
 
 
 # ==========================
-# EMA
+# INDICADORES
 # ==========================
 
 def ema(prices, period):
 
-    k = 2 / (period + 1)
+    k = 2/(period+1)
 
-    e = sum(prices[:period]) / period
+    e = sum(prices[:period])/period
 
     for p in prices[period:]:
-        e = (p - e) * k + e
+
+        e = (p-e)*k + e
 
     return e
 
 
-# ==========================
-# RSI
-# ==========================
-
 def rsi(prices):
 
-    gains = []
-    losses = []
+    gains=[]
+    losses=[]
 
-    for i in range(1, RSI_PERIOD + 1):
+    for i in range(1, RSI_PERIOD+1):
 
-        diff = prices[i] - prices[i - 1]
+        diff = prices[i]-prices[i-1]
 
-        if diff >= 0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
-    avg_gain = sum(gains) / RSI_PERIOD
-    avg_loss = sum(losses) / RSI_PERIOD
+    avg_gain=sum(gains)/RSI_PERIOD
+    avg_loss=sum(losses)/RSI_PERIOD
 
-    if avg_loss == 0:
+    if avg_loss==0:
         return 100
 
-    rs = avg_gain / avg_loss
+    rs=avg_gain/avg_loss
 
-    return 100 - (100 / (1 + rs))
+    return 100-(100/(1+rs))
 
 
-# ==========================
-# ATR
-# ==========================
+def atr(highs,lows):
 
-def atr(highs, lows):
-
-    trs = []
+    trs=[]
 
     for i in range(1, ATR_PERIOD):
 
-        tr = highs[i] - lows[i]
-
+        tr=highs[i]-lows[i]
         trs.append(tr)
 
-    return sum(trs) / len(trs)
+    return sum(trs)/len(trs)
 
 
 # ==========================
-# SCORE
+# LÓGICA MAIS ASSERTIVA
 # ==========================
 
-def calcular_score(e9, e21, e50, r, volatilidade):
+def gerar_sinal(symbol, closes, highs, lows):
 
-    score = 0
+    e9  = ema(closes, EMA_FAST)
+    e21 = ema(closes, EMA_SLOW)
+    e50 = ema(closes, EMA_TREND)
 
-    if e9 > e21:
-        score += 25
+    r = rsi(closes)
+    vol = atr(highs, lows)
 
-    if e9 > e50:
-        score += 25
+    distancia = abs(e9-e21)
 
-    if r > 52:
-        score += 20
+    # ❌ Evita mercado lateral
+    if vol < 0.25:
+        return None
 
-    if volatilidade > 0:
-        score += 30
+    if distancia < 0.07:
+        return None
 
-    return score
+    tendencia = abs(e9 - e50)
+
+    if tendencia < 0.1:
+        return None
+
+    # 🔥 COMPRA FORTE
+    if e9 > e21 and e9 > e50 and r > 55:
+
+        return "BUY","FORTE"
+
+    # 🔴 VENDA FORTE
+    if e9 < e21 and e9 < e50 and r < 45:
+
+        return "SELL","FORTE"
+
+    return None
 
 
 # ==========================
-# ANALISAR
+# FORMATAR
 # ==========================
 
-def analisar():
+def formatar(symbol, direcao, forca):
 
-    resultados = []
+    agora_time = agora()
 
-    for symbol in SYMBOLS:
+    entrada = agora_time + timedelta(minutes=1)
 
-        closes, highs, lows = get_candles(symbol)
+    p1 = entrada + timedelta(minutes=1)
+    p2 = entrada + timedelta(minutes=2)
 
-        if not closes:
-            continue
+    emoji = "🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
 
-        e9 = ema(closes, EMA_SHORT)
-        e21 = ema(closes, EMA_MEDIUM)
-        e50 = ema(closes, EMA_LONG)
+    return (
 
-        r = rsi(closes)
+        "✅ ENTRADA CONFIRMADA ✅\n\n"
 
-        volatilidade = atr(highs, lows)
+        f"🌎 Ativo: {symbol}\n"
+        "⏳ Expiração: M1\n"
+        f"📊 Estratégia: {emoji}\n"
+        f"📈 Tendência: {forca}\n"
+        f"⏰ Entrada: {entrada.strftime('%H:%M')}\n\n"
 
-        estado = "BUY" if e9 > e21 else "SELL"
-
-        score = calcular_score(
-            e9,
-            e21,
-            e50,
-            r,
-            volatilidade
-        )
-
-        resultados.append(
-            (symbol, estado, score, r)
-        )
-
-    resultados.sort(
-        key=lambda x: x[2],
-        reverse=True
+        f"⚠️ Proteção 1: {p1.strftime('%H:%M')}\n"
+        f"⚠️ Proteção 2: {p2.strftime('%H:%M')}"
     )
-
-    return resultados[:3]
 
 
 # ==========================
@@ -278,9 +230,7 @@ def analisar():
 
 def main():
 
-    global ultimo_envio
-
-    enviar("🤖 BOT AVANÇADO PRONTO")
+    enviar("🤖 BOT M1 ASSERTIVO INICIADO")
 
     while True:
 
@@ -288,33 +238,28 @@ def main():
 
         if BOT_ATIVO:
 
-            agora_time = agora()
+            for symbol in SYMBOLS:
 
-            if (
-                ultimo_envio is None or
-                (agora_time - ultimo_envio).seconds >= INTERVALO_SINAIS * 60
-            ):
+                closes, highs, lows = get_data(symbol)
 
-                sinais = analisar()
+                sinal = gerar_sinal(symbol, closes, highs, lows)
 
-                if sinais:
+                if sinal:
 
-                    msg = "⚠️ PREPARAR OPERAÇÃO\n\n"
+                    direcao, forca = sinal
 
-                    for s in sinais:
+                    agora_time = agora()
 
-                        symbol, estado, score, r = s
+                    ultimo = last_signal_time[symbol]
 
-                        msg += (
-                            f"{symbol}\n"
-                            f"{estado}\n"
-                            f"Score:{score}\n"
-                            f"RSI:{r:.1f}\n\n"
-                        )
+                    if (
+                        ultimo is None or
+                        (agora_time - ultimo).seconds > COOLDOWN_MINUTES*60
+                    ):
 
-                    enviar(msg)
+                        enviar(formatar(symbol,direcao,forca))
 
-                    ultimo_envio = agora_time
+                        last_signal_time[symbol]=agora_time
 
         time.sleep(CHECK_INTERVAL)
 
