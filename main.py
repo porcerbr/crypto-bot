@@ -28,6 +28,7 @@ last_signal_time = {}
 
 # Inicializa estruturas
 for symbol in SYMBOLS:
+    print(f"Verificando {symbol}")
     price_histories[symbol] = deque(maxlen=50)
     last_crossover_state[symbol] = None
     last_signal_time[symbol] = 0
@@ -174,7 +175,7 @@ def check_crossover(symbol, ema_short, ema_long):
 def main():
 
     print("MULTI-CRYPTO BOT INICIADO")
-
+print("BOT RODANDO... verificando preços a cada 60 segundos")
     startup_msg = (
 
         "<b>BOT INICIADO</b>\n\n"
