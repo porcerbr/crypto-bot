@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -53,6 +53,9 @@ def fetch_prices(symbol):
 
 def calculate_ema(prices, period):
 
+    if len(prices) < period:
+        return None
+
     multiplier = 2 / (period + 1)
 
     ema = sum(prices[:period]) / period
@@ -85,16 +88,17 @@ def check_signal(symbol, ema9, ema21):
 
     state = "BUY" if ema9 > ema21 else "SELL"
 
+    # FILTRO DE DISTÂNCIA (remove sinais fracos)
     ema_distance = abs(ema9 - ema21)
 
-# Ignorar cruzamentos muito fracos
-if ema_distance < 0.02:
-    return
-    
+    if ema_distance < 0.02:
+        return
+
     previous = last_states[symbol]
 
     now_time = time.time()
 
+    # Evita spam excessivo
     if now_time - last_signal_time[symbol] < 60:
         return
 
@@ -104,7 +108,11 @@ if ema_distance < 0.02:
 
     if state != previous:
 
-        now = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
+        # Hora Brasil (UTC-3)
+        now = (
+            datetime.now(timezone.utc)
+            - timedelta(hours=3)
+        ).strftime("%H:%M:%S")
 
         emoji = "🟢" if state == "BUY" else "🔴"
 
@@ -113,7 +121,8 @@ if ema_distance < 0.02:
             f"<b>Cripto:</b> {symbol}\n"
             f"<b>EMA9:</b> {ema9:.2f}\n"
             f"<b>EMA21:</b> {ema21:.2f}\n"
-            f"<b>Hora:</b> {now}"
+            f"<b>Hora:</b> {now}\n"
+            f"<b>Timeframe:</b> 1m"
         )
 
         send_telegram(msg)
@@ -127,12 +136,20 @@ def main():
     print("BOT INICIADO")
 
     send_telegram(
-        "<b>BOT INICIADO</b>\nMonitorando múltiplas criptos 1m"
+        "<b>BOT INICIADO</b>\n\n"
+        "Monitorando:\n"
+        "BTC, ETH, SOL, ADA, XRP\n"
+        "EMA 9 / EMA 21\n"
+        "Filtro ativo\n"
+        "Timeframe 1m"
     )
 
     while True:
 
-        now = datetime.now().strftime("%H:%M:%S")
+        now = (
+            datetime.now(timezone.utc)
+            - timedelta(hours=3)
+        ).strftime("%H:%M:%S")
 
         for symbol in SYMBOLS:
 
@@ -145,6 +162,9 @@ def main():
 
             ema9 = calculate_ema(prices, EMA_SHORT)
             ema21 = calculate_ema(prices, EMA_LONG)
+
+            if ema9 is None or ema21 is None:
+                continue
 
             print(
                 f"{symbol} EMA9={ema9:.2f} EMA21={ema21:.2f}"
