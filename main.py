@@ -3,43 +3,52 @@ import time
 import requests
 from datetime import datetime, timedelta, timezone
 
-# ==============================
-# CONFIGURAÇÕES
-# ==============================
+# =============================
+# CONFIGURAÇÃO
+# =============================
 
-SYMBOL = "ETHUSDT"
-INTERVAL = "1m"
+SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "ADAUSDT",
+    "XRPUSDT"
+]
 
 EMA_SHORT = 9
-EMA_LONG = 21
+EMA_MEDIUM = 21
+EMA_LONG = 50
+
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-last_state = None
+last_state = {symbol: None for symbol in SYMBOLS}
 
 
-# ==============================
+# =============================
 # HORÁRIO BRASIL
-# ==============================
+# =============================
 
 def agora_brasil():
     return datetime.now(timezone.utc) - timedelta(hours=3)
 
 
-# ==============================
+# =============================
 # TELEGRAM
-# ==============================
+# =============================
 
 def enviar_telegram(msg):
+
     try:
+
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
         payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": CHAT_ID,
             "text": msg,
             "parse_mode": "HTML"
         }
@@ -47,24 +56,26 @@ def enviar_telegram(msg):
         requests.post(url, json=payload)
 
     except Exception as e:
+
         print("Erro Telegram:", e)
 
 
-# ==============================
+# =============================
 # PEGAR CANDLES
-# ==============================
+# =============================
 
-def get_candles():
+def get_candles(symbol):
 
     url = "https://data-api.binance.vision/api/v3/klines"
 
     params = {
-        "symbol": SYMBOL,
-        "interval": INTERVAL,
+        "symbol": symbol,
+        "interval": "1m",
         "limit": 100
     }
 
     try:
+
         r = requests.get(url, params=params, timeout=10)
 
         data = r.json()
@@ -74,13 +85,15 @@ def get_candles():
         return closes
 
     except Exception as e:
-        print("Erro candles:", e)
+
+        print("Erro candles:", symbol, e)
+
         return None
 
 
-# ==============================
+# =============================
 # EMA
-# ==============================
+# =============================
 
 def calcular_ema(prices, period):
 
@@ -97,9 +110,9 @@ def calcular_ema(prices, period):
     return ema
 
 
-# ==============================
+# =============================
 # RSI
-# ==============================
+# =============================
 
 def calcular_rsi(prices):
 
@@ -133,82 +146,95 @@ def calcular_rsi(prices):
     return rsi
 
 
-# ==============================
-# PREVISÃO
-# ==============================
+# =============================
+# VERIFICAR SINAL
+# =============================
 
-def verificar_sinal(prices):
+def verificar_sinal(symbol, prices):
 
     global last_state
 
     ema9 = calcular_ema(prices, EMA_SHORT)
-    ema21 = calcular_ema(prices, EMA_LONG)
+    ema21 = calcular_ema(prices, EMA_MEDIUM)
+    ema50 = calcular_ema(prices, EMA_LONG)
 
     rsi = calcular_rsi(prices)
 
-    if not ema9 or not ema21 or not rsi:
+    if not ema9 or not ema21 or not ema50 or not rsi:
         return
-
-    estado = "COMPRA" if ema9 > ema21 else "VENDA"
 
     agora = agora_brasil().strftime("%H:%M")
 
     print(
-        f"{agora} | "
+        f"{agora} | {symbol} | "
         f"Preço: {prices[-1]:.2f} | "
         f"EMA9: {ema9:.2f} | "
         f"EMA21: {ema21:.2f} | "
+        f"EMA50: {ema50:.2f} | "
         f"RSI: {rsi:.1f}"
     )
 
-    # PREVISÃO 2 candles antes
-
     distancia = abs(ema9 - ema21)
 
-    if distancia < 0.3:
+    # evita sinais fracos
+    if distancia < 0.25:
+        return
 
-        if estado != last_state:
+    estado = None
 
-            mensagem = (
-                f"⚠️ <b>POSSÍVEL {estado}</b>\n\n"
-                f"Ativo: {SYMBOL}\n"
-                f"RSI: {rsi:.1f}\n"
-                f"Hora: {agora}\n\n"
-                f"Entrada prevista em breve"
-            )
+    # BUY
+    if ema9 > ema21 > ema50 and rsi > 55:
+        estado = "BUY"
 
-            enviar_telegram(mensagem)
+    # SELL
+    elif ema9 < ema21 < ema50 and rsi < 45:
+        estado = "SELL"
 
-            last_state = estado
+    if estado and estado != last_state[symbol]:
+
+        mensagem = (
+            f"{'🟢' if estado=='BUY' else '🔴'} "
+            f"<b>{estado} PREVISTO</b>\n\n"
+            f"Cripto: {symbol}\n"
+            f"Entrada em ~2 candles\n"
+            f"RSI: {rsi:.1f}\n"
+            f"Hora: {agora}"
+        )
+
+        enviar_telegram(mensagem)
+
+        last_state[symbol] = estado
 
 
-# ==============================
+# =============================
 # MAIN
-# ==============================
+# =============================
 
 def main():
 
-    print("BOT ETH INICIADO")
+    print("BOT MULTI-CRIPTO INICIADO")
 
     enviar_telegram(
-        "🤖 <b>BOT ETH INICIADO</b>\n\n"
-        "EMA 9 / 21\n"
-        "RSI 14\n"
-        "Previsão 2 candles"
+        "🚀 <b>BOT MULTI-CRIPTO INICIADO</b>\n\n"
+        "BTC ETH SOL ADA XRP\n"
+        "EMA 9/21/50 + RSI"
     )
 
     while True:
 
         try:
 
-            prices = get_candles()
+            for symbol in SYMBOLS:
 
-            if prices:
+                prices = get_candles(symbol)
 
-                verificar_sinal(prices)
+                if prices:
 
-            else:
-                print("Sem dados...")
+                    verificar_sinal(symbol, prices)
+
+                else:
+
+                    print("Sem dados:", symbol)
 
         except Exception as e:
 
