@@ -6,44 +6,58 @@ from collections import deque
 
 # CONFIG
 SYMBOL = "ethereum"
+
 EMA_SHORT = 9
 EMA_LONG = 21
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
-TIMEZONE_OFFSET = -3  # Brasil
+TIMEZONE_OFFSET = -3
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-prices = deque(maxlen=100)
+prices = deque(maxlen=200)
 
 last_signal = None
 
 
-# PEGAR PREÇO (CoinGecko)
+# PEGAR PREÇO (corrigido)
 def get_price():
+
     try:
+
         url = "https://api.coingecko.com/api/v3/simple/price"
+
         params = {
-            "ids": SYMBOL,
+            "ids": "ethereum",
             "vs_currencies": "usd"
         }
 
         r = requests.get(url, params=params, timeout=10)
+
+        if r.status_code != 200:
+            return None
+
         data = r.json()
 
-        price = float(data[SYMBOL]["usd"])
+        if "ethereum" not in data:
+            return None
+
+        price = float(data["ethereum"]["usd"])
 
         return price
 
     except Exception as e:
+
         print("Erro preço:", e)
+
         return None
 
 
-# CALCULAR EMA
+# EMA
 def calculate_ema(data, period):
+
     if len(data) < period:
         return None
 
@@ -57,8 +71,9 @@ def calculate_ema(data, period):
     return ema
 
 
-# CALCULAR RSI
+# RSI
 def calculate_rsi(data, period=14):
+
     if len(data) < period + 1:
         return None
 
@@ -66,6 +81,7 @@ def calculate_rsi(data, period=14):
     losses = []
 
     for i in range(1, period + 1):
+
         diff = data[i] - data[i - 1]
 
         if diff >= 0:
@@ -86,8 +102,9 @@ def calculate_rsi(data, period=14):
     return rsi
 
 
-# HORÁRIO BRASIL
+# HORA BRASIL
 def now_brazil():
+
     return datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
 
 
@@ -95,6 +112,7 @@ def now_brazil():
 def send_telegram(msg):
 
     try:
+
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
         payload = {
@@ -106,10 +124,11 @@ def send_telegram(msg):
         requests.post(url, json=payload)
 
     except Exception as e:
+
         print("Erro Telegram:", e)
 
 
-# PREVISÃO 2 CANDLES
+# VERIFICAR SINAL
 def check_signal():
 
     global last_signal
@@ -124,23 +143,21 @@ def check_signal():
 
     distance = abs(ema9 - ema21)
 
-    # FILTRO — evita sinal fraco
-    if distance < 0.2:
+    # FILTRO — reduz sinais falsos
+    if distance < 0.15:
         return
-
-    future_cross = ema9 - ema21
 
     now = now_brazil().strftime("%H:%M:%S")
 
     # BUY
-    if future_cross > 0 and rsi > 55:
+    if ema9 > ema21 and rsi > 55:
 
         if last_signal != "BUY":
 
             msg = f"""
 🟢 <b>PREVISÃO BUY ETH</b>
 
-Entrada prevista em ~2 candles
+Entrada em ~2 candles
 
 EMA9: {ema9:.2f}
 EMA21: {ema21:.2f}
@@ -154,14 +171,14 @@ Hora: {now}
             last_signal = "BUY"
 
     # SELL
-    elif future_cross < 0 and rsi < 45:
+    elif ema9 < ema21 and rsi < 45:
 
         if last_signal != "SELL":
 
             msg = f"""
 🔴 <b>PREVISÃO SELL ETH</b>
 
-Entrada prevista em ~2 candles
+Entrada em ~2 candles
 
 EMA9: {ema9:.2f}
 EMA21: {ema21:.2f}
@@ -175,7 +192,7 @@ Hora: {now}
             last_signal = "SELL"
 
 
-# LOOP PRINCIPAL
+# LOOP
 def main():
 
     print("BOT ETH INICIADO")
