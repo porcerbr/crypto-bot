@@ -3,10 +3,6 @@ import time
 import requests
 from datetime import datetime, timedelta, timezone
 
-# ==========================
-# CONFIG
-# ==========================
-
 SYMBOLS = [
     "BTCUSDT",
     "ETHUSDT",
@@ -30,18 +26,9 @@ last_signal = {s: None for s in SYMBOLS}
 prediction_flag = {s: False for s in SYMBOLS}
 
 
-# ==========================
-# HORÁRIO BRASIL
-# ==========================
-
 def agora():
-
     return datetime.now(timezone.utc) - timedelta(hours=3)
 
-
-# ==========================
-# TELEGRAM
-# ==========================
 
 def enviar(msg):
 
@@ -61,10 +48,6 @@ def enviar(msg):
 
         print("Erro Telegram:", e)
 
-
-# ==========================
-# PEGAR CANDLES
-# ==========================
 
 def get_candles(symbol):
 
@@ -86,16 +69,10 @@ def get_candles(symbol):
 
         return closes
 
-    except Exception as e:
-
-        print("Erro:", symbol)
+    except Exception:
 
         return None
 
-
-# ==========================
-# EMA
-# ==========================
 
 def ema(prices, period):
 
@@ -111,10 +88,6 @@ def ema(prices, period):
 
     return e
 
-
-# ==========================
-# RSI
-# ==========================
 
 def rsi(prices):
 
@@ -147,8 +120,46 @@ def rsi(prices):
 
 
 # ==========================
-# VERIFICAR SINAL
+# SCORE DO SINAL
 # ==========================
+
+def calcular_score(e9, e21, e50, r, prices):
+
+    score = 0
+
+    # tendência alinhada
+    if e9 > e21 > e50 or e9 < e21 < e50:
+        score += 40
+
+    # força da distância
+    distancia = abs(e9 - e21)
+
+    if distancia > 0.4:
+        score += 25
+
+    # RSI saudável
+    if 55 < r < 70 or 30 < r < 45:
+        score += 20
+
+    # momentum
+    momentum = abs(prices[-1] - prices[-2])
+
+    if momentum > 0.2:
+        score += 15
+
+    return score
+
+
+def qualidade(score):
+
+    if score >= 75:
+        return "ALTA"
+
+    if score >= 60:
+        return "MÉDIA"
+
+    return "BAIXA"
+
 
 def verificar(symbol, prices):
 
@@ -166,14 +177,6 @@ def verificar(symbol, prices):
 
     agora_str = agora().strftime("%H:%M")
 
-    print(
-        f"{agora_str} | {symbol} | "
-        f"E9:{e9:.2f} "
-        f"E21:{e21:.2f} "
-        f"E50:{e50:.2f} "
-        f"RSI:{r:.1f}"
-    )
-
     distancia = abs(e9 - e21)
 
     # FILTRO LATERAL
@@ -189,53 +192,59 @@ def verificar(symbol, prices):
     elif e9 < e21 < e50 and r < 45:
         estado = "SELL"
 
-    if estado:
+    if not estado:
+        return
 
-        # PREVISÃO 2 candles antes
+    score = calcular_score(e9, e21, e50, r, prices)
 
-        if not prediction_flag[symbol]:
+    qual = qualidade(score)
+
+    if score < 60:
+        return
+
+    # PREVISÃO
+
+    if not prediction_flag[symbol]:
+
+        enviar(
+            f"⚠️ <b>POSSÍVEL {estado}</b>\n\n"
+            f"{symbol}\n"
+            f"Score: {score}/100\n"
+            f"Qualidade: {qual}\n"
+            f"RSI:{r:.1f}\n"
+            f"Hora:{agora_str}"
+        )
+
+        prediction_flag[symbol] = True
+
+    # ALERTA FINAL
+
+    segundos = agora().second
+
+    if segundos >= 58:
+
+        if estado != last_signal[symbol]:
 
             enviar(
-                f"⚠️ <b>POSSÍVEL {estado}</b>\n\n"
+                f"⏰ <b>ENTRAR AGORA</b>\n\n"
                 f"{symbol}\n"
-                f"Entrada em breve\n"
-                f"RSI:{r:.1f}\n"
+                f"Tipo: {estado}\n"
+                f"Score: {score}/100\n"
+                f"Qualidade: {qual}\n"
+                f"Stop: candle anterior\n"
                 f"Hora:{agora_str}"
             )
 
-            prediction_flag[symbol] = True
+            last_signal[symbol] = estado
 
-        # ALERTA FINAL
-
-        segundos = agora().second
-
-        if segundos >= 58:
-
-            if estado != last_signal[symbol]:
-
-                enviar(
-                    f"⏰ <b>ENTRAR AGORA</b>\n\n"
-                    f"{symbol}\n"
-                    f"Tipo: {estado}\n"
-                    f"Stop: candle anterior\n"
-                    f"Hora:{agora_str}"
-                )
-
-                last_signal[symbol] = estado
-
-
-# ==========================
-# MAIN
-# ==========================
 
 def main():
 
-    print("BOT AVANÇADO INICIADO")
+    print("BOT PROFISSIONAL INICIADO")
 
     enviar(
-        "🚀 <b>BOT AVANÇADO ATIVO</b>\n\n"
-        "Entrada 1s antes\n"
-        "Previsão 2 candles"
+        "🚀 <b>BOT PROFISSIONAL ATIVO</b>\n\n"
+        "Score + Rompimento + Filtro lateral"
     )
 
     while True:
