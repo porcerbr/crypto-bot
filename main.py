@@ -122,7 +122,7 @@ def check_crossover(symbol, ema_short, ema_long):
     current_time = time.time()
 
     # Evita repetição (5 minutos)
-    if current_time - last_signal_time[symbol] < 300:
+    if current_time - last_signal_time[symbol] < 60:
         return
 
     if previous_state is None:
