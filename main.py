@@ -3,6 +3,10 @@ import time
 import requests
 from datetime import datetime, timedelta, timezone
 
+# ==========================
+# CONFIG
+# ==========================
+
 SYMBOLS = [
     "BTCUSDT",
     "ETHUSDT",
@@ -19,6 +23,9 @@ RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
 
+# MODO ESTUDO (mais sinais)
+MODO_ESTUDO = True
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -26,9 +33,17 @@ last_signal = {s: None for s in SYMBOLS}
 prediction_flag = {s: False for s in SYMBOLS}
 
 
+# ==========================
+# HORÁRIO BRASIL
+# ==========================
+
 def agora():
     return datetime.now(timezone.utc) - timedelta(hours=3)
 
+
+# ==========================
+# TELEGRAM
+# ==========================
 
 def enviar(msg):
 
@@ -49,9 +64,11 @@ def enviar(msg):
         print("Erro Telegram:", e)
 
 
-def get_candles(symbol):
+# ==========================
+# CANDLES
+# ==========================
 
-    print("Buscando candles:", symbol)
+def get_candles(symbol):
 
     url = "https://data-api.binance.vision/api/v3/klines"
 
@@ -65,24 +82,20 @@ def get_candles(symbol):
 
         r = requests.get(url, params=params, timeout=10)
 
-        if r.status_code != 200:
-            print("Erro API:", symbol)
-            return None
-
         data = r.json()
 
         closes = [float(c[4]) for c in data]
 
-        print("Candles recebidos:", symbol)
-
         return closes
 
-    except Exception as e:
-
-        print("Erro candles:", symbol, e)
+    except Exception:
 
         return None
 
+
+# ==========================
+# EMA
+# ==========================
 
 def ema(prices, period):
 
@@ -98,6 +111,10 @@ def ema(prices, period):
 
     return e
 
+
+# ==========================
+# RSI
+# ==========================
 
 def rsi(prices):
 
@@ -129,7 +146,36 @@ def rsi(prices):
     return 100 - (100 / (1 + rs))
 
 
+# ==========================
+# SCORE FLEXÍVEL
+# ==========================
+
+def calcular_score(e9, e21, e50, r):
+
+    score = 0
+
+    if e9 > e21 or e9 < e21:
+        score += 30
+
+    if e9 > e50 or e9 < e50:
+        score += 25
+
+    if r > 52 or r < 48:
+        score += 25
+
+    score += 20
+
+    return score
+
+
+# ==========================
+# VERIFICAR
+# ==========================
+
 def verificar(symbol, prices):
+
+    global last_signal
+    global prediction_flag
 
     e9 = ema(prices, EMA_SHORT)
     e21 = ema(prices, EMA_MEDIUM)
@@ -138,7 +184,6 @@ def verificar(symbol, prices):
     r = rsi(prices)
 
     if not e9 or not e21 or not e50 or not r:
-        print("Indicadores insuficientes:", symbol)
         return
 
     agora_str = agora().strftime("%H:%M")
@@ -151,13 +196,72 @@ def verificar(symbol, prices):
         f"RSI:{r:.1f}"
     )
 
+    distancia = abs(e9 - e21)
+
+    # distância menor (modo estudo)
+    if distancia < 0.08:
+        prediction_flag[symbol] = False
+        return
+
+    estado = None
+
+    if e9 > e21:
+        estado = "BUY"
+
+    elif e9 < e21:
+        estado = "SELL"
+
+    score = calcular_score(e9, e21, e50, r)
+
+    # score mais leve
+    if score < 45:
+        return
+
+    # PREVISÃO
+
+    if not prediction_flag[symbol]:
+
+        enviar(
+            f"⚠️ POSSÍVEL {estado}\n\n"
+            f"{symbol}\n"
+            f"Score: {score}\n"
+            f"RSI:{r:.1f}\n"
+            f"Hora:{agora_str}"
+        )
+
+        prediction_flag[symbol] = True
+
+    # ALERTA FINAL
+
+    segundos = agora().second
+
+    if segundos >= 58:
+
+        if estado != last_signal[symbol]:
+
+            enviar(
+                f"⏰ ENTRAR AGORA\n\n"
+                f"{symbol}\n"
+                f"Tipo: {estado}\n"
+                f"Score: {score}\n"
+                f"Stop: candle anterior\n"
+                f"Hora:{agora_str}"
+            )
+
+            last_signal[symbol] = estado
+
+
+# ==========================
+# MAIN
+# ==========================
 
 def main():
 
-    print("BOT PROFISSIONAL INICIADO")
+    print("BOT MODO ESTUDO INICIADO")
 
     enviar(
-        "🚀 BOT PROFISSIONAL INICIADO"
+        "📊 BOT MODO ESTUDO ATIVO\n"
+        "Mais sinais habilitados"
     )
 
     while True:
@@ -171,10 +275,6 @@ def main():
                 if prices:
 
                     verificar(symbol, prices)
-
-                else:
-
-                    print("Sem dados:", symbol)
 
         except Exception as e:
 
