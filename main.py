@@ -23,14 +23,13 @@ RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
 
-# MODO ESTUDO (mais sinais)
-MODO_ESTUDO = True
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+BOT_ATIVO = False
+LAST_UPDATE_ID = None
+
 last_signal = {s: None for s in SYMBOLS}
-prediction_flag = {s: False for s in SYMBOLS}
 
 
 # ==========================
@@ -53,8 +52,7 @@ def enviar(msg):
 
         payload = {
             "chat_id": CHAT_ID,
-            "text": msg,
-            "parse_mode": "HTML"
+            "text": msg
         }
 
         requests.post(url, json=payload)
@@ -62,6 +60,56 @@ def enviar(msg):
     except Exception as e:
 
         print("Erro Telegram:", e)
+
+
+def verificar_comandos():
+
+    global BOT_ATIVO
+    global LAST_UPDATE_ID
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+
+    try:
+
+        r = requests.get(url, timeout=10)
+
+        data = r.json()
+
+        for update in data["result"]:
+
+            update_id = update["update_id"]
+
+            if LAST_UPDATE_ID and update_id <= LAST_UPDATE_ID:
+                continue
+
+            LAST_UPDATE_ID = update_id
+
+            if "message" not in update:
+                continue
+
+            texto = update["message"].get("text", "")
+
+            if texto == "/start":
+
+                BOT_ATIVO = True
+
+                enviar("🟢 BOT ATIVADO")
+
+            elif texto == "/stop":
+
+                BOT_ATIVO = False
+
+                enviar("🔴 BOT PARADO")
+
+            elif texto == "/status":
+
+                status = "ATIVO" if BOT_ATIVO else "PARADO"
+
+                enviar(f"📊 STATUS: {status}")
+
+    except Exception as e:
+
+        print("Erro comandos:", e)
 
 
 # ==========================
@@ -147,35 +195,10 @@ def rsi(prices):
 
 
 # ==========================
-# SCORE FLEXÍVEL
-# ==========================
-
-def calcular_score(e9, e21, e50, r):
-
-    score = 0
-
-    if e9 > e21 or e9 < e21:
-        score += 30
-
-    if e9 > e50 or e9 < e50:
-        score += 25
-
-    if r > 52 or r < 48:
-        score += 25
-
-    score += 20
-
-    return score
-
-
-# ==========================
-# VERIFICAR
+# VERIFICAR SINAL
 # ==========================
 
 def verificar(symbol, prices):
-
-    global last_signal
-    global prediction_flag
 
     e9 = ema(prices, EMA_SHORT)
     e21 = ema(prices, EMA_MEDIUM)
@@ -186,21 +209,9 @@ def verificar(symbol, prices):
     if not e9 or not e21 or not e50 or not r:
         return
 
-    agora_str = agora().strftime("%H:%M")
-
-    print(
-        f"{agora_str} | {symbol} | "
-        f"E9:{e9:.2f} "
-        f"E21:{e21:.2f} "
-        f"E50:{e50:.2f} "
-        f"RSI:{r:.1f}"
-    )
-
     distancia = abs(e9 - e21)
 
-    # distância menor (modo estudo)
     if distancia < 0.08:
-        prediction_flag[symbol] = False
         return
 
     estado = None
@@ -211,27 +222,8 @@ def verificar(symbol, prices):
     elif e9 < e21:
         estado = "SELL"
 
-    score = calcular_score(e9, e21, e50, r)
-
-    # score mais leve
-    if score < 45:
+    if not estado:
         return
-
-    # PREVISÃO
-
-    if not prediction_flag[symbol]:
-
-        enviar(
-            f"⚠️ POSSÍVEL {estado}\n\n"
-            f"{symbol}\n"
-            f"Score: {score}\n"
-            f"RSI:{r:.1f}\n"
-            f"Hora:{agora_str}"
-        )
-
-        prediction_flag[symbol] = True
-
-    # ALERTA FINAL
 
     segundos = agora().second
 
@@ -243,9 +235,7 @@ def verificar(symbol, prices):
                 f"⏰ ENTRAR AGORA\n\n"
                 f"{symbol}\n"
                 f"Tipo: {estado}\n"
-                f"Score: {score}\n"
-                f"Stop: candle anterior\n"
-                f"Hora:{agora_str}"
+                f"RSI:{r:.1f}"
             )
 
             last_signal[symbol] = estado
@@ -257,16 +247,23 @@ def verificar(symbol, prices):
 
 def main():
 
-    print("BOT MODO ESTUDO INICIADO")
+    print("BOT COM CONTROLE TELEGRAM")
 
     enviar(
-        "📊 BOT MODO ESTUDO ATIVO\n"
-        "Mais sinais habilitados"
+        "🤖 BOT PRONTO\n"
+        "Use:\n"
+        "/start → iniciar\n"
+        "/stop → parar\n"
+        "/status → status"
     )
 
     while True:
 
-        try:
+        verificar_comandos()
+
+        if BOT_ATIVO:
+
+            print("BOT ATIVO")
 
             for symbol in SYMBOLS:
 
@@ -276,9 +273,9 @@ def main():
 
                     verificar(symbol, prices)
 
-        except Exception as e:
+        else:
 
-            print("Erro geral:", e)
+            print("BOT PARADO")
 
         time.sleep(CHECK_INTERVAL)
 
