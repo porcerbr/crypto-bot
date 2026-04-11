@@ -3,9 +3,9 @@ import time
 import requests
 from datetime import datetime, timedelta, timezone
 
-# =============================
-# CONFIGURAÇÃO
-# =============================
+# ==========================
+# CONFIG
+# ==========================
 
 SYMBOLS = [
     "BTCUSDT",
@@ -26,22 +26,24 @@ CHECK_INTERVAL = 60
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-last_state = {symbol: None for symbol in SYMBOLS}
+last_signal = {s: None for s in SYMBOLS}
+prediction_flag = {s: False for s in SYMBOLS}
 
 
-# =============================
+# ==========================
 # HORÁRIO BRASIL
-# =============================
+# ==========================
 
-def agora_brasil():
+def agora():
+
     return datetime.now(timezone.utc) - timedelta(hours=3)
 
 
-# =============================
+# ==========================
 # TELEGRAM
-# =============================
+# ==========================
 
-def enviar_telegram(msg):
+def enviar(msg):
 
     try:
 
@@ -60,9 +62,9 @@ def enviar_telegram(msg):
         print("Erro Telegram:", e)
 
 
-# =============================
+# ==========================
 # PEGAR CANDLES
-# =============================
+# ==========================
 
 def get_candles(symbol):
 
@@ -86,138 +88,154 @@ def get_candles(symbol):
 
     except Exception as e:
 
-        print("Erro candles:", symbol, e)
+        print("Erro:", symbol)
 
         return None
 
 
-# =============================
+# ==========================
 # EMA
-# =============================
+# ==========================
 
-def calcular_ema(prices, period):
+def ema(prices, period):
 
     if len(prices) < period:
         return None
 
     k = 2 / (period + 1)
 
-    ema = sum(prices[:period]) / period
+    e = sum(prices[:period]) / period
 
     for p in prices[period:]:
-        ema = (p - ema) * k + ema
+        e = (p - e) * k + e
 
-    return ema
+    return e
 
 
-# =============================
+# ==========================
 # RSI
-# =============================
+# ==========================
 
-def calcular_rsi(prices):
+def rsi(prices):
 
     if len(prices) < RSI_PERIOD + 1:
         return None
 
-    ganhos = []
-    perdas = []
+    gains = []
+    losses = []
 
     for i in range(1, RSI_PERIOD + 1):
 
         diff = prices[i] - prices[i - 1]
 
         if diff >= 0:
-            ganhos.append(diff)
-            perdas.append(0)
+            gains.append(diff)
+            losses.append(0)
         else:
-            ganhos.append(0)
-            perdas.append(abs(diff))
+            gains.append(0)
+            losses.append(abs(diff))
 
-    media_ganho = sum(ganhos) / RSI_PERIOD
-    media_perda = sum(perdas) / RSI_PERIOD
+    avg_gain = sum(gains) / RSI_PERIOD
+    avg_loss = sum(losses) / RSI_PERIOD
 
-    if media_perda == 0:
+    if avg_loss == 0:
         return 100
 
-    rs = media_ganho / media_perda
+    rs = avg_gain / avg_loss
 
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
-# =============================
+# ==========================
 # VERIFICAR SINAL
-# =============================
+# ==========================
 
-def verificar_sinal(symbol, prices):
+def verificar(symbol, prices):
 
-    global last_state
+    global last_signal
+    global prediction_flag
 
-    ema9 = calcular_ema(prices, EMA_SHORT)
-    ema21 = calcular_ema(prices, EMA_MEDIUM)
-    ema50 = calcular_ema(prices, EMA_LONG)
+    e9 = ema(prices, EMA_SHORT)
+    e21 = ema(prices, EMA_MEDIUM)
+    e50 = ema(prices, EMA_LONG)
 
-    rsi = calcular_rsi(prices)
+    r = rsi(prices)
 
-    if not ema9 or not ema21 or not ema50 or not rsi:
+    if not e9 or not e21 or not e50 or not r:
         return
 
-    agora = agora_brasil().strftime("%H:%M")
+    agora_str = agora().strftime("%H:%M")
 
     print(
-        f"{agora} | {symbol} | "
-        f"Preço: {prices[-1]:.2f} | "
-        f"EMA9: {ema9:.2f} | "
-        f"EMA21: {ema21:.2f} | "
-        f"EMA50: {ema50:.2f} | "
-        f"RSI: {rsi:.1f}"
+        f"{agora_str} | {symbol} | "
+        f"E9:{e9:.2f} "
+        f"E21:{e21:.2f} "
+        f"E50:{e50:.2f} "
+        f"RSI:{r:.1f}"
     )
 
-    distancia = abs(ema9 - ema21)
+    distancia = abs(e9 - e21)
 
-    # evita sinais fracos
-    if distancia < 0.25:
+    # FILTRO LATERAL
+    if distancia < 0.20:
+        prediction_flag[symbol] = False
         return
 
     estado = None
 
-    # BUY
-    if ema9 > ema21 > ema50 and rsi > 55:
+    if e9 > e21 > e50 and r > 55:
         estado = "BUY"
 
-    # SELL
-    elif ema9 < ema21 < ema50 and rsi < 45:
+    elif e9 < e21 < e50 and r < 45:
         estado = "SELL"
 
-    if estado and estado != last_state[symbol]:
+    if estado:
 
-        mensagem = (
-            f"{'🟢' if estado=='BUY' else '🔴'} "
-            f"<b>{estado} PREVISTO</b>\n\n"
-            f"Cripto: {symbol}\n"
-            f"Entrada em ~2 candles\n"
-            f"RSI: {rsi:.1f}\n"
-            f"Hora: {agora}"
-        )
+        # PREVISÃO 2 candles antes
 
-        enviar_telegram(mensagem)
+        if not prediction_flag[symbol]:
 
-        last_state[symbol] = estado
+            enviar(
+                f"⚠️ <b>POSSÍVEL {estado}</b>\n\n"
+                f"{symbol}\n"
+                f"Entrada em breve\n"
+                f"RSI:{r:.1f}\n"
+                f"Hora:{agora_str}"
+            )
+
+            prediction_flag[symbol] = True
+
+        # ALERTA FINAL
+
+        segundos = agora().second
+
+        if segundos >= 58:
+
+            if estado != last_signal[symbol]:
+
+                enviar(
+                    f"⏰ <b>ENTRAR AGORA</b>\n\n"
+                    f"{symbol}\n"
+                    f"Tipo: {estado}\n"
+                    f"Stop: candle anterior\n"
+                    f"Hora:{agora_str}"
+                )
+
+                last_signal[symbol] = estado
 
 
-# =============================
+# ==========================
 # MAIN
-# =============================
+# ==========================
 
 def main():
 
-    print("BOT MULTI-CRIPTO INICIADO")
+    print("BOT AVANÇADO INICIADO")
 
-    enviar_telegram(
-        "🚀 <b>BOT MULTI-CRIPTO INICIADO</b>\n\n"
-        "BTC ETH SOL ADA XRP\n"
-        "EMA 9/21/50 + RSI"
+    enviar(
+        "🚀 <b>BOT AVANÇADO ATIVO</b>\n\n"
+        "Entrada 1s antes\n"
+        "Previsão 2 candles"
     )
 
     while True:
@@ -230,11 +248,7 @@ def main():
 
                 if prices:
 
-                    verificar_sinal(symbol, prices)
-
-                else:
-
-                    print("Sem dados:", symbol)
+                    verificar(symbol, prices)
 
         except Exception as e:
 
