@@ -1,4 +1,3 @@
-
 import os
 import time
 import requests
@@ -26,16 +25,13 @@ price_histories = {}
 last_crossover_state = {}
 last_signal_time = {}
 
-# Inicializa estruturas
 for symbol in SYMBOLS:
-    print(f"Verificando {symbol}")
     price_histories[symbol] = deque(maxlen=50)
     last_crossover_state[symbol] = None
     last_signal_time[symbol] = 0
 
 
 def fetch_prices(symbol):
-
     params = {
         "symbol": symbol,
         "interval": "1m",
@@ -43,7 +39,6 @@ def fetch_prices(symbol):
     }
 
     try:
-
         resp = requests.get(
             BINANCE_ENDPOINT,
             params=params,
@@ -51,7 +46,6 @@ def fetch_prices(symbol):
         )
 
         if resp.status_code == 200:
-
             klines = resp.json()
 
             return [
@@ -59,8 +53,8 @@ def fetch_prices(symbol):
                 for k in klines
             ]
 
-    except Exception:
-        pass
+    except Exception as e:
+        print("Erro ao buscar preços:", e)
 
     return None
 
@@ -95,7 +89,6 @@ def send_telegram_message(message):
     }
 
     try:
-
         requests.post(
             url,
             json=payload,
@@ -105,7 +98,6 @@ def send_telegram_message(message):
         print("[Telegram] Message sent")
 
     except Exception as e:
-
         print("[Telegram Error]", e)
 
 
@@ -121,20 +113,19 @@ def check_crossover(symbol, ema_short, ema_long):
         ema_short - ema_long
     )
 
-    # FILTRO FORTE — reduz sinais fracos
-    if ema_distance < 0.2:
+    # Filtro forte
+    if ema_distance < 0.1:
         return
 
     previous_state = last_crossover_state[symbol]
 
     current_time = time.time()
 
-    # Evita sinais repetidos (5 minutos)
+    # Evita repetição (5 minutos)
     if current_time - last_signal_time[symbol] < 300:
         return
 
     if previous_state is None:
-
         last_crossover_state[symbol] = current_state
         return
 
@@ -145,25 +136,19 @@ def check_crossover(symbol, ema_short, ema_long):
         ).strftime("%H:%M:%S")
 
         if current_state == "BULLISH":
-
             emoji = "🟢"
             action = "COMPRA FORTE"
-
         else:
-
             emoji = "🔴"
             action = "VENDA FORTE"
 
         message = (
-
             f"{emoji} <b>{action}</b>\n\n"
-
             f"<b>Cripto:</b> {symbol}\n"
             f"<b>EMA9:</b> {ema_short:.2f}\n"
             f"<b>EMA21:</b> {ema_long:.2f}\n"
             f"<b>Hora:</b> {now}\n"
             f"<b>Timeframe:</b> 1m"
-
         )
 
         send_telegram_message(message)
@@ -175,16 +160,14 @@ def check_crossover(symbol, ema_short, ema_long):
 def main():
 
     print("MULTI-CRYPTO BOT INICIADO")
-print("BOT RODANDO... verificando preços a cada 60 segundos")
-    startup_msg = (
 
+    startup_msg = (
         "<b>BOT INICIADO</b>\n\n"
         "Monitorando:\n"
         "BTC, ETH, SOL, ADA, XRP\n"
         "EMA 9 / EMA 21\n"
-        "Filtro forte ativado\n"
+        "Filtro ativo\n"
         "Timeframe 1m"
-
     )
 
     send_telegram_message(startup_msg)
@@ -198,6 +181,8 @@ print("BOT RODANDO... verificando preços a cada 60 segundos")
             ).strftime("%H:%M:%S")
 
             for symbol in SYMBOLS:
+
+                print(f"[{now}] Verificando {symbol}")
 
                 prices = fetch_prices(symbol)
 
@@ -226,7 +211,7 @@ print("BOT RODANDO... verificando preços a cada 60 segundos")
                 if ema_short and ema_long:
 
                     print(
-                        f"[{now}] {symbol} | "
+                        f"{symbol} | "
                         f"EMA9: {ema_short:.2f} | "
                         f"EMA21: {ema_long:.2f}"
                     )
@@ -238,7 +223,6 @@ print("BOT RODANDO... verificando preços a cada 60 segundos")
                     )
 
         except Exception as e:
-
             print("[Error]", e)
 
         time.sleep(CHECK_INTERVAL)
