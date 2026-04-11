@@ -2,10 +2,9 @@ import os
 import time
 import requests
 from datetime import datetime
-from collections import deque
 
 # =============================
-# CONFIG
+# CONFIGURAÇÃO
 # =============================
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -21,30 +20,35 @@ CHECK_INTERVAL = 60
 
 last_signal = None
 
+
 # =============================
 # TELEGRAM
 # =============================
 
-def send_telegram(msg):
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg,
-        "parse_mode": "HTML"
-    }
+def send_telegram(message):
 
     try:
+
+        url = "https://api.telegram.org/bot{}/sendMessage".format(
+            TELEGRAM_BOT_TOKEN
+        )
+
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        }
+
         requests.post(url, json=payload, timeout=10)
+
         print("Mensagem enviada")
 
     except Exception as e:
+
         print("Erro Telegram:", e)
 
 
 # =============================
-# PREÇO (CORRIGIDO)
+# PREÇOS
 # =============================
 
 def get_prices():
@@ -63,7 +67,6 @@ def get_prices():
 
         data = r.json()
 
-        # se Binance retornar erro
         if isinstance(data, dict):
             print("Erro Binance:", data)
             return None
@@ -134,25 +137,7 @@ def calculate_rsi(prices):
 
 
 # =============================
-# PREVISÃO
-# =============================
-
-def predict_crossover(ema9, ema21):
-
-    distance = ema9 - ema21
-
-    if abs(distance) < 0.03:
-
-        if distance > 0:
-            return "SELL_PREP"
-        else:
-            return "BUY_PREP"
-
-    return None
-
-
-# =============================
-# LOOP
+# LOOP PRINCIPAL
 # =============================
 
 def main():
@@ -162,9 +147,8 @@ def main():
     print("BOT ETH INICIADO")
 
     send_telegram(
-        "<b>BOT ETH INICIADO</b>\n"
-        "EMA 9/21 + RSI 14\n"
-        "Previsão antecipada"
+        "BOT ETH INICIADO\n"
+        "EMA 9/21 + RSI 14"
     )
 
     while True:
@@ -175,7 +159,7 @@ def main():
 
             if prices is None:
 
-                print("Sem preço... tentando novamente")
+                print("Sem preço...")
 
                 time.sleep(10)
 
@@ -189,5 +173,41 @@ def main():
             price = prices[-1]
 
             print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] "
-                f"Price
+                "[{}] Price {} | EMA9 {} | EMA21 {} | RSI {}".format(
+                    datetime.now().strftime("%H:%M:%S"),
+                    round(price, 2),
+                    round(ema9, 2),
+                    round(ema21, 2),
+                    round(rsi, 2)
+                )
+            )
+
+            # BUY
+
+            if ema9 > ema21 and rsi > 50:
+
+                if last_signal != "BUY":
+
+                    send_telegram("🟢 BUY")
+
+                    last_signal = "BUY"
+
+            # SELL
+
+            elif ema9 < ema21 and rsi < 50:
+
+                if last_signal != "SELL":
+
+                    send_telegram("🔴 SELL")
+
+                    last_signal = "SELL"
+
+        except Exception as e:
+
+            print("Erro geral:", e)
+
+        time.sleep(CHECK_INTERVAL)
+
+
+if __name__ == "__main__":
+    main()
