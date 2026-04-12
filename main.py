@@ -48,8 +48,9 @@ def enviar(msg):
 # ==========================
 
 def agora():
-    return datetime.utcnow() - timedelta(hours=3)
 
+    return datetime.now() - timedelta(hours=3)
+    
 # ==========================
 # PREÇO (CORRIGIDO)
 # ==========================
@@ -86,15 +87,27 @@ def get_candles(symbol):
         url = (
             "https://api.binance.com/api/v3/klines"
             f"?symbol={symbol}"
-            f"&interval={INTERVAL}"
+            "&interval=1m"
             "&limit=50"
         )
 
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=10)
 
         data = r.json()
 
+        # 🔴 SE VEIO ERRO DA BINANCE
+        if isinstance(data, dict):
+
+            print(
+                f"Resposta inválida {symbol}: {data}"
+            )
+
+            return None
+
         df = pd.DataFrame(data)
+
+        if df.empty:
+            return None
 
         df = df.iloc[:, 0:6]
 
