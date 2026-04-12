@@ -116,7 +116,7 @@ def get_data(symbol):
 
         print(f"Buscando candles de {symbol}")
 
-        url="https://api.binance.com/api/v3/klines"
+        url="https://data-api.binance.vision/api/v3/klines"
 
         params={
             "symbol":symbol,
@@ -132,7 +132,7 @@ def get_data(symbol):
 
         data=response.json()
 
-        # VALIDAÇÃO CRÍTICA
+        # Verifica se retornou lista
 
         if not isinstance(data,list):
 
@@ -144,9 +144,6 @@ def get_data(symbol):
 
         for candle in data:
 
-            if not isinstance(candle,list):
-                return None
-
             closes.append(float(candle[4]))
 
         return closes
@@ -156,6 +153,7 @@ def get_data(symbol):
         print("Erro dados",symbol,e)
 
         return None
+        
 
 # ==========================
 # PREÇO ATUAL
