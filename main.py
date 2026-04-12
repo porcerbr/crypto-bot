@@ -369,7 +369,6 @@ def enviar_resultado(symbol, resultado):
 # VERIFICAR RESULTADOS
 # ==========================
 
-
 def verificar_resultados():
 
     global wins
@@ -390,26 +389,27 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # últimos candles fechados
-        c1 = df.iloc[-2]
+        # Últimos candles fechados
+        c1 = df.iloc[-2]  # último fechado
         c2 = df.iloc[-3]
         c3 = df.iloc[-4]
 
         # ==========================
-        # ETAPA 0 → ENTRADA
+        # ENTRADA
         # ==========================
 
         if op["etapa"] == 0:
 
-            if agora_time >= op["tempo_entrada"]:
+            # ESPERAR FECHAR VELA
+            if agora_time >= op["tempo_entrada"] + timedelta(minutes=1):
 
-                preco_entrada = float(c2["close"])
-                preco_saida = float(c1["close"])
+                entrada_preco = float(c2["close"])
+                saida_preco = float(c1["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -428,28 +428,25 @@ def verificar_resultados():
                     op["etapa"] = 1
                     novas_operacoes.append(op)
 
-                    continue
-
             else:
 
                 novas_operacoes.append(op)
-                continue
 
         # ==========================
-        # ETAPA 1 → PROTEÇÃO 1
+        # PROTEÇÃO 1
         # ==========================
 
         elif op["etapa"] == 1:
 
-            if agora_time >= op["tempo_protecao1"]:
+            if agora_time >= op["tempo_protecao1"] + timedelta(minutes=1):
 
-                preco_entrada = float(c3["close"])
-                preco_saida = float(c2["close"])
+                entrada_preco = float(c3["close"])
+                saida_preco = float(c2["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -468,28 +465,25 @@ def verificar_resultados():
                     op["etapa"] = 2
                     novas_operacoes.append(op)
 
-                    continue
-
             else:
 
                 novas_operacoes.append(op)
-                continue
 
         # ==========================
-        # ETAPA 2 → PROTEÇÃO 2
+        # PROTEÇÃO 2
         # ==========================
 
         elif op["etapa"] == 2:
 
-            if agora_time >= op["tempo_protecao2"]:
+            if agora_time >= op["tempo_protecao2"] + timedelta(minutes=1):
 
-                preco_entrada = float(c2["close"])
-                preco_saida = float(c1["close"])
+                entrada_preco = float(c2["close"])
+                saida_preco = float(c1["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -515,11 +509,9 @@ def verificar_resultados():
             else:
 
                 novas_operacoes.append(op)
-                continue
 
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
-                     
 
 # ==========================
 # LOOP PRINCIPAL
