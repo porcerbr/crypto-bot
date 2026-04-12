@@ -301,7 +301,7 @@ def escolher_melhor_ativo():
 # GERAR SINAL
 # ==========================
 
-def gerar_sinal(symbol):
+def gerar_sinal(symbol, direcao):
 
     # 🔴 EVITAR DUPLICADO
     if ja_tem_operacao(symbol):
