@@ -93,29 +93,22 @@ def get_data(symbol):
         print(f"Erro dados {symbol}:", e)
         return None, None, None
 
-def get_price(symbol):
-    """
-    Retorna o preço atual do símbolo.
-    Tenta `/api/v3/ticker/price` primeiro【16†L642-L645】, senão `/api/v3/ticker/bookTicker`【16†L693-L700】.
-    """
+ def get_price(symbol):
     try:
         url = "https://api.binance.com/api/v3/ticker/price"
-        params = {"symbol": symbol}
-        data = requests.get(url, params=params).json()
-        return float(data["price"])
+        price = requests.get(url, params={"symbol":symbol}).json().get("price")
+        if price: 
+            return float(price)
     except:
-        # Fallback: best bid/ask price
-        try:
-            url = "https://api.binance.com/api/v3/ticker/bookTicker"
-            params = {"symbol": symbol}
-            data = requests.get(url, params=params).json()
-            # Usar média bid/ask se disponível
-            bid = float(data.get("bidPrice", 0))
-            ask = float(data.get("askPrice", 0))
-            if bid and ask:
-                return (bid + ask) / 2
-        except Exception as e:
-            print("Erro bookTicker:", e)
+        pass
+    try:
+        url = "https://api.binance.com/api/v3/ticker/bookTicker"
+        data = requests.get(url, params={"symbol":symbol}).json()
+        bid = float(data.get("bidPrice",0))
+        ask = float(data.get("askPrice",0))
+        return (bid+ask)/2 if bid and ask else None
+    except Exception as e:
+        print(f"Erro fallback preço {symbol}: {e}")
         return None
 
 # ==========================
