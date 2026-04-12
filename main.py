@@ -59,33 +59,30 @@ def get_price(symbol):
 
     try:
 
+        # converter BTCUSDT → BTC-USDT
+        kucoin_symbol = symbol.replace("USDT", "-USDT")
+
         url = (
-            "https://fapi.binance.com/fapi/v1/ticker/price"
-            f"?symbol={symbol}"
+            "https://api.kucoin.com/api/v1/market/orderbook/level1"
+            f"?symbol={kucoin_symbol}"
         )
 
         r = requests.get(url, timeout=10)
 
         data = r.json()
 
-        if isinstance(data, dict) and "price" in data:
+        if "data" in data:
 
-            return float(data["price"])
+            return float(data["data"]["price"])
 
-        else:
-
-            print(
-                f"Resposta inválida preço {symbol}: {data}"
-            )
-
-            return None
+        return None
 
     except Exception as e:
 
         print(f"Erro preço {symbol}: {e}")
 
         return None
-
+        
 # ==========================
 # CANDLES
 # ==========================
@@ -95,19 +92,19 @@ def get_candles(symbol):
 
     try:
 
+        kucoin_symbol = symbol.replace("USDT", "-USDT")
+
         url = (
-            "https://fapi.binance.com/fapi/v1/klines"
-            f"?symbol={symbol}"
-            "&interval=1m"
-            "&limit=50"
+            "https://api.kucoin.com/api/v1/market/candles"
+            f"?type=1min"
+            f"&symbol={kucoin_symbol}"
         )
 
         r = requests.get(url, timeout=10)
 
         data = r.json()
 
-        # 🔴 Se vier erro
-        if isinstance(data, dict):
+        if "data" not in data:
 
             print(
                 f"Resposta inválida {symbol}: {data}"
@@ -115,23 +112,24 @@ def get_candles(symbol):
 
             return None
 
-        df = pd.DataFrame(data)
+        candles = data["data"]
 
-        if df.empty:
-            return None
+        df = pd.DataFrame(candles)
 
         df = df.iloc[:, 0:6]
 
         df.columns = [
             "time",
             "open",
+            "close",
             "high",
             "low",
-            "close",
             "volume"
         ]
 
         df["close"] = df["close"].astype(float)
+
+        df = df[::-1]  # inverter ordem
 
         return df
 
