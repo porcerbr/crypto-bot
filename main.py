@@ -7,8 +7,8 @@ import pandas as pd
 # CONFIGURAÇÕES
 # ==========================
 
-TOKEN = "SEU_TOKEN_TELEGRAM"
-CHAT_ID = "SEU_CHAT_ID"
+TOKEN = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
+CHAT_ID = "1056795017"
 
 SYMBOLS = [
     "BTCUSDT",
