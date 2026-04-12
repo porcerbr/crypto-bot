@@ -11,13 +11,9 @@ SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT"]
 
 EMA_FAST = 9
 EMA_SLOW = 21
-
 RSI_PERIOD = 14
 
-CHECK_INTERVAL = 60
-
-# mínimo entre sinais
-MIN_SIGNAL_INTERVAL = 300  # 5 min
+SIGNAL_INTERVAL = 300  # 5 minutos
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -25,7 +21,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BOT_ATIVO = False
 LAST_UPDATE_ID = None
 
-last_signal_global = None
+last_signal_time = None
 
 wins = 0
 losses = 0
@@ -33,7 +29,7 @@ losses = 0
 operacoes_ativas = []
 
 # ==========================
-# HORÁRIO BR
+# HORÁRIO
 # ==========================
 
 def agora():
@@ -70,36 +66,35 @@ def verificar_comandos():
 
     try:
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-        params = {}
+        params={}
 
         if LAST_UPDATE_ID:
-            params["offset"] = LAST_UPDATE_ID + 1
+            params["offset"]=LAST_UPDATE_ID+1
 
-        data = requests.get(url, params=params).json()
+        data=requests.get(url,params=params).json()
 
         for update in data["result"]:
 
-            LAST_UPDATE_ID = update["update_id"]
+            LAST_UPDATE_ID=update["update_id"]
 
             if "message" not in update:
                 continue
 
-            texto = update["message"].get("text","")
+            texto=update["message"].get("text","")
 
-            if texto == "/start":
+            if texto=="/start":
 
-                BOT_ATIVO = True
+                BOT_ATIVO=True
                 enviar("🟢 BOT ATIVADO")
 
-            elif texto == "/stop":
+            elif texto=="/stop":
 
-                BOT_ATIVO = False
+                BOT_ATIVO=False
                 enviar("🔴 BOT PARADO")
 
     except:
-
         pass
 
 # ==========================
@@ -110,17 +105,17 @@ def get_data(symbol):
 
     try:
 
-        url = "https://data-api.binance.vision/api/v3/klines"
+        url="https://data-api.binance.vision/api/v3/klines"
 
-        params = {
-            "symbol": symbol,
-            "interval": "1m",
-            "limit": 50
+        params={
+            "symbol":symbol,
+            "interval":"1m",
+            "limit":50
         }
 
-        data = requests.get(url, params=params).json()
+        data=requests.get(url,params=params).json()
 
-        closes = [float(c[4]) for c in data]
+        closes=[float(c[4]) for c in data]
 
         return closes
 
@@ -132,11 +127,11 @@ def get_price(symbol):
 
     try:
 
-        url = "https://api.binance.com/api/v3/ticker/price"
+        url="https://api.binance.com/api/v3/ticker/price"
 
-        params = {"symbol": symbol}
+        params={"symbol":symbol}
 
-        data = requests.get(url, params=params).json()
+        data=requests.get(url,params=params).json()
 
         return float(data["price"])
 
@@ -148,67 +143,77 @@ def get_price(symbol):
 # INDICADORES
 # ==========================
 
-def ema(prices, period):
+def ema(prices,period):
 
-    k = 2 / (period + 1)
+    k=2/(period+1)
 
-    e = sum(prices[:period]) / period
+    e=sum(prices[:period])/period
 
     for p in prices[period:]:
-
-        e = (p - e) * k + e
+        e=(p-e)*k+e
 
     return e
 
 def rsi(prices):
 
-    gains = []
-    losses = []
+    gains=[]
+    losses=[]
 
-    for i in range(1, RSI_PERIOD + 1):
+    for i in range(1,RSI_PERIOD+1):
 
-        diff = prices[i] - prices[i - 1]
+        diff=prices[i]-prices[i-1]
 
-        gains.append(max(diff, 0))
-        losses.append(abs(min(diff, 0)))
+        gains.append(max(diff,0))
+        losses.append(abs(min(diff,0)))
 
-    avg_gain = sum(gains) / RSI_PERIOD
-    avg_loss = sum(losses) / RSI_PERIOD
+    avg_gain=sum(gains)/RSI_PERIOD
+    avg_loss=sum(losses)/RSI_PERIOD
 
-    if avg_loss == 0:
+    if avg_loss==0:
         return 100
 
-    rs = avg_gain / avg_loss
+    rs=avg_gain/avg_loss
 
-    return 100 - (100 / (1 + rs))
+    return 100-(100/(1+rs))
 
 # ==========================
-# NOVA LÓGICA
+# ESCOLHER MELHOR ATIVO
 # ==========================
 
-def gerar_sinal(symbol, closes):
+def escolher_ativo():
 
-    e9 = ema(closes, EMA_FAST)
-    e21 = ema(closes, EMA_SLOW)
+    melhor_symbol=None
+    melhor_score=0
+    melhor_direcao=None
 
-    r = rsi(closes)
+    for symbol in SYMBOLS:
 
-    print(
-        f"{symbol} | "
-        f"EMA9:{round(e9,2)} "
-        f"EMA21:{round(e21,2)} "
-        f"RSI:{round(r,1)}"
-    )
+        closes=get_data(symbol)
 
-    # tendência alta + pullback
-    if e9 > e21 and r < 45:
-        return "BUY"
+        if not closes:
+            continue
 
-    # tendência baixa + pullback
-    if e9 < e21 and r > 55:
-        return "SELL"
+        e9=ema(closes,EMA_FAST)
+        e21=ema(closes,EMA_SLOW)
 
-    return None
+        r=rsi(closes)
+
+        distancia=abs(e9-e21)
+
+        score=distancia
+
+        if e9>e21:
+            direcao="BUY"
+        else:
+            direcao="SELL"
+
+        if score>melhor_score:
+
+            melhor_score=score
+            melhor_symbol=symbol
+            melhor_direcao=direcao
+
+    return melhor_symbol,melhor_direcao
 
 # ==========================
 # RESULTADOS
@@ -219,42 +224,41 @@ def verificar_resultados():
     global wins
     global losses
 
-    agora_time = agora()
+    agora_time=agora()
 
-    novas = []
+    novas=[]
 
     for op in operacoes_ativas:
 
-        if agora_time >= op["tempo_resultado"]:
+        if agora_time>=op["tempo_resultado"]:
 
-            preco_atual = get_price(op["symbol"])
+            preco_atual=get_price(op["symbol"])
 
             if preco_atual is None:
-
                 novas.append(op)
                 continue
 
-            if op["direcao"] == "BUY":
+            if op["direcao"]=="BUY":
 
-                if preco_atual > op["preco"]:
-                    wins += 1
-                    resultado = "WIN"
+                if preco_atual>op["preco"]:
+                    wins+=1
+                    resultado="WIN"
                 else:
-                    losses += 1
-                    resultado = "LOSS"
+                    losses+=1
+                    resultado="LOSS"
 
             else:
 
-                if preco_atual < op["preco"]:
-                    wins += 1
-                    resultado = "WIN"
+                if preco_atual<op["preco"]:
+                    wins+=1
+                    resultado="WIN"
                 else:
-                    losses += 1
-                    resultado = "LOSS"
+                    losses+=1
+                    resultado="LOSS"
 
-            total = wins + losses
+            total=wins+losses
 
-            taxa = (wins / total) * 100
+            taxa=(wins/total)*100
 
             enviar(
                 "🏆 RESULTADO\n\n"
@@ -276,33 +280,33 @@ def verificar_resultados():
 # CRIAR SINAL
 # ==========================
 
-def criar_sinal(symbol, direcao):
+def criar_sinal(symbol,direcao):
 
-    global last_signal_global
+    global last_signal_time
 
-    agora_time = agora()
+    agora_time=agora()
 
-    entrada = agora_time + timedelta(minutes=2)
+    entrada=agora_time+timedelta(minutes=2)
 
-    resultado = entrada + timedelta(minutes=3)
+    resultado=entrada+timedelta(minutes=3)
 
-    preco = get_price(symbol)
+    preco=get_price(symbol)
 
     if preco is None:
         return
 
     operacoes_ativas.append({
 
-        "symbol": symbol,
-        "direcao": direcao,
-        "preco": preco,
-        "tempo_resultado": resultado
+        "symbol":symbol,
+        "direcao":direcao,
+        "preco":preco,
+        "tempo_resultado":resultado
 
     })
 
-    last_signal_global = agora_time
+    last_signal_time=agora_time
 
-    emoji = "🟢 COMPRA" if direcao == "BUY" else "🔴 VENDA"
+    emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
 
     enviar(
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
@@ -317,9 +321,9 @@ def criar_sinal(symbol, direcao):
 
 def main():
 
-    global last_signal_global
+    global last_signal_time
 
-    enviar("🤖 BOT FREQUENTE ATIVO")
+    enviar("🤖 BOT TEMPO CURTO ATIVO")
 
     while True:
 
@@ -329,46 +333,34 @@ def main():
 
         if BOT_ATIVO:
 
-            agora_time = agora()
+            agora_time=agora()
 
-            pode_enviar = False
+            pode=False
 
-            if last_signal_global is None:
-                pode_enviar = True
+            if last_signal_time is None:
+                pode=True
 
             else:
 
-                tempo = (
-                    agora_time - last_signal_global
+                tempo=(
+                    agora_time-last_signal_time
                 ).seconds
 
-                if tempo >= MIN_SIGNAL_INTERVAL:
-                    pode_enviar = True
+                if tempo>=SIGNAL_INTERVAL:
+                    pode=True
 
-            if pode_enviar:
+            if pode:
 
-                for symbol in SYMBOLS:
+                symbol,direcao=escolher_ativo()
 
-                    closes = get_data(symbol)
+                if symbol:
 
-                    if not closes:
-                        continue
-
-                    direcao = gerar_sinal(
+                    criar_sinal(
                         symbol,
-                        closes
+                        direcao
                     )
 
-                    if direcao:
+        time.sleep(60)
 
-                        criar_sinal(
-                            symbol,
-                            direcao
-                        )
-
-                        break
-
-        time.sleep(CHECK_INTERVAL)
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
