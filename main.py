@@ -15,7 +15,9 @@ EMA_SLOW = 21
 RSI_PERIOD = 14
 
 CHECK_INTERVAL = 60
-COOLDOWN_MINUTES = 2
+
+# mínimo entre sinais
+MIN_SIGNAL_INTERVAL = 300  # 5 min
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -23,7 +25,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BOT_ATIVO = False
 LAST_UPDATE_ID = None
 
-last_signal_time = {s: None for s in SYMBOLS}
+last_signal_global = None
 
 wins = 0
 losses = 0
@@ -43,9 +45,9 @@ def agora():
 
 def enviar(msg):
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
     try:
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
         requests.post(
             url,
@@ -66,14 +68,14 @@ def verificar_comandos():
     global BOT_ATIVO
     global LAST_UPDATE_ID
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-
-    params = {}
-
-    if LAST_UPDATE_ID:
-        params["offset"] = LAST_UPDATE_ID + 1
-
     try:
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+
+        params = {}
+
+        if LAST_UPDATE_ID:
+            params["offset"] = LAST_UPDATE_ID + 1
 
         data = requests.get(url, params=params).json()
 
@@ -181,36 +183,32 @@ def rsi(prices):
     return 100 - (100 / (1 + rs))
 
 # ==========================
-# SINAL
+# NOVA LÓGICA
 # ==========================
 
 def gerar_sinal(symbol, closes):
 
-    try:
+    e9 = ema(closes, EMA_FAST)
+    e21 = ema(closes, EMA_SLOW)
 
-        e9 = ema(closes, EMA_FAST)
-        e21 = ema(closes, EMA_SLOW)
+    r = rsi(closes)
 
-        r = rsi(closes)
+    print(
+        f"{symbol} | "
+        f"EMA9:{round(e9,2)} "
+        f"EMA21:{round(e21,2)} "
+        f"RSI:{round(r,1)}"
+    )
 
-        print(
-            f"{symbol} | "
-            f"EMA9:{round(e9,2)} "
-            f"EMA21:{round(e21,2)} "
-            f"RSI:{round(r,1)}"
-        )
+    # tendência alta + pullback
+    if e9 > e21 and r < 45:
+        return "BUY"
 
-        if e9 > e21 and r > 50:
-            return "BUY"
+    # tendência baixa + pullback
+    if e9 < e21 and r > 55:
+        return "SELL"
 
-        if e9 < e21 and r < 50:
-            return "SELL"
-
-        return None
-
-    except:
-
-        return None
+    return None
 
 # ==========================
 # RESULTADOS
@@ -232,6 +230,7 @@ def verificar_resultados():
             preco_atual = get_price(op["symbol"])
 
             if preco_atual is None:
+
                 novas.append(op)
                 continue
 
@@ -279,6 +278,8 @@ def verificar_resultados():
 
 def criar_sinal(symbol, direcao):
 
+    global last_signal_global
+
     agora_time = agora()
 
     entrada = agora_time + timedelta(minutes=2)
@@ -299,7 +300,7 @@ def criar_sinal(symbol, direcao):
 
     })
 
-    print("Operação registrada:", symbol)
+    last_signal_global = agora_time
 
     emoji = "🟢 COMPRA" if direcao == "BUY" else "🔴 VENDA"
 
@@ -316,7 +317,9 @@ def criar_sinal(symbol, direcao):
 
 def main():
 
-    enviar("🤖 BOT OPERACIONAL")
+    global last_signal_global
+
+    enviar("🤖 BOT FREQUENTE ATIVO")
 
     while True:
 
@@ -326,33 +329,44 @@ def main():
 
         if BOT_ATIVO:
 
-            for symbol in SYMBOLS:
+            agora_time = agora()
 
-                closes = get_data(symbol)
+            pode_enviar = False
 
-                if not closes:
-                    continue
+            if last_signal_global is None:
+                pode_enviar = True
 
-                direcao = gerar_sinal(
-                    symbol,
-                    closes
-                )
+            else:
 
-                if direcao:
+                tempo = (
+                    agora_time - last_signal_global
+                ).seconds
 
-                    agora_time = agora()
+                if tempo >= MIN_SIGNAL_INTERVAL:
+                    pode_enviar = True
 
-                    ultimo = last_signal_time[symbol]
+            if pode_enviar:
 
-                    if (
-                        ultimo is None or
-                        (agora_time - ultimo).seconds >
-                        COOLDOWN_MINUTES * 60
-                    ):
+                for symbol in SYMBOLS:
 
-                        criar_sinal(symbol, direcao)
+                    closes = get_data(symbol)
 
-                        last_signal_time[symbol] = agora_time
+                    if not closes:
+                        continue
+
+                    direcao = gerar_sinal(
+                        symbol,
+                        closes
+                    )
+
+                    if direcao:
+
+                        criar_sinal(
+                            symbol,
+                            direcao
+                        )
+
+                        break
 
         time.sleep(CHECK_INTERVAL)
 
