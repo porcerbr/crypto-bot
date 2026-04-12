@@ -27,9 +27,11 @@ LAST_UPDATE_ID = None
 
 last_signal_time = {s: None for s in SYMBOLS}
 
+# RESULTADOS
 wins = 0
 losses = 0
 
+# operações futuras
 operacoes_ativas = []
 
 # ==========================
@@ -49,16 +51,20 @@ def enviar(msg):
 
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-        requests.post(url,json={
-            "chat_id":CHAT_ID,
-            "text":msg
-        })
+        requests.post(
+            url,
+            json={
+                "chat_id": CHAT_ID,
+                "text": msg
+            }
+        )
 
         print("[Telegram] OK")
 
     except Exception as e:
 
-        print("Erro Telegram:",e)
+        print("Erro Telegram:", e)
+
 
 def verificar_comandos():
 
@@ -67,37 +73,37 @@ def verificar_comandos():
 
     try:
 
-        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-        params={}
+        params = {}
 
         if LAST_UPDATE_ID:
-            params["offset"]=LAST_UPDATE_ID+1
+            params["offset"] = LAST_UPDATE_ID + 1
 
-        data=requests.get(url,params=params).json()
+        data = requests.get(url, params=params).json()
 
         for update in data["result"]:
 
-            LAST_UPDATE_ID=update["update_id"]
+            LAST_UPDATE_ID = update["update_id"]
 
             if "message" not in update:
                 continue
 
-            texto=update["message"].get("text","")
+            texto = update["message"].get("text", "")
 
-            if texto=="/start":
+            if texto == "/start":
 
-                BOT_ATIVO=True
+                BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
 
-            elif texto=="/stop":
+            elif texto == "/stop":
 
-                BOT_ATIVO=False
+                BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
 
     except Exception as e:
 
-        print("Erro comandos:",e)
+        print("Erro comandos:", e)
 
 # ==========================
 # DADOS
@@ -107,39 +113,38 @@ def get_data(symbol):
 
     try:
 
-        print(f"Buscando {symbol}")
+        url = "https://data-api.binance.vision/api/v3/klines"
 
-        url="https://data-api.binance.vision/api/v3/klines"
-
-        params={
-            "symbol":symbol,
-            "interval":"1m",
-            "limit":100
+        params = {
+            "symbol": symbol,
+            "interval": "1m",
+            "limit": 100
         }
 
-        data=requests.get(url,params=params).json()
+        data = requests.get(url, params=params).json()
 
-        closes=[float(c[4]) for c in data]
-        highs=[float(c[2]) for c in data]
-        lows=[float(c[3]) for c in data]
+        closes = [float(c[4]) for c in data]
+        highs = [float(c[2]) for c in data]
+        lows = [float(c[3]) for c in data]
 
-        return closes,highs,lows
+        return closes, highs, lows
 
     except Exception as e:
 
-        print("Erro dados:",symbol,e)
+        print("Erro dados:", symbol, e)
 
-        return None,None,None
+        return None, None, None
+
 
 def get_price(symbol):
 
     try:
 
-        url="https://api.binance.com/api/v3/ticker/price"
+        url = "https://api.binance.com/api/v3/ticker/price"
 
-        params={"symbol":symbol}
+        params = {"symbol": symbol}
 
-        data=requests.get(url,params=params).json()
+        data = requests.get(url, params=params).json()
 
         return float(data["price"])
 
@@ -151,48 +156,51 @@ def get_price(symbol):
 # INDICADORES
 # ==========================
 
-def ema(prices,period):
+def ema(prices, period):
 
-    k=2/(period+1)
+    k = 2 / (period + 1)
 
-    e=sum(prices[:period])/period
+    e = sum(prices[:period]) / period
 
     for p in prices[period:]:
-        e=(p-e)*k+e
+
+        e = (p - e) * k + e
 
     return e
 
+
 def rsi(prices):
 
-    gains=[]
-    losses=[]
+    gains = []
+    losses = []
 
-    for i in range(1,RSI_PERIOD+1):
+    for i in range(1, RSI_PERIOD + 1):
 
-        diff=prices[i]-prices[i-1]
+        diff = prices[i] - prices[i - 1]
 
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
+        gains.append(max(diff, 0))
+        losses.append(abs(min(diff, 0)))
 
-    avg_gain=sum(gains)/RSI_PERIOD
-    avg_loss=sum(losses)/RSI_PERIOD
+    avg_gain = sum(gains) / RSI_PERIOD
+    avg_loss = sum(losses) / RSI_PERIOD
 
-    if avg_loss==0:
+    if avg_loss == 0:
         return 100
 
-    rs=avg_gain/avg_loss
+    rs = avg_gain / avg_loss
 
-    return 100-(100/(1+rs))
+    return 100 - (100 / (1 + rs))
 
-def atr(highs,lows):
 
-    trs=[]
+def atr(highs, lows):
 
-    for i in range(1,ATR_PERIOD):
+    trs = []
 
-        trs.append(highs[i]-lows[i])
+    for i in range(1, ATR_PERIOD):
 
-    return sum(trs)/len(trs)
+        trs.append(highs[i] - lows[i])
+
+    return sum(trs) / len(trs)
 
 # ==========================
 # LÓGICA
@@ -202,14 +210,14 @@ def gerar_sinal(symbol, closes, highs, lows):
 
     try:
 
-        e9=ema(closes,EMA_FAST)
-        e21=ema(closes,EMA_SLOW)
-        e50=ema(closes,EMA_TREND)
+        e9 = ema(closes, EMA_FAST)
+        e21 = ema(closes, EMA_SLOW)
+        e50 = ema(closes, EMA_TREND)
 
-        r=rsi(closes)
-        vol=atr(highs,lows)
+        r = rsi(closes)
+        vol = atr(highs, lows)
 
-        distancia=abs(e9-e21)
+        distancia = abs(e9 - e21)
 
         print(
             f"{symbol} | "
@@ -224,17 +232,17 @@ def gerar_sinal(symbol, closes, highs, lows):
         if distancia < 0.04:
             return None
 
-        if e9>e21 and e9>e50 and r>52:
+        if e9 > e21 and e9 > e50 and r > 52:
             return "BUY"
 
-        if e9<e21 and e9<e50 and r<48:
+        if e9 < e21 and e9 < e50 and r < 48:
             return "SELL"
 
         return None
 
     except Exception as e:
 
-        print("Erro sinal:",symbol,e)
+        print("Erro sinal:", symbol, e)
 
         return None
 
@@ -247,43 +255,41 @@ def verificar_resultados():
     global wins
     global losses
 
-    agora_time=agora()
+    agora_time = agora()
 
-    novas=[]
+    novas = []
 
     for op in operacoes_ativas:
 
-        tempo=(agora_time-op["tempo"]).seconds
+        if agora_time >= op["tempo_resultado"]:
 
-        if tempo>=180:
-
-            preco_atual=get_price(op["symbol"])
+            preco_atual = get_price(op["symbol"])
 
             if preco_atual is None:
+
                 novas.append(op)
                 continue
 
-            if op["direcao"]=="BUY":
+            if op["direcao"] == "BUY":
 
-                if preco_atual>op["preco"]:
-                    wins+=1
-                    resultado="WIN"
+                if preco_atual > op["preco"]:
+                    wins += 1
+                    resultado = "WIN"
                 else:
-                    losses+=1
-                    resultado="LOSS"
+                    losses += 1
+                    resultado = "LOSS"
 
             else:
 
-                if preco_atual<op["preco"]:
-                    wins+=1
-                    resultado="WIN"
+                if preco_atual < op["preco"]:
+                    wins += 1
+                    resultado = "WIN"
                 else:
-                    losses+=1
-                    resultado="LOSS"
+                    losses += 1
+                    resultado = "LOSS"
 
-            total=wins+losses
-
-            taxa=(wins/total)*100
+            total = wins + losses
+            taxa = (wins / total) * 100
 
             enviar(
                 "🏆 RESULTADO\n\n"
@@ -302,41 +308,33 @@ def verificar_resultados():
     operacoes_ativas.extend(novas)
 
 # ==========================
-# MENSAGENS
+# SINAIS
 # ==========================
 
-def preparar_msg(symbol,direcao):
+def criar_sinal(symbol, direcao):
 
-    entrada=agora()+timedelta(minutes=2)
+    agora_time = agora()
 
-    emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
+    entrada = agora_time + timedelta(minutes=2)
+    resultado = entrada + timedelta(minutes=3)
 
-    return(
-        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
-        f"🌎 {symbol}\n"
-        f"{emoji}\n"
-        f"⏰ Entrada: {entrada.strftime('%H:%M')}"
-    )
-
-def confirmar_msg(symbol,direcao):
-
-    entrada=agora()+timedelta(minutes=1)
-
-    preco=get_price(symbol)
+    preco = get_price(symbol)
 
     if preco:
 
         operacoes_ativas.append({
-            "symbol":symbol,
-            "direcao":direcao,
-            "preco":preco,
-            "tempo":agora()
+
+            "symbol": symbol,
+            "direcao": direcao,
+            "preco": preco,
+            "tempo_resultado": resultado
+
         })
 
-    emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
+    emoji = "🟢 COMPRA" if direcao == "BUY" else "🔴 VENDA"
 
-    return(
-        "✅ ENTRADA CONFIRMADA\n\n"
+    enviar(
+        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
         f"🌎 {symbol}\n"
         f"{emoji}\n"
         f"⏰ Entrada: {entrada.strftime('%H:%M')}"
@@ -348,7 +346,7 @@ def confirmar_msg(symbol,direcao):
 
 def main():
 
-    enviar("🤖 BOT ESTÁVEL INICIADO")
+    enviar("🤖 BOT ESTÁVEL COM WIN/LOSS")
 
     while True:
 
@@ -360,12 +358,12 @@ def main():
 
             for symbol in SYMBOLS:
 
-                closes,highs,lows=get_data(symbol)
+                closes, highs, lows = get_data(symbol)
 
                 if not closes:
                     continue
 
-                direcao=gerar_sinal(
+                direcao = gerar_sinal(
                     symbol,
                     closes,
                     highs,
@@ -374,35 +372,21 @@ def main():
 
                 if direcao:
 
-                    agora_time=agora()
+                    agora_time = agora()
 
-                    ultimo=last_signal_time[symbol]
+                    ultimo = last_signal_time[symbol]
 
-                    if(
+                    if (
                         ultimo is None or
-                        (agora_time-ultimo).seconds>
-                        COOLDOWN_MINUTES*60
+                        (agora_time - ultimo).seconds >
+                        COOLDOWN_MINUTES * 60
                     ):
 
-                        enviar(
-                            preparar_msg(
-                                symbol,
-                                direcao
-                            )
-                        )
+                        criar_sinal(symbol, direcao)
 
-                        time.sleep(60)
-
-                        enviar(
-                            confirmar_msg(
-                                symbol,
-                                direcao
-                            )
-                        )
-
-                        last_signal_time[symbol]=agora_time
+                        last_signal_time[symbol] = agora_time
 
         time.sleep(CHECK_INTERVAL)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
