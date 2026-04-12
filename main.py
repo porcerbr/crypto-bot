@@ -136,14 +136,11 @@ def get_data(symbol):
         data=response.json()
 
         if not isinstance(data,list):
-
-            print("Resposta inválida:", data)
             return None
 
         closes=[]
 
         for candle in data:
-
             closes.append(float(candle[4]))
 
         return closes
@@ -197,7 +194,6 @@ def ema(prices,period):
     e=sum(prices[:period])/period
 
     for p in prices[period:]:
-
         e=(p-e)*k+e
 
     return e
@@ -241,6 +237,28 @@ def escolher_ativo():
     return melhor_symbol,melhor_direcao
 
 # ==========================
+# ENVIAR RESULTADO
+# ==========================
+
+def enviar_resultado(symbol, resultado):
+
+    global wins
+    global losses
+
+    total = wins + losses
+
+    taxa = (wins / total) * 100 if total > 0 else 0
+
+    enviar(
+        "🏆 RESULTADO\n\n"
+        f"🌎 {symbol}\n"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Precisão: {round(taxa,1)}%"
+    )
+
+# ==========================
 # CRIAR SINAL
 # ==========================
 
@@ -254,12 +272,9 @@ def criar_sinal(symbol,direcao):
     protecao1=entrada+timedelta(minutes=1)
     protecao2=entrada+timedelta(minutes=2)
 
-    resultado=protecao2+timedelta(minutes=1)
-
     preco=get_price(symbol)
 
     if preco is None:
-        print("Sem preço...")
         return
 
     operacoes_ativas.append({
@@ -267,7 +282,12 @@ def criar_sinal(symbol,direcao):
         "symbol":symbol,
         "direcao":direcao,
         "preco":preco,
-        "tempo_resultado":resultado
+
+        "etapa":0,
+
+        "tempo_entrada":entrada,
+        "tempo_protecao1":protecao1,
+        "tempo_protecao2":protecao2
 
     })
 
@@ -285,7 +305,7 @@ def criar_sinal(symbol,direcao):
     )
 
 # ==========================
-# RESULTADOS (WIN/LOSS)
+# RESULTADOS INTELIGENTES
 # ==========================
 
 def verificar_resultados():
@@ -299,47 +319,100 @@ def verificar_resultados():
 
     for op in operacoes_ativas:
 
-        if agora_time >= op["tempo_resultado"]:
+        # ENTRADA
+        if op["etapa"] == 0:
 
-            print("Verificando resultado:", op["symbol"])
+            if agora_time >= op["tempo_entrada"]:
 
-            preco_final = get_price(op["symbol"])
+                preco = get_price(op["symbol"])
 
-            if preco_final is None:
+                if preco is None:
+                    novas_operacoes.append(op)
+                    continue
 
+                if op["direcao"] == "BUY":
+
+                    if preco > op["preco"]:
+
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Entrada")
+                        continue
+
+                else:
+
+                    if preco < op["preco"]:
+
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Entrada")
+                        continue
+
+                op["etapa"] = 1
                 novas_operacoes.append(op)
-                continue
 
-            if op["direcao"] == "BUY":
+        # PROTEÇÃO 1
+        elif op["etapa"] == 1:
 
-                if preco_final > op["preco"]:
-                    wins += 1
-                    resultado = "WIN"
+            if agora_time >= op["tempo_protecao1"]:
+
+                preco = get_price(op["symbol"])
+
+                if preco is None:
+                    novas_operacoes.append(op)
+                    continue
+
+                if op["direcao"] == "BUY":
+
+                    if preco > op["preco"]:
+
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Proteção 1")
+                        continue
+
                 else:
-                    losses += 1
-                    resultado = "LOSS"
 
-            else:
+                    if preco < op["preco"]:
 
-                if preco_final < op["preco"]:
-                    wins += 1
-                    resultado = "WIN"
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Proteção 1")
+                        continue
+
+                op["etapa"] = 2
+                novas_operacoes.append(op)
+
+        # PROTEÇÃO 2
+        elif op["etapa"] == 2:
+
+            if agora_time >= op["tempo_protecao2"]:
+
+                preco = get_price(op["symbol"])
+
+                if preco is None:
+                    novas_operacoes.append(op)
+                    continue
+
+                if op["direcao"] == "BUY":
+
+                    if preco > op["preco"]:
+
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Proteção 2")
+
+                    else:
+
+                        losses += 1
+                        enviar_resultado(op["symbol"],"LOSS após Proteção 2")
+
                 else:
-                    losses += 1
-                    resultado = "LOSS"
 
-            total = wins + losses
+                    if preco < op["preco"]:
 
-            taxa = (wins / total) * 100
+                        wins += 1
+                        enviar_resultado(op["symbol"],"WIN na Proteção 2")
 
-            enviar(
-                "🏆 RESULTADO\n\n"
-                f"🌎 {op['symbol']}\n"
-                f"{'✅ WIN' if resultado=='WIN' else '❌ LOSS'}\n\n"
-                f"Wins: {wins}\n"
-                f"Losses: {losses}\n"
-                f"Precisão: {round(taxa,1)}%"
-            )
+                    else:
+
+                        losses += 1
+                        enviar_resultado(op["symbol"],"LOSS após Proteção 2")
 
         else:
 
@@ -386,10 +459,7 @@ def main():
 
                 if symbol:
 
-                    criar_sinal(
-                        symbol,
-                        direcao
-                    )
+                    criar_sinal(symbol,direcao)
 
         time.sleep(60)
 
