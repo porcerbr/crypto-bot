@@ -301,39 +301,10 @@ def escolher_melhor_ativo():
 # GERAR SINAL
 # ==========================
 
-def gerar_sinal(symbol, direcao):
+def criar_sinal(symbol, direcao):
 
     # 🔴 EVITAR DUPLICADO
     if ja_tem_operacao(symbol):
-        return
-
-    df = get_candles(symbol)
-
-    if df is None:
-        return
-
-    df = calcular_indicadores(df)
-
-    ultima = df.iloc[-1]
-    anterior = df.iloc[-2]
-
-    ema9 = ultima["EMA9"]
-    ema21 = ultima["EMA21"]
-
-    ema9_ant = anterior["EMA9"]
-    ema21_ant = anterior["EMA21"]
-
-    rsi = ultima["RSI"]
-
-    direcao = None
-
-    if ema9_ant < ema21_ant and ema9 > ema21 and rsi > 50:
-        direcao = "BUY"
-
-    elif ema9_ant > ema21_ant and ema9 < ema21 and rsi < 50:
-        direcao = "SELL"
-
-    if direcao is None:
         return
 
     preco = get_price(symbol)
@@ -370,6 +341,7 @@ def gerar_sinal(symbol, direcao):
         f"⚠️ Proteção 1 {p1.strftime('%H:%M')}\n"
         f"⚠️ Proteção 2 {p2.strftime('%H:%M')}"
     )
+
 
 # ==========================
 # RESULTADO
