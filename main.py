@@ -543,7 +543,7 @@ def verificar_resultados():
 # LOOP PRINCIPAL
 # ==========================
 
- def main():
+def main():
 
     global last_signal_time
 
