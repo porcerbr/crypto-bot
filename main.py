@@ -369,6 +369,7 @@ def enviar_resultado(symbol, resultado):
 # VERIFICAR RESULTADOS
 # ==========================
 
+
 def verificar_resultados():
 
     global wins
@@ -385,14 +386,15 @@ def verificar_resultados():
 
         df = get_candles(symbol)
 
-        if df is None:
+        if df is None or len(df) < 5:
             novas_operacoes.append(op)
             continue
 
-        # pegar últimos candles
-        ultimo = df.iloc[-1]
-        anterior = df.iloc[-2]
-        anterior2 = df.iloc[-3]
+        # últimos candles
+        c0 = df.iloc[-1]  # atual
+        c1 = df.iloc[-2]  # último fechado
+        c2 = df.iloc[-3]
+        c3 = df.iloc[-4]
 
         # ==========================
         # ENTRADA
@@ -402,13 +404,13 @@ def verificar_resultados():
 
             if agora_time >= op["tempo_entrada"]:
 
-                preco_entrada = float(anterior["close"])
-                preco_saida = float(ultimo["close"])
+                entrada_preco = float(c2["close"])
+                saida_preco = float(c1["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -439,13 +441,13 @@ def verificar_resultados():
 
             if agora_time >= op["tempo_protecao1"]:
 
-                preco_entrada = float(anterior2["close"])
-                preco_saida = float(anterior["close"])
+                entrada_preco = float(c3["close"])
+                saida_preco = float(c2["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -476,13 +478,13 @@ def verificar_resultados():
 
             if agora_time >= op["tempo_protecao2"]:
 
-                preco_entrada = float(anterior["close"])
-                preco_saida = float(ultimo["close"])
+                entrada_preco = float(c2["close"])
+                saida_preco = float(c1["close"])
 
                 win = (
-                    preco_saida > preco_entrada
+                    saida_preco > entrada_preco
                     if direcao == "BUY"
-                    else preco_saida < preco_entrada
+                    else saida_preco < entrada_preco
                 )
 
                 if win:
@@ -511,7 +513,7 @@ def verificar_resultados():
 
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
-                    
+                     
 
 # ==========================
 # LOOP PRINCIPAL
