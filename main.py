@@ -555,11 +555,12 @@ def main():
 
             if BOT_ATIVO:
 
+                # Escolher melhor ativo
                 symbol, direcao = escolher_melhor_ativo()
 
-if symbol:
+                if symbol:
 
-    criar_sinal(symbol, direcao)
+                    criar_sinal(symbol, direcao)
 
                 verificar_resultados()
 
@@ -570,6 +571,7 @@ if symbol:
             print("Erro geral:", e)
 
             time.sleep(10)
+
             
 # ==========================
 
