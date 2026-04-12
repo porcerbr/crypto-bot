@@ -222,11 +222,29 @@ def calcular_indicadores(df):
 
     return df
 
+#==================
+#VERIFICAR SE JA TEM OPERAÇÃO 
+#==================
+
+def ja_tem_operacao(symbol):
+
+    for op in operacoes_ativas:
+
+        if op["symbol"] == symbol:
+
+            return True
+
+    return False
+
 # ==========================
 # GERAR SINAL
 # ==========================
 
 def gerar_sinal(symbol):
+
+    # 🔴 EVITAR DUPLICADO
+    if ja_tem_operacao(symbol):
+        return
 
     df = get_candles(symbol)
 
