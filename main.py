@@ -31,17 +31,25 @@ operacoes_ativas = []
 
 def enviar(msg):
 
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": msg
-    }
-
     try:
-        requests.post(url, data=payload)
-    except:
-        pass
+
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+
+        payload = {
+            "chat_id": CHAT_ID,
+            "text": msg
+        }
+
+        r = requests.post(url, data=payload, timeout=10)
+
+        print("Telegram status:", r.status_code)
+
+        if r.status_code != 200:
+            print("Erro Telegram:", r.text)
+
+    except Exception as e:
+
+        print("Erro envio Telegram:", e)
 
 # ==========================
 # TEMPO
@@ -403,7 +411,9 @@ def verificar_resultados():
 
 def main():
 
-    enviar("🤖 BOT INICIADO")
+    print("BOT INICIANDO...")
+
+    enviar("🤖 BOT INICIADO COM SUCESSO")
 
     while True:
 
