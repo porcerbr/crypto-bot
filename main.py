@@ -54,7 +54,7 @@ def enviar(msg):
             "text":msg
         })
 
-        print("[Telegram] Mensagem enviada")
+        print("[Telegram] OK")
 
     except Exception as e:
 
@@ -69,16 +69,16 @@ def verificar_comandos():
 
         url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-        data=requests.get(url).json()
+        params={}
+
+        if LAST_UPDATE_ID:
+            params["offset"]=LAST_UPDATE_ID+1
+
+        data=requests.get(url,params=params).json()
 
         for update in data["result"]:
 
-            uid=update["update_id"]
-
-            if LAST_UPDATE_ID and uid<=LAST_UPDATE_ID:
-                continue
-
-            LAST_UPDATE_ID=uid
+            LAST_UPDATE_ID=update["update_id"]
 
             if "message" not in update:
                 continue
@@ -133,13 +133,19 @@ def get_data(symbol):
 
 def get_price(symbol):
 
-    url="https://api.binance.com/api/v3/ticker/price"
+    try:
 
-    params={"symbol":symbol}
+        url="https://api.binance.com/api/v3/ticker/price"
 
-    data=requests.get(url,params=params).json()
+        params={"symbol":symbol}
 
-    return float(data["price"])
+        data=requests.get(url,params=params).json()
+
+        return float(data["price"])
+
+    except:
+
+        return None
 
 # ==========================
 # INDICADORES
@@ -241,28 +247,25 @@ def verificar_resultados():
     global wins
     global losses
 
-    agora_time = agora()
+    agora_time=agora()
 
-    novas_operacoes=[]
+    novas=[]
 
     for op in operacoes_ativas:
 
-        tempo_passado = (
-            agora_time - op["tempo"]
-        ).seconds
+        tempo=(agora_time-op["tempo"]).seconds
 
-        if tempo_passado >= 180:
+        if tempo>=180:
 
-            preco_atual = get_price(
-                op["symbol"]
-            )
+            preco_atual=get_price(op["symbol"])
 
-            direcao = op["direcao"]
-            preco_entrada = op["preco"]
+            if preco_atual is None:
+                novas.append(op)
+                continue
 
-            if direcao=="BUY":
+            if op["direcao"]=="BUY":
 
-                if preco_atual > preco_entrada:
+                if preco_atual>op["preco"]:
                     wins+=1
                     resultado="WIN"
                 else:
@@ -271,25 +274,21 @@ def verificar_resultados():
 
             else:
 
-                if preco_atual < preco_entrada:
+                if preco_atual<op["preco"]:
                     wins+=1
                     resultado="WIN"
                 else:
                     losses+=1
                     resultado="LOSS"
 
-            total = wins + losses
+            total=wins+losses
 
-            taxa = (wins/total)*100
+            taxa=(wins/total)*100
 
             enviar(
-
                 "🏆 RESULTADO\n\n"
-
-                f"🌎 Ativo: {op['symbol']}\n"
-                f"📊 Resultado: {'✅ WIN' if resultado=='WIN' else '❌ LOSS'}\n\n"
-
-                "📊 Estatísticas:\n"
+                f"🌎 {op['symbol']}\n"
+                f"{'✅ WIN' if resultado=='WIN' else '❌ LOSS'}\n\n"
                 f"Wins: {wins}\n"
                 f"Loss: {losses}\n"
                 f"Precisão: {round(taxa,1)}%"
@@ -297,10 +296,10 @@ def verificar_resultados():
 
         else:
 
-            novas_operacoes.append(op)
+            novas.append(op)
 
     operacoes_ativas.clear()
-    operacoes_ativas.extend(novas_operacoes)
+    operacoes_ativas.extend(novas)
 
 # ==========================
 # MENSAGENS
@@ -313,45 +312,34 @@ def preparar_msg(symbol,direcao):
     emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
 
     return(
-
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
-
-        f"🌎 Ativo: {symbol}\n"
-        f"📊 Estratégia: {emoji}\n"
-        f"⏰ Entrada prevista: {entrada.strftime('%H:%M')}"
+        f"🌎 {symbol}\n"
+        f"{emoji}\n"
+        f"⏰ Entrada: {entrada.strftime('%H:%M')}"
     )
 
 def confirmar_msg(symbol,direcao):
 
     entrada=agora()+timedelta(minutes=1)
 
-    p1=entrada+timedelta(minutes=1)
-    p2=entrada+timedelta(minutes=2)
+    preco=get_price(symbol)
+
+    if preco:
+
+        operacoes_ativas.append({
+            "symbol":symbol,
+            "direcao":direcao,
+            "preco":preco,
+            "tempo":agora()
+        })
 
     emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
 
-    preco_entrada=get_price(symbol)
-
-    operacoes_ativas.append({
-
-        "symbol":symbol,
-        "direcao":direcao,
-        "preco":preco_entrada,
-        "tempo":agora()
-
-    })
-
     return(
-
-        "✅ ENTRADA CONFIRMADA ✅\n\n"
-
-        f"🌎 Ativo: {symbol}\n"
-        "⏳ Expiração: M1\n"
-        f"📊 Estratégia: {emoji}\n"
-        f"⏰ Entrada: {entrada.strftime('%H:%M')}\n\n"
-
-        f"⚠️ Proteção 1: {p1.strftime('%H:%M')}\n"
-        f"⚠️ Proteção 2: {p2.strftime('%H:%M')}"
+        "✅ ENTRADA CONFIRMADA\n\n"
+        f"🌎 {symbol}\n"
+        f"{emoji}\n"
+        f"⏰ Entrada: {entrada.strftime('%H:%M')}"
     )
 
 # ==========================
@@ -360,7 +348,7 @@ def confirmar_msg(symbol,direcao):
 
 def main():
 
-    enviar("🤖 BOT COM WIN/LOSS ATIVO")
+    enviar("🤖 BOT ESTÁVEL INICIADO")
 
     while True:
 
@@ -392,7 +380,7 @@ def main():
 
                     if(
                         ultimo is None or
-                        (agora_time-ultimo).seconds >
+                        (agora_time-ultimo).seconds>
                         COOLDOWN_MINUTES*60
                     ):
 
