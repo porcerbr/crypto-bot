@@ -25,6 +25,9 @@ losses = 0
 
 operacoes_ativas = []
 
+last_signal_time = None
+SIGNAL_INTERVAL = 300  # 5 minutos
+
 # ==========================
 # TELEGRAM
 # ==========================
@@ -248,7 +251,6 @@ def escolher_melhor_ativo():
 
     for symbol in SYMBOLS:
 
-        # evitar ativo já em operação
         if ja_tem_operacao(symbol):
             continue
 
@@ -260,31 +262,31 @@ def escolher_melhor_ativo():
         df = calcular_indicadores(df)
 
         ultima = df.iloc[-1]
-        anterior = df.iloc[-2]
 
         ema9 = ultima["EMA9"]
         ema21 = ultima["EMA21"]
 
-        ema9_ant = anterior["EMA9"]
-        ema21_ant = anterior["EMA21"]
-
         rsi = ultima["RSI"]
 
-        direcao = None
-
-        # Cruzamento EMA + RSI
-        if ema9_ant < ema21_ant and ema9 > ema21 and rsi > 50:
-            direcao = "BUY"
-
-        elif ema9_ant > ema21_ant and ema9 < ema21 and rsi < 50:
-            direcao = "SELL"
-
-        if direcao is None:
+        if ema9 is None or ema21 is None:
             continue
 
-        # força da tendência
         distancia = abs(ema9 - ema21)
 
+        # 🔥 LÓGICA MAIS FLEXÍVEL
+
+        if ema9 > ema21 and rsi > 45:
+
+            direcao = "BUY"
+
+        elif ema9 < ema21 and rsi < 55:
+
+            direcao = "SELL"
+
+        else:
+            continue
+
+        # score baseado na força
         score = distancia
 
         if score > melhor_score:
@@ -560,8 +562,30 @@ def main():
 
                 if symbol:
 
-                    criar_sinal(symbol, direcao)
+                    global last_signal_time
 
+agora_time = agora()
+
+pode_enviar = False
+
+if last_signal_time is None:
+
+    pode_enviar = True
+
+else:
+
+    tempo = (agora_time - last_signal_time).seconds
+
+    if tempo >= SIGNAL_INTERVAL:
+
+        pode_enviar = True
+
+                    if symbol and pode_enviar:
+
+    criar_sinal(symbol, direcao)
+
+    last_signal_time = agora_time
+    
                 verificar_resultados()
 
             time.sleep(30)
