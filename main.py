@@ -4,14 +4,13 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 # ==========================
-# CONFIG
+# CONFIGURAÇÕES
 # ==========================
 
 SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT"]
 
 EMA_FAST = 9
 EMA_SLOW = 21
-RSI_PERIOD = 14
 
 SIGNAL_INTERVAL = 300  # 5 minutos
 
@@ -29,7 +28,7 @@ losses = 0
 operacoes_ativas = []
 
 # ==========================
-# HORÁRIO
+# HORÁRIO BRASIL
 # ==========================
 
 def agora():
@@ -43,13 +42,13 @@ def enviar(msg):
 
     try:
 
-        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
         requests.post(
             url,
             json={
-                "chat_id":CHAT_ID,
-                "text":msg
+                "chat_id": CHAT_ID,
+                "text": msg
             },
             timeout=10
         )
@@ -71,35 +70,39 @@ def verificar_comandos():
 
     try:
 
-        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
 
-        params={}
+        params = {}
 
         if LAST_UPDATE_ID:
-            params["offset"]=LAST_UPDATE_ID+1
+            params["offset"] = LAST_UPDATE_ID + 1
 
-        data=requests.get(url,params=params,timeout=10).json()
+        data = requests.get(
+            url,
+            params=params,
+            timeout=10
+        ).json()
 
         if "result" not in data:
             return
 
         for update in data["result"]:
 
-            LAST_UPDATE_ID=update["update_id"]
+            LAST_UPDATE_ID = update["update_id"]
 
             if "message" not in update:
                 continue
 
-            texto=update["message"].get("text","")
+            texto = update["message"].get("text","")
 
-            if texto=="/start":
+            if texto == "/start":
 
-                BOT_ATIVO=True
+                BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
 
-            elif texto=="/stop":
+            elif texto == "/stop":
 
-                BOT_ATIVO=False
+                BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
 
     except Exception as e:
@@ -107,7 +110,7 @@ def verificar_comandos():
         print("Erro comandos:", e)
 
 # ==========================
-# DADOS BINANCE (ROBUSTO)
+# DADOS BINANCE
 # ==========================
 
 def get_data(symbol):
@@ -132,12 +135,9 @@ def get_data(symbol):
 
         data=response.json()
 
-        # Verifica se retornou lista
-
         if not isinstance(data,list):
 
             print("Resposta inválida:", data)
-
             return None
 
         closes=[]
@@ -151,12 +151,10 @@ def get_data(symbol):
     except Exception as e:
 
         print("Erro dados",symbol,e)
-
         return None
-        
 
 # ==========================
-# PREÇO ATUAL
+# PREÇO
 # ==========================
 
 def get_price(symbol):
@@ -183,11 +181,10 @@ def get_price(symbol):
     except Exception as e:
 
         print("Erro preço:",symbol,e)
-
         return None
-            
+
 # ==========================
-# INDICADORES
+# EMA
 # ==========================
 
 def ema(prices,period):
@@ -205,33 +202,8 @@ def ema(prices,period):
 
     return e
 
-def rsi(prices):
-
-    if len(prices)<RSI_PERIOD+1:
-        return None
-
-    gains=[]
-    losses=[]
-
-    for i in range(1,RSI_PERIOD+1):
-
-        diff=prices[i]-prices[i-1]
-
-        gains.append(max(diff,0))
-        losses.append(abs(min(diff,0)))
-
-    avg_gain=sum(gains)/RSI_PERIOD
-    avg_loss=sum(losses)/RSI_PERIOD
-
-    if avg_loss==0:
-        return 100
-
-    rs=avg_gain/avg_loss
-
-    return 100-(100/(1+rs))
-
 # ==========================
-# ESCOLHER MELHOR ATIVO
+# ESCOLHER ATIVO
 # ==========================
 
 def escolher_ativo():
@@ -313,7 +285,71 @@ def criar_sinal(symbol,direcao):
     )
 
 # ==========================
-# LOOP
+# RESULTADOS (WIN/LOSS)
+# ==========================
+
+def verificar_resultados():
+
+    global wins
+    global losses
+
+    agora_time = agora()
+
+    novas_operacoes = []
+
+    for op in operacoes_ativas:
+
+        if agora_time >= op["tempo_resultado"]:
+
+            print("Verificando resultado:", op["symbol"])
+
+            preco_final = get_price(op["symbol"])
+
+            if preco_final is None:
+
+                novas_operacoes.append(op)
+                continue
+
+            if op["direcao"] == "BUY":
+
+                if preco_final > op["preco"]:
+                    wins += 1
+                    resultado = "WIN"
+                else:
+                    losses += 1
+                    resultado = "LOSS"
+
+            else:
+
+                if preco_final < op["preco"]:
+                    wins += 1
+                    resultado = "WIN"
+                else:
+                    losses += 1
+                    resultado = "LOSS"
+
+            total = wins + losses
+
+            taxa = (wins / total) * 100
+
+            enviar(
+                "🏆 RESULTADO\n\n"
+                f"🌎 {op['symbol']}\n"
+                f"{'✅ WIN' if resultado=='WIN' else '❌ LOSS'}\n\n"
+                f"Wins: {wins}\n"
+                f"Losses: {losses}\n"
+                f"Precisão: {round(taxa,1)}%"
+            )
+
+        else:
+
+            novas_operacoes.append(op)
+
+    operacoes_ativas.clear()
+    operacoes_ativas.extend(novas_operacoes)
+
+# ==========================
+# LOOP PRINCIPAL
 # ==========================
 
 def main():
@@ -325,6 +361,8 @@ def main():
     while True:
 
         verificar_comandos()
+
+        verificar_resultados()
 
         if BOT_ATIVO:
 
