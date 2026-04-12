@@ -60,15 +60,25 @@ def get_price(symbol):
     try:
 
         url = (
-            "https://api.binance.com/api/v3/ticker/price"
+            "https://fapi.binance.com/fapi/v1/ticker/price"
             f"?symbol={symbol}"
         )
 
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=10)
 
         data = r.json()
 
-        return float(data["price"])
+        if isinstance(data, dict) and "price" in data:
+
+            return float(data["price"])
+
+        else:
+
+            print(
+                f"Resposta inválida preço {symbol}: {data}"
+            )
+
+            return None
 
     except Exception as e:
 
@@ -80,12 +90,13 @@ def get_price(symbol):
 # CANDLES
 # ==========================
 
+    
 def get_candles(symbol):
 
     try:
 
         url = (
-            "https://api.binance.com/api/v3/klines"
+            "https://fapi.binance.com/fapi/v1/klines"
             f"?symbol={symbol}"
             "&interval=1m"
             "&limit=50"
@@ -95,7 +106,7 @@ def get_candles(symbol):
 
         data = r.json()
 
-        # 🔴 SE VEIO ERRO DA BINANCE
+        # 🔴 Se vier erro
         if isinstance(data, dict):
 
             print(
@@ -129,7 +140,7 @@ def get_candles(symbol):
         print(f"Erro candles {symbol}: {e}")
 
         return None
-
+        
 # ==========================
 # INDICADORES
 # ==========================
