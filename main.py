@@ -236,6 +236,65 @@ def ja_tem_operacao(symbol):
 
     return False
 
+#======================
+#ESCOLHER MELHOR ATIVO
+#======================
+
+def escolher_melhor_ativo():
+
+    melhor_symbol = None
+    melhor_score = 0
+    melhor_direcao = None
+
+    for symbol in SYMBOLS:
+
+        # evitar ativo já em operação
+        if ja_tem_operacao(symbol):
+            continue
+
+        df = get_candles(symbol)
+
+        if df is None:
+            continue
+
+        df = calcular_indicadores(df)
+
+        ultima = df.iloc[-1]
+        anterior = df.iloc[-2]
+
+        ema9 = ultima["EMA9"]
+        ema21 = ultima["EMA21"]
+
+        ema9_ant = anterior["EMA9"]
+        ema21_ant = anterior["EMA21"]
+
+        rsi = ultima["RSI"]
+
+        direcao = None
+
+        # Cruzamento EMA + RSI
+        if ema9_ant < ema21_ant and ema9 > ema21 and rsi > 50:
+            direcao = "BUY"
+
+        elif ema9_ant > ema21_ant and ema9 < ema21 and rsi < 50:
+            direcao = "SELL"
+
+        if direcao is None:
+            continue
+
+        # força da tendência
+        distancia = abs(ema9 - ema21)
+
+        score = distancia
+
+        if score > melhor_score:
+
+            melhor_score = score
+            melhor_symbol = symbol
+            melhor_direcao = direcao
+
+    return melhor_symbol, melhor_direcao
+
 # ==========================
 # GERAR SINAL
 # ==========================
@@ -496,9 +555,11 @@ def main():
 
             if BOT_ATIVO:
 
-                for symbol in SYMBOLS:
+                symbol, direcao = escolher_melhor_ativo()
 
-                    gerar_sinal(symbol)
+if symbol:
+
+    criar_sinal(symbol, direcao)
 
                 verificar_resultados()
 
