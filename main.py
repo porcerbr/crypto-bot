@@ -1,26 +1,24 @@
-import os
-import time
 import requests
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timedelta
+import pandas as pd
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
 
-SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT"]
+TOKEN = "SEU_TOKEN_TELEGRAM"
+CHAT_ID = "SEU_CHAT_ID"
 
-EMA_FAST = 9
-EMA_SLOW = 21
+SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "SOLUSDT",
+    "ADAUSDT"
+]
 
-SIGNAL_INTERVAL = 300  # 5 minutos
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-BOT_ATIVO = False
-LAST_UPDATE_ID = None
-
-last_signal_time = None
+INTERVAL = "1m"
 
 wins = 0
 losses = 0
@@ -28,216 +26,189 @@ losses = 0
 operacoes_ativas = []
 
 # ==========================
-# HORÁRIO BRASIL
-# ==========================
-
-def agora():
-    return datetime.now(timezone.utc) - timedelta(hours=3)
-
-# ==========================
 # TELEGRAM
 # ==========================
 
 def enviar(msg):
 
-    try:
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-        requests.post(
-            url,
-            json={
-                "chat_id": CHAT_ID,
-                "text": msg
-            },
-            timeout=10
-        )
-
-        print("[Telegram] OK")
-
-    except Exception as e:
-
-        print("Erro Telegram:", e)
-
-# ==========================
-# COMANDOS TELEGRAM
-# ==========================
-
-def verificar_comandos():
-
-    global BOT_ATIVO
-    global LAST_UPDATE_ID
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": msg
+    }
 
     try:
-
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-
-        params = {}
-
-        if LAST_UPDATE_ID:
-            params["offset"] = LAST_UPDATE_ID + 1
-
-        data = requests.get(
-            url,
-            params=params,
-            timeout=10
-        ).json()
-
-        if "result" not in data:
-            return
-
-        for update in data["result"]:
-
-            LAST_UPDATE_ID = update["update_id"]
-
-            if "message" not in update:
-                continue
-
-            texto = update["message"].get("text","")
-
-            if texto == "/start":
-
-                BOT_ATIVO = True
-                enviar("🟢 BOT ATIVADO")
-
-            elif texto == "/stop":
-
-                BOT_ATIVO = False
-                enviar("🔴 BOT PARADO")
-
-    except Exception as e:
-
-        print("Erro comandos:", e)
+        requests.post(url, data=payload)
+    except:
+        pass
 
 # ==========================
-# DADOS BINANCE
+# TEMPO
 # ==========================
 
-def get_data(symbol):
-
-    try:
-
-        print(f"Buscando candles de {symbol}")
-
-        url="https://data-api.binance.vision/api/v3/klines"
-
-        params={
-            "symbol":symbol,
-            "interval":"1m",
-            "limit":50
-        }
-
-        response=requests.get(
-            url,
-            params=params,
-            timeout=10
-        )
-
-        data=response.json()
-
-        if not isinstance(data,list):
-            return None
-
-        closes=[]
-
-        for candle in data:
-            closes.append(float(candle[4]))
-
-        return closes
-
-    except Exception as e:
-
-        print("Erro dados",symbol,e)
-        return None
+def agora():
+    return datetime.utcnow() - timedelta(hours=3)
 
 # ==========================
-# PREÇO
+# PREÇO (CORRIGIDO)
 # ==========================
 
 def get_price(symbol):
 
     try:
 
-        url="https://data-api.binance.vision/api/v3/ticker/price"
-
-        params={"symbol":symbol}
-
-        response=requests.get(
-            url,
-            params=params,
-            timeout=10
+        url = (
+            "https://api.binance.com/api/v3/ticker/price"
+            f"?symbol={symbol}"
         )
 
-        data=response.json()
+        r = requests.get(url, timeout=5)
 
-        if "price" not in data:
-            return None
+        data = r.json()
 
         return float(data["price"])
 
     except Exception as e:
 
-        print("Erro preço:",symbol,e)
+        print(f"Erro preço {symbol}: {e}")
+
         return None
 
 # ==========================
-# EMA
+# CANDLES
 # ==========================
 
-def ema(prices,period):
+def get_candles(symbol):
 
-    if len(prices)<period:
+    try:
+
+        url = (
+            "https://api.binance.com/api/v3/klines"
+            f"?symbol={symbol}"
+            f"&interval={INTERVAL}"
+            "&limit=50"
+        )
+
+        r = requests.get(url, timeout=5)
+
+        data = r.json()
+
+        df = pd.DataFrame(data)
+
+        df = df.iloc[:, 0:6]
+
+        df.columns = [
+            "time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+        ]
+
+        df["close"] = df["close"].astype(float)
+
+        return df
+
+    except Exception as e:
+
+        print(f"Erro candles {symbol}: {e}")
+
         return None
 
-    k=2/(period+1)
-
-    e=sum(prices[:period])/period
-
-    for p in prices[period:]:
-        e=(p-e)*k+e
-
-    return e
-
 # ==========================
-# ESCOLHER ATIVO
+# INDICADORES
 # ==========================
 
-def escolher_ativo():
+def calcular_indicadores(df):
 
-    melhor_symbol=None
-    melhor_score=0
-    melhor_direcao=None
+    df["EMA9"] = df["close"].ewm(span=9).mean()
+    df["EMA21"] = df["close"].ewm(span=21).mean()
 
-    for symbol in SYMBOLS:
+    delta = df["close"].diff()
 
-        closes=get_data(symbol)
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
 
-        if not closes:
-            continue
+    rs = gain / loss
 
-        e9=ema(closes,EMA_FAST)
-        e21=ema(closes,EMA_SLOW)
+    df["RSI"] = 100 - (100 / (1 + rs))
 
-        if e9 is None or e21 is None:
-            continue
-
-        distancia=abs(e9-e21)
-
-        if e9>e21:
-            direcao="BUY"
-        else:
-            direcao="SELL"
-
-        if distancia>melhor_score:
-
-            melhor_score=distancia
-            melhor_symbol=symbol
-            melhor_direcao=direcao
-
-    return melhor_symbol,melhor_direcao
+    return df
 
 # ==========================
-# ENVIAR RESULTADO
+# GERAR SINAL
+# ==========================
+
+def gerar_sinal(symbol):
+
+    df = get_candles(symbol)
+
+    if df is None:
+        return
+
+    df = calcular_indicadores(df)
+
+    ultima = df.iloc[-1]
+    anterior = df.iloc[-2]
+
+    ema9 = ultima["EMA9"]
+    ema21 = ultima["EMA21"]
+
+    ema9_ant = anterior["EMA9"]
+    ema21_ant = anterior["EMA21"]
+
+    rsi = ultima["RSI"]
+
+    direcao = None
+
+    if ema9_ant < ema21_ant and ema9 > ema21 and rsi > 50:
+        direcao = "BUY"
+
+    elif ema9_ant > ema21_ant and ema9 < ema21 and rsi < 50:
+        direcao = "SELL"
+
+    if direcao is None:
+        return
+
+    preco = get_price(symbol)
+
+    if preco is None:
+        return
+
+    tempo = agora()
+
+    entrada = tempo + timedelta(minutes=2)
+
+    p1 = entrada + timedelta(minutes=1)
+
+    p2 = p1 + timedelta(minutes=1)
+
+    op = {
+        "symbol": symbol,
+        "direcao": direcao,
+        "preco": preco,
+        "tempo_entrada": entrada,
+        "tempo_protecao1": p1,
+        "tempo_protecao2": p2,
+        "etapa": 0
+    }
+
+    operacoes_ativas.append(op)
+
+    enviar(
+        "✅ ENTRADA CONFIRMADA ✅\n\n"
+        f"🌎 Ativo: {symbol}\n"
+        f"📊 Estratégia: "
+        f"{'🟢 COMPRA' if direcao=='BUY' else '🔴 VENDA'}\n"
+        f"⏰ Entrada: {entrada.strftime('%H:%M')}\n\n"
+        f"⚠️ Proteção 1 {p1.strftime('%H:%M')}\n"
+        f"⚠️ Proteção 2 {p2.strftime('%H:%M')}"
+    )
+
+# ==========================
+# RESULTADO
 # ==========================
 
 def enviar_resultado(symbol, resultado):
@@ -259,53 +230,7 @@ def enviar_resultado(symbol, resultado):
     )
 
 # ==========================
-# CRIAR SINAL
-# ==========================
-
-def criar_sinal(symbol,direcao):
-
-    global last_signal_time
-
-    agora_time=agora()
-
-    entrada=agora_time+timedelta(minutes=2)
-    protecao1=entrada+timedelta(minutes=1)
-    protecao2=entrada+timedelta(minutes=2)
-
-    preco=get_price(symbol)
-
-    if preco is None:
-        return
-
-    operacoes_ativas.append({
-
-        "symbol":symbol,
-        "direcao":direcao,
-        "preco":preco,
-
-        "etapa":0,
-
-        "tempo_entrada":entrada,
-        "tempo_protecao1":protecao1,
-        "tempo_protecao2":protecao2
-
-    })
-
-    last_signal_time=agora_time
-
-    emoji="🟢 COMPRA" if direcao=="BUY" else "🔴 VENDA"
-
-    enviar(
-        "✅ ENTRADA CONFIRMADA ✅\n\n"
-        f"🌎 Ativo: {symbol}\n"
-        f"📊 Estratégia: {emoji}\n"
-        f"⏰ Entrada: {entrada.strftime('%H:%M')}\n\n"
-        f"⚠️ Proteção 1 {protecao1.strftime('%H:%M')}\n"
-        f"⚠️ Proteção 2 {protecao2.strftime('%H:%M')}"
-    )
-
-# ==========================
-# RESULTADOS INTELIGENTES
+# VERIFICAR RESULTADOS
 # ==========================
 
 def verificar_resultados():
@@ -319,104 +244,133 @@ def verificar_resultados():
 
     for op in operacoes_ativas:
 
+        symbol = op["symbol"]
+        direcao = op["direcao"]
+        preco_entrada = op["preco"]
+
+        # ==================
         # ENTRADA
+        # ==================
+
         if op["etapa"] == 0:
 
             if agora_time >= op["tempo_entrada"]:
 
-                preco = get_price(op["symbol"])
+                preco = get_price(symbol)
 
                 if preco is None:
                     novas_operacoes.append(op)
                     continue
 
-                if op["direcao"] == "BUY":
+                win = (
+                    preco > preco_entrada
+                    if direcao == "BUY"
+                    else preco < preco_entrada
+                )
 
-                    if preco > op["preco"]:
+                if win:
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Entrada")
-                        continue
+                    wins += 1
+
+                    enviar_resultado(
+                        symbol,
+                        "WIN na Entrada"
+                    )
+
+                    continue
 
                 else:
 
-                    if preco < op["preco"]:
+                    op["etapa"] = 1
+                    novas_operacoes.append(op)
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Entrada")
-                        continue
+            else:
 
-                op["etapa"] = 1
                 novas_operacoes.append(op)
 
+        # ==================
         # PROTEÇÃO 1
+        # ==================
+
         elif op["etapa"] == 1:
 
             if agora_time >= op["tempo_protecao1"]:
 
-                preco = get_price(op["symbol"])
+                preco = get_price(symbol)
 
                 if preco is None:
                     novas_operacoes.append(op)
                     continue
 
-                if op["direcao"] == "BUY":
+                win = (
+                    preco > preco_entrada
+                    if direcao == "BUY"
+                    else preco < preco_entrada
+                )
 
-                    if preco > op["preco"]:
+                if win:
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Proteção 1")
-                        continue
+                    wins += 1
+
+                    enviar_resultado(
+                        symbol,
+                        "WIN na Proteção 1"
+                    )
+
+                    continue
 
                 else:
 
-                    if preco < op["preco"]:
+                    op["etapa"] = 2
+                    novas_operacoes.append(op)
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Proteção 1")
-                        continue
+            else:
 
-                op["etapa"] = 2
                 novas_operacoes.append(op)
 
+        # ==================
         # PROTEÇÃO 2
+        # ==================
+
         elif op["etapa"] == 2:
 
             if agora_time >= op["tempo_protecao2"]:
 
-                preco = get_price(op["symbol"])
+                preco = get_price(symbol)
 
                 if preco is None:
                     novas_operacoes.append(op)
                     continue
 
-                if op["direcao"] == "BUY":
+                win = (
+                    preco > preco_entrada
+                    if direcao == "BUY"
+                    else preco < preco_entrada
+                )
 
-                    if preco > op["preco"]:
+                if win:
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Proteção 2")
+                    wins += 1
 
-                    else:
-
-                        losses += 1
-                        enviar_resultado(op["symbol"],"LOSS após Proteção 2")
+                    enviar_resultado(
+                        symbol,
+                        "WIN na Proteção 2"
+                    )
 
                 else:
 
-                    if preco < op["preco"]:
+                    losses += 1
 
-                        wins += 1
-                        enviar_resultado(op["symbol"],"WIN na Proteção 2")
+                    enviar_resultado(
+                        symbol,
+                        "LOSS após Proteção 2"
+                    )
 
-                    else:
+                continue
 
-                        losses += 1
-                        enviar_resultado(op["symbol"],"LOSS após Proteção 2")
+            else:
 
-        else:
-
-            novas_operacoes.append(op)
+                novas_operacoes.append(op)
 
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
@@ -427,41 +381,26 @@ def verificar_resultados():
 
 def main():
 
-    global last_signal_time
-
     enviar("🤖 BOT INICIADO")
 
     while True:
 
-        verificar_comandos()
+        try:
 
-        verificar_resultados()
+            for symbol in SYMBOLS:
 
-        if BOT_ATIVO:
+                gerar_sinal(symbol)
 
-            agora_time=agora()
+            verificar_resultados()
 
-            pode=False
+            time.sleep(30)
 
-            if last_signal_time is None:
-                pode=True
+        except Exception as e:
 
-            else:
+            print("Erro geral:", e)
 
-                tempo=(agora_time-last_signal_time).seconds
+            time.sleep(10)
 
-                if tempo>=SIGNAL_INTERVAL:
-                    pode=True
+# ==========================
 
-            if pode:
-
-                symbol,direcao=escolher_ativo()
-
-                if symbol:
-
-                    criar_sinal(symbol,direcao)
-
-        time.sleep(60)
-
-if __name__=="__main__":
-    main()
+main()
