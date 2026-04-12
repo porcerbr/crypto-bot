@@ -11,13 +11,11 @@ SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT"]
 
 EMA_FAST = 9
 EMA_SLOW = 21
-EMA_TREND = 50
 
 RSI_PERIOD = 14
-ATR_PERIOD = 14
 
 CHECK_INTERVAL = 60
-COOLDOWN_MINUTES = 3
+COOLDOWN_MINUTES = 2
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -45,9 +43,9 @@ def agora():
 
 def enviar(msg):
 
-    try:
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
 
         requests.post(
             url,
@@ -68,14 +66,14 @@ def verificar_comandos():
     global BOT_ATIVO
     global LAST_UPDATE_ID
 
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+
+    params = {}
+
+    if LAST_UPDATE_ID:
+        params["offset"] = LAST_UPDATE_ID + 1
+
     try:
-
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-
-        params = {}
-
-        if LAST_UPDATE_ID:
-            params["offset"] = LAST_UPDATE_ID + 1
 
         data = requests.get(url, params=params).json()
 
@@ -86,7 +84,7 @@ def verificar_comandos():
             if "message" not in update:
                 continue
 
-            texto = update["message"].get("text", "")
+            texto = update["message"].get("text","")
 
             if texto == "/start":
 
@@ -98,9 +96,9 @@ def verificar_comandos():
                 BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
 
-    except Exception as e:
+    except:
 
-        print("Erro comandos:", e)
+        pass
 
 # ==========================
 # DADOS
@@ -115,22 +113,18 @@ def get_data(symbol):
         params = {
             "symbol": symbol,
             "interval": "1m",
-            "limit": 100
+            "limit": 50
         }
 
         data = requests.get(url, params=params).json()
 
         closes = [float(c[4]) for c in data]
-        highs = [float(c[2]) for c in data]
-        lows = [float(c[3]) for c in data]
 
-        return closes, highs, lows
+        return closes
 
-    except Exception as e:
+    except:
 
-        print("Erro dados:", symbol, e)
-
-        return None, None, None
+        return None
 
 def get_price(symbol):
 
@@ -186,32 +180,18 @@ def rsi(prices):
 
     return 100 - (100 / (1 + rs))
 
-def atr(highs, lows):
-
-    trs = []
-
-    for i in range(1, ATR_PERIOD):
-
-        trs.append(highs[i] - lows[i])
-
-    return sum(trs) / len(trs)
-
 # ==========================
-# LÓGICA DE SINAL
+# SINAL
 # ==========================
 
-def gerar_sinal(symbol, closes, highs, lows):
+def gerar_sinal(symbol, closes):
 
     try:
 
         e9 = ema(closes, EMA_FAST)
         e21 = ema(closes, EMA_SLOW)
-        e50 = ema(closes, EMA_TREND)
 
         r = rsi(closes)
-        vol = atr(highs, lows)
-
-        distancia = abs(e9 - e21)
 
         print(
             f"{symbol} | "
@@ -220,28 +200,20 @@ def gerar_sinal(symbol, closes, highs, lows):
             f"RSI:{round(r,1)}"
         )
 
-        if vol < 0.15:
-            return None
-
-        if distancia < 0.04:
-            return None
-
-        if e9 > e21 and e9 > e50 and r > 52:
+        if e9 > e21 and r > 50:
             return "BUY"
 
-        if e9 < e21 and e9 < e50 and r < 48:
+        if e9 < e21 and r < 50:
             return "SELL"
 
         return None
 
-    except Exception as e:
-
-        print("Erro sinal:", symbol, e)
+    except:
 
         return None
 
 # ==========================
-# RESULTADOS (WIN/LOSS)
+# RESULTADOS
 # ==========================
 
 def verificar_resultados():
@@ -257,40 +229,27 @@ def verificar_resultados():
 
         if agora_time >= op["tempo_resultado"]:
 
-            print("Verificando resultado:", op["symbol"])
-
             preco_atual = get_price(op["symbol"])
 
             if preco_atual is None:
-
                 novas.append(op)
                 continue
 
-            preco_entrada = op["preco"]
+            if op["direcao"] == "BUY":
 
-            direcao = op["direcao"]
-
-            if direcao == "BUY":
-
-                if preco_atual > preco_entrada:
-
+                if preco_atual > op["preco"]:
                     wins += 1
                     resultado = "WIN"
-
                 else:
-
                     losses += 1
                     resultado = "LOSS"
 
             else:
 
-                if preco_atual < preco_entrada:
-
+                if preco_atual < op["preco"]:
                     wins += 1
                     resultado = "WIN"
-
                 else:
-
                     losses += 1
                     resultado = "LOSS"
 
@@ -357,7 +316,7 @@ def criar_sinal(symbol, direcao):
 
 def main():
 
-    enviar("🤖 BOT COM WIN/LOSS ATIVO")
+    enviar("🤖 BOT OPERACIONAL")
 
     while True:
 
@@ -369,16 +328,14 @@ def main():
 
             for symbol in SYMBOLS:
 
-                closes, highs, lows = get_data(symbol)
+                closes = get_data(symbol)
 
                 if not closes:
                     continue
 
                 direcao = gerar_sinal(
                     symbol,
-                    closes,
-                    highs,
-                    lows
+                    closes
                 )
 
                 if direcao:
