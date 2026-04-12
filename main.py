@@ -390,27 +390,26 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # últimos candles
-        c0 = df.iloc[-1]  # atual
-        c1 = df.iloc[-2]  # último fechado
+        # últimos candles fechados
+        c1 = df.iloc[-2]
         c2 = df.iloc[-3]
         c3 = df.iloc[-4]
 
         # ==========================
-        # ENTRADA
+        # ETAPA 0 → ENTRADA
         # ==========================
 
         if op["etapa"] == 0:
 
             if agora_time >= op["tempo_entrada"]:
 
-                entrada_preco = float(c2["close"])
-                saida_preco = float(c1["close"])
+                preco_entrada = float(c2["close"])
+                preco_saida = float(c1["close"])
 
                 win = (
-                    saida_preco > entrada_preco
+                    preco_saida > preco_entrada
                     if direcao == "BUY"
-                    else saida_preco < entrada_preco
+                    else preco_saida < preco_entrada
                 )
 
                 if win:
@@ -429,25 +428,28 @@ def verificar_resultados():
                     op["etapa"] = 1
                     novas_operacoes.append(op)
 
+                    continue
+
             else:
 
                 novas_operacoes.append(op)
+                continue
 
         # ==========================
-        # PROTEÇÃO 1
+        # ETAPA 1 → PROTEÇÃO 1
         # ==========================
 
         elif op["etapa"] == 1:
 
             if agora_time >= op["tempo_protecao1"]:
 
-                entrada_preco = float(c3["close"])
-                saida_preco = float(c2["close"])
+                preco_entrada = float(c3["close"])
+                preco_saida = float(c2["close"])
 
                 win = (
-                    saida_preco > entrada_preco
+                    preco_saida > preco_entrada
                     if direcao == "BUY"
-                    else saida_preco < entrada_preco
+                    else preco_saida < preco_entrada
                 )
 
                 if win:
@@ -466,25 +468,28 @@ def verificar_resultados():
                     op["etapa"] = 2
                     novas_operacoes.append(op)
 
+                    continue
+
             else:
 
                 novas_operacoes.append(op)
+                continue
 
         # ==========================
-        # PROTEÇÃO 2
+        # ETAPA 2 → PROTEÇÃO 2
         # ==========================
 
         elif op["etapa"] == 2:
 
             if agora_time >= op["tempo_protecao2"]:
 
-                entrada_preco = float(c2["close"])
-                saida_preco = float(c1["close"])
+                preco_entrada = float(c2["close"])
+                preco_saida = float(c1["close"])
 
                 win = (
-                    saida_preco > entrada_preco
+                    preco_saida > preco_entrada
                     if direcao == "BUY"
-                    else saida_preco < entrada_preco
+                    else preco_saida < preco_entrada
                 )
 
                 if win:
@@ -510,6 +515,7 @@ def verificar_resultados():
             else:
 
                 novas_operacoes.append(op)
+                continue
 
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
