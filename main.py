@@ -163,7 +163,7 @@ def get_price(symbol):
 
     try:
 
-        url="https://api.binance.com/api/v3/ticker/price"
+        url="https://data-api.binance.vision/api/v3/ticker/price"
 
         params={"symbol":symbol}
 
@@ -185,7 +185,7 @@ def get_price(symbol):
         print("Erro preço:",symbol,e)
 
         return None
-
+            
 # ==========================
 # INDICADORES
 # ==========================
