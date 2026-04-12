@@ -27,11 +27,9 @@ LAST_UPDATE_ID = None
 
 last_signal_time = {s: None for s in SYMBOLS}
 
-# RESULTADOS
 wins = 0
 losses = 0
 
-# operações futuras
 operacoes_ativas = []
 
 # ==========================
@@ -64,7 +62,6 @@ def enviar(msg):
     except Exception as e:
 
         print("Erro Telegram:", e)
-
 
 def verificar_comandos():
 
@@ -135,7 +132,6 @@ def get_data(symbol):
 
         return None, None, None
 
-
 def get_price(symbol):
 
     try:
@@ -168,7 +164,6 @@ def ema(prices, period):
 
     return e
 
-
 def rsi(prices):
 
     gains = []
@@ -191,7 +186,6 @@ def rsi(prices):
 
     return 100 - (100 / (1 + rs))
 
-
 def atr(highs, lows):
 
     trs = []
@@ -203,7 +197,7 @@ def atr(highs, lows):
     return sum(trs) / len(trs)
 
 # ==========================
-# LÓGICA
+# LÓGICA DE SINAL
 # ==========================
 
 def gerar_sinal(symbol, closes, highs, lows):
@@ -247,7 +241,7 @@ def gerar_sinal(symbol, closes, highs, lows):
         return None
 
 # ==========================
-# RESULTADOS
+# RESULTADOS (WIN/LOSS)
 # ==========================
 
 def verificar_resultados():
@@ -263,6 +257,8 @@ def verificar_resultados():
 
         if agora_time >= op["tempo_resultado"]:
 
+            print("Verificando resultado:", op["symbol"])
+
             preco_atual = get_price(op["symbol"])
 
             if preco_atual is None:
@@ -270,25 +266,36 @@ def verificar_resultados():
                 novas.append(op)
                 continue
 
-            if op["direcao"] == "BUY":
+            preco_entrada = op["preco"]
 
-                if preco_atual > op["preco"]:
+            direcao = op["direcao"]
+
+            if direcao == "BUY":
+
+                if preco_atual > preco_entrada:
+
                     wins += 1
                     resultado = "WIN"
+
                 else:
+
                     losses += 1
                     resultado = "LOSS"
 
             else:
 
-                if preco_atual < op["preco"]:
+                if preco_atual < preco_entrada:
+
                     wins += 1
                     resultado = "WIN"
+
                 else:
+
                     losses += 1
                     resultado = "LOSS"
 
             total = wins + losses
+
             taxa = (wins / total) * 100
 
             enviar(
@@ -308,7 +315,7 @@ def verificar_resultados():
     operacoes_ativas.extend(novas)
 
 # ==========================
-# SINAIS
+# CRIAR SINAL
 # ==========================
 
 def criar_sinal(symbol, direcao):
@@ -316,20 +323,24 @@ def criar_sinal(symbol, direcao):
     agora_time = agora()
 
     entrada = agora_time + timedelta(minutes=2)
+
     resultado = entrada + timedelta(minutes=3)
 
     preco = get_price(symbol)
 
-    if preco:
+    if preco is None:
+        return
 
-        operacoes_ativas.append({
+    operacoes_ativas.append({
 
-            "symbol": symbol,
-            "direcao": direcao,
-            "preco": preco,
-            "tempo_resultado": resultado
+        "symbol": symbol,
+        "direcao": direcao,
+        "preco": preco,
+        "tempo_resultado": resultado
 
-        })
+    })
+
+    print("Operação registrada:", symbol)
 
     emoji = "🟢 COMPRA" if direcao == "BUY" else "🔴 VENDA"
 
@@ -346,7 +357,7 @@ def criar_sinal(symbol, direcao):
 
 def main():
 
-    enviar("🤖 BOT ESTÁVEL COM WIN/LOSS")
+    enviar("🤖 BOT COM WIN/LOSS ATIVO")
 
     while True:
 
