@@ -543,7 +543,9 @@ def verificar_resultados():
 # LOOP PRINCIPAL
 # ==========================
 
-def main():
+ def main():
+
+    global last_signal_time
 
     print("BOT INICIANDO...")
 
@@ -557,35 +559,33 @@ def main():
 
             if BOT_ATIVO:
 
-                # Escolher melhor ativo
-                symbol, direcao = escolher_melhor_ativo()
+                agora_time = agora()
 
-                if symbol:
+                pode_enviar = False
 
-                    global last_signal_time
+                # Controle de tempo entre sinais
+                if last_signal_time is None:
 
-agora_time = agora()
+                    pode_enviar = True
 
-pode_enviar = False
+                else:
 
-if last_signal_time is None:
+                    tempo = (agora_time - last_signal_time).seconds
 
-    pode_enviar = True
+                    if tempo >= SIGNAL_INTERVAL:
 
-else:
+                        pode_enviar = True
 
-    tempo = (agora_time - last_signal_time).seconds
+                if pode_enviar:
 
-    if tempo >= SIGNAL_INTERVAL:
+                    symbol, direcao = escolher_melhor_ativo()
 
-        pode_enviar = True
+                    if symbol:
 
-                    if symbol and pode_enviar:
+                        criar_sinal(symbol, direcao)
 
-    criar_sinal(symbol, direcao)
+                        last_signal_time = agora_time
 
-    last_signal_time = agora_time
-    
                 verificar_resultados()
 
             time.sleep(30)
@@ -595,7 +595,6 @@ else:
             print("Erro geral:", e)
 
             time.sleep(10)
-
             
 # ==========================
 
