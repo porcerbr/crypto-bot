@@ -51,6 +51,61 @@ def enviar(msg):
 
         print("Erro envio Telegram:", e)
 
+LAST_UPDATE_ID = None
+BOT_ATIVO = False
+
+def verificar_comandos():
+
+    global LAST_UPDATE_ID
+    global BOT_ATIVO
+
+    try:
+
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+
+        params = {}
+
+        if LAST_UPDATE_ID:
+            params["offset"] = LAST_UPDATE_ID + 1
+
+        r = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        data = r.json()
+
+        if "result" not in data:
+            return
+
+        for update in data["result"]:
+
+            LAST_UPDATE_ID = update["update_id"]
+
+            if "message" not in update:
+                continue
+
+            texto = update["message"].get("text","")
+
+            # 🔵 START
+            if texto == "/start":
+
+                BOT_ATIVO = True
+
+                enviar("🟢 BOT ATIVADO")
+
+            # 🔴 STOP
+            elif texto == "/stop":
+
+                BOT_ATIVO = False
+
+                enviar("🔴 BOT PARADO")
+
+    except Exception as e:
+
+        print("Erro comandos:", e)
+
 # ==========================
 # TEMPO
 # ==========================
@@ -419,11 +474,15 @@ def main():
 
         try:
 
-            for symbol in SYMBOLS:
+            verificar_comandos()
 
-                gerar_sinal(symbol)
+            if BOT_ATIVO:
 
-            verificar_resultados()
+                for symbol in SYMBOLS:
+
+                    gerar_sinal(symbol)
+
+                verificar_resultados()
 
             time.sleep(30)
 
@@ -432,7 +491,7 @@ def main():
             print("Erro geral:", e)
 
             time.sleep(10)
-
+            
 # ==========================
 
 main()
