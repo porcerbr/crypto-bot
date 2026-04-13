@@ -306,13 +306,13 @@ def escolher_melhor_ativo():
     for symbol in ACTIVE_SYMBOLS:
 
         # verifica cooldown
-if symbol in ultimo_trade_por_ativo:
+        if symbol in ultimo_trade_por_ativo:
 
     tempo_passado = (
         utc_now() - ultimo_trade_por_ativo[symbol]
     ).total_seconds()
 
-    if tempo_passado < COOLDOWN_MINUTOS * 60:
+           if tempo_passado < COOLDOWN_MINUTOS * 60:
         log(f"{symbol} em cooldown")
         continue
 
