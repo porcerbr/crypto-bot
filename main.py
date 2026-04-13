@@ -1,34 +1,49 @@
-# bot.py
 import os
 import time
 import requests
 from datetime import datetime, timedelta, timezone
 
 # ==========================
-# CONFIG
+# CONFIGURAÇÕES
 # ==========================
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "ADAUSDT"]
+SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "SOLUSDT",
+    "ADAUSDT",
+]
+
+INTERVAL = "1m"
 SIGNAL_INTERVAL = 300  # 5 minutos
 BR_TZ = timezone(timedelta(hours=-3))
 
-# ==========================
-# ESTADO
-# ==========================
 wins = 0
 losses = 0
 
+# Operações já confirmadas e aguardando resultado
 operacoes_ativas = []
+
+# Setup encontrado, mas ainda aguardando a hora da entrada
 setup_pendente = None
+
+# Controle global para evitar spam
 last_signal_time = None
+
+# Horário do último resultado real para modo adaptativo
 last_trade_time = None
 
+# Telegram updates
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
+
+# Modo adaptativo
 adaptive_mode = "NORMAL"
 
+# Histórico simples por ativo
 performance = {
     "BTCUSDT": {"win": 0, "loss": 0},
     "ETHUSDT": {"win": 0, "loss": 0},
@@ -36,12 +51,6 @@ performance = {
     "SOLUSDT": {"win": 0, "loss": 0},
     "ADAUSDT": {"win": 0, "loss": 0},
 }
-
-# ==========================
-# LOG
-# ==========================
-def log(msg):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 # ==========================
 # TEMPO
@@ -60,6 +69,12 @@ def next_minute(dt):
 
 def fmt_br(dt):
     return dt.astimezone(BR_TZ).strftime("%H:%M")
+
+# ==========================
+# LOG
+# ==========================
+def log(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 # ==========================
 # TELEGRAM
@@ -97,7 +112,6 @@ def verificar_comandos():
 
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
-
             if "message" not in update:
                 continue
 
@@ -107,7 +121,6 @@ def verificar_comandos():
                 BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
                 log("BOT ATIVADO")
-
             elif texto == "/stop":
                 BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
@@ -117,31 +130,16 @@ def verificar_comandos():
         log(f"Erro comandos: {e}")
 
 # ==========================
-# KUCOIN
+# KUCOIN HELPERS
 # ==========================
 def to_kucoin_symbol(symbol):
     return symbol.replace("USDT", "-USDT")
 
 def get_candles(symbol, limit=120):
-    """
-    Retorna candles em ordem crescente de tempo.
-    Cada candle:
-    {
-        "time": datetime UTC,
-        "open": float,
-        "close": float,
-        "high": float,
-        "low": float,
-        "volume": float
-    }
-    """
     try:
         kucoin_symbol = to_kucoin_symbol(symbol)
         url = "https://api.kucoin.com/api/v1/market/candles"
-        params = {
-            "type": "1min",
-            "symbol": kucoin_symbol
-        }
+        params = {"type": "1min", "symbol": kucoin_symbol}
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
@@ -153,7 +151,6 @@ def get_candles(symbol, limit=120):
         rows = data["data"][:limit]
         candles = []
 
-        # KuCoin costuma vir do mais recente para o mais antigo
         for row in reversed(rows):
             try:
                 open_ts = int(float(row[0]))
@@ -236,33 +233,8 @@ def atr_like(closes, period=14):
         return None
     return sum(vals) / len(vals)
 
-def adx_like(closes, period=14):
-    if len(closes) < period + 2:
-        return None
-
-    tr = []
-    dm_plus = []
-    dm_minus = []
-
-    for i in range(1, len(closes)):
-        diff = closes[i] - closes[i - 1]
-        tr.append(abs(diff))
-        dm_plus.append(max(diff, 0))
-        dm_minus.append(max(-diff, 0))
-
-    tr_v = sum(tr[-period:]) / period
-    plus_v = sum(dm_plus[-period:]) / period
-    minus_v = sum(dm_minus[-period:]) / period
-
-    denom = plus_v + minus_v
-    if tr_v == 0 or denom == 0:
-        return 0.0
-
-    dx = abs(plus_v - minus_v) / denom
-    return dx * 100
-
 # ==========================
-# FILTROS
+# ADAPTAÇÃO / FILTROS
 # ==========================
 def market_regime(closes):
     if len(closes) < 60:
@@ -325,7 +297,7 @@ def update_mode():
         adaptive_mode = "AGRESSIVO"
         return
 
-    idle_minutes = (utc_now() - last_trade_time).seconds / 60
+    idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
 
     if idle_minutes > 90:
         adaptive_mode = "AGRESSIVO"
@@ -351,26 +323,34 @@ def escolher_melhor_ativo():
     melhor_direcao = None
 
     if adaptive_mode == "CONSERVADOR":
-        adx_min = 18
-        rsi_low, rsi_high = 46, 54
-        allow_non_trend = False
-        move_max = 0.0025
-        buy_min = 55
-        sell_max = 45
+        rsi_buy = 56
+        rsi_sell = 44
+        rsi_neutro_min = 46
+        rsi_neutro_max = 54
+        min_trend = 0.010
+        min_atr = 0.0005
+        max_move = 0.0060
+        allow_chop = False
+
     elif adaptive_mode == "NORMAL":
-        adx_min = 14
-        rsi_low, rsi_high = 44, 56
-        allow_non_trend = False
-        move_max = 0.0030
-        buy_min = 54
-        sell_max = 46
+        rsi_buy = 54
+        rsi_sell = 46
+        rsi_neutro_min = 44
+        rsi_neutro_max = 56
+        min_trend = 0.008
+        min_atr = 0.00045
+        max_move = 0.0065
+        allow_chop = False
+
     else:
-        adx_min = 10
-        rsi_low, rsi_high = 42, 58
-        allow_non_trend = True
-        move_max = 0.0040
-        buy_min = 52
-        sell_max = 48
+        rsi_buy = 52
+        rsi_sell = 48
+        rsi_neutro_min = 42
+        rsi_neutro_max = 58
+        min_trend = 0.006
+        min_atr = 0.00040
+        max_move = 0.0080
+        allow_chop = True
 
     log(f"MODO: {adaptive_mode}")
 
@@ -387,10 +367,9 @@ def escolher_melhor_ativo():
         e9 = ema_last(closes, 9)
         e21 = ema_last(closes, 21)
         rsi = rsi_last(closes, 14)
-        adx_val = adx_like(closes, 14)
         atr_val = atr_like(closes, 14)
 
-        if e9 is None or e21 is None or rsi is None or adx_val is None or atr_val is None:
+        if e9 is None or e21 is None or rsi is None or atr_val is None:
             continue
 
         regime = market_regime(closes)
@@ -398,36 +377,36 @@ def escolher_melhor_ativo():
         if regime == "UNKNOWN":
             continue
 
-        if not allow_non_trend and regime != "TREND":
+        if not allow_chop and regime != "TREND":
             continue
 
-        if allow_non_trend and regime == "CHOP":
+        if allow_chop and regime == "CHOP":
             continue
 
         if liquidity_sweep(candles):
             continue
 
-        if adx_val < adx_min:
+        trend_pct = abs(e9 - e21) / closes[-1]
+
+        if trend_pct < min_trend:
             continue
 
-        if atr_val < closes[-1] * 0.0009:
+        if atr_val < closes[-1] * min_atr:
             continue
 
-        if rsi_low < rsi < rsi_high:
+        if rsi_neutro_min < rsi < rsi_neutro_max:
             continue
 
-        if abs(closes[-1] - closes[-2]) / closes[-2] > move_max:
+        if abs(closes[-1] - closes[-2]) / closes[-2] > max_move:
             continue
 
         ema_slope = abs(e9 - ema_last(closes[:-5], 9)) if len(closes) > 15 else 0
-        if ema_slope < closes[-1] * 0.0004:
+        if ema_slope < closes[-1] * 0.0002:
             continue
 
-        trend_pct = abs(e9 - e21) / closes[-1] * 100
-
-        if e9 > e21 and rsi >= buy_min:
+        if e9 > e21 and rsi >= rsi_buy:
             direcao = "BUY"
-        elif e9 < e21 and rsi <= sell_max:
+        elif e9 < e21 and rsi <= rsi_sell:
             direcao = "SELL"
         else:
             continue
@@ -435,7 +414,6 @@ def escolher_melhor_ativo():
         score = (
             trend_pct * 2.5 +
             abs(rsi - 50) * 0.2 +
-            adx_val * 0.3 +
             (atr_val / closes[-1]) * 100
         )
 
@@ -449,12 +427,14 @@ def escolher_melhor_ativo():
     return melhor_symbol, melhor_direcao, melhor_score
 
 # ==========================
-# SINAL / ENTRADA
+# CRIAR SINAL
 # ==========================
 def criar_sinal(symbol, direcao, score):
     global setup_pendente, last_signal_time
 
     agora_utc = utc_now()
+
+    # entrada no começo da próxima vela + 2 minutos
     entrada_time = next_minute(agora_utc) + timedelta(minutes=2)
 
     setup_pendente = {
@@ -552,7 +532,6 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
             vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=1))
-
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -582,7 +561,6 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
             vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=1))
-
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -612,7 +590,6 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
             vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=1))
-
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -640,12 +617,12 @@ def verificar_resultados():
     operacoes_ativas.extend(novas_operacoes)
 
 # ==========================
-# MAIN
+# LOOP PRINCIPAL
 # ==========================
 def main():
     global last_signal_time
 
-    if TOKEN == "SEU_TOKEN_AQUI" or CHAT_ID == "SEU_CHAT_ID_AQUI":
+    if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
         return
 
@@ -664,7 +641,7 @@ def main():
                 agora_utc = utc_now()
 
                 if setup_pendente is None and not operacoes_ativas:
-                    if last_signal_time is None or (agora_utc - last_signal_time).seconds >= SIGNAL_INTERVAL:
+                    if last_signal_time is None or (agora_utc - last_signal_time).total_seconds() >= SIGNAL_INTERVAL:
                         symbol, direcao, score = escolher_melhor_ativo()
                         if symbol:
                             criar_sinal(symbol, direcao, score)
