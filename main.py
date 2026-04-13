@@ -28,15 +28,26 @@ BOT_ATIVO = False
 # ==========================
 # UNIVERSO DINÂMICO
 # ==========================
+
 ACTIVE_SYMBOLS = [
+
     "BTCUSDT",
     "ETHUSDT",
+    "XRPUSDT",
+    "SOLUSDT",
+    "ADAUSDT",
+    "BNBUSDT",
+    "DOGEUSDT",
+    "LTCUSDT",
+    "XLMUSDT"
+
 ]
 
 last_universe_update = None
 UNIVERSE_REFRESH = 900
 
 performance = {
+
     "BTCUSDT": {"win": 0, "loss": 0},
     "ETHUSDT": {"win": 0, "loss": 0},
     "XRPUSDT": {"win": 0, "loss": 0},
@@ -44,10 +55,9 @@ performance = {
     "ADAUSDT": {"win": 0, "loss": 0},
     "BNBUSDT": {"win": 0, "loss": 0},
     "DOGEUSDT": {"win": 0, "loss": 0},
-    "TRXUSDT": {"win": 0, "loss": 0},
-    "TONUSDT": {"win": 0, "loss": 0},
-    "AVAXUSDT": {"win": 0, "loss": 0},
-    "LINKUSDT": {"win": 0, "loss": 0},
+    "LTCUSDT": {"win": 0, "loss": 0},
+    "XLMUSDT": {"win": 0, "loss": 0},
+
 }
 
 # ==========================
@@ -459,81 +469,22 @@ def rsi_last(prices, period=14):
 
 def get_market_symbols():
 
-    try:
+    # Universo fixo compatível com sua corretora
 
-        url = "https://api.kucoin.com/api/v1/market/allTickers"
+    return [
 
-        r = requests.get(url, timeout=10)
+        "BTCUSDT",
+        "ETHUSDT",
+        "XRPUSDT",
+        "SOLUSDT",
+        "ADAUSDT",
+        "BNBUSDT",
+        "DOGEUSDT",
+        "LTCUSDT",
+        "XLMUSDT"
 
-        if r.status_code != 200:
-
-            log(f"Market scan HTTP erro {r.status_code}")
-
-            return ["BTCUSDT", "ETHUSDT"]
-
-        data = r.json()
-
-        if "data" not in data:
-
-            log("Market scan resposta inválida")
-
-            return ["BTCUSDT", "ETHUSDT"]
-
-        tickers = data["data"].get("ticker", [])
-
-        symbols = []
-
-        for item in tickers:
-
-            try:
-
-                symbol = item.get("symbol", "")
-
-                if not symbol.endswith("-USDT"):
-                    continue
-
-                volume = float(
-                    item.get("volValue", 0)
-                )
-
-                if volume < 50000000:
-                    continue
-
-                # converter formato
-                symbol = symbol.replace(
-                    "-USDT",
-                    "USDT"
-                )
-
-                symbols.append(
-                    (symbol, volume)
-                )
-
-            except Exception:
-                continue
-
-        if len(symbols) == 0:
-
-            log("Market scan vazio — fallback")
-
-            return ["BTCUSDT", "ETHUSDT"]
-
-        symbols.sort(
-            key=lambda x: x[1],
-            reverse=True
-        )
-
-        top_symbols = [
-            s[0] for s in symbols[:30]
-        ]
-
-        return top_symbols
-
-    except Exception as e:
-
-        log(f"Erro market scan: {e}")
-
-        return ["BTCUSDT", "ETHUSDT"]
+    ]
+                
                 
 # ==========================
 # QUALITY SCORE DO ATIVO
