@@ -467,20 +467,24 @@ def rsi_last(prices, period=14):
 
         if r.status_code != 200:
 
-            log(
-                f"Erro market scan HTTP {r.status_code}"
-            )
+            log(f"Market scan HTTP erro {r.status_code}")
 
             return ["BTCUSDT", "ETHUSDT"]
 
-        data = r.json()
+        try:
 
-        # segurança extra
+            data = r.json()
+
+        except Exception:
+
+            log("Market scan JSON inválido")
+
+            return ["BTCUSDT", "ETHUSDT"]
+
+        # Se não for lista → erro Binance
         if not isinstance(data, list):
 
-            log(
-                "Erro market scan: resposta inválida"
-            )
+            log("Market scan retornou erro da Binance")
 
             return ["BTCUSDT", "ETHUSDT"]
 
@@ -490,7 +494,13 @@ def rsi_last(prices, period=14):
 
             try:
 
-                symbol = item.get("symbol", "")
+                if not isinstance(item, dict):
+                    continue
+
+                symbol = item.get("symbol")
+
+                if not symbol:
+                    continue
 
                 if not symbol.endswith("USDT"):
                     continue
@@ -512,11 +522,9 @@ def rsi_last(prices, period=14):
             except Exception:
                 continue
 
-        if not symbols:
+        if len(symbols) == 0:
 
-            log(
-                "Market scan vazio — fallback BTC/ETH"
-            )
+            log("Market scan vazio — fallback")
 
             return ["BTCUSDT", "ETHUSDT"]
 
@@ -525,11 +533,15 @@ def rsi_last(prices, period=14):
             reverse=True
         )
 
-        return [s[0] for s in symbols[:30]]
+        top_symbols = [
+            s[0] for s in symbols[:30]
+        ]
+
+        return top_symbols
 
     except Exception as e:
 
-        log(f"Erro market scan: {e}")
+        log(f"Erro market scan geral: {e}")
 
         return ["BTCUSDT", "ETHUSDT"]
 
