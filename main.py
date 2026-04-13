@@ -319,7 +319,7 @@ def escolher_melhor_ativo():
         candles = get_candles(symbol)
 
         if not candles or len(candles) < 60:
-            continue
+                continue
 
         closes = [c["close"] for c in candles]
 
