@@ -204,6 +204,21 @@ def get_candles(symbol):
         print(f"Erro candles {symbol}: {e}")
 
         return None
+
+#===================
+#HELPER
+#==================
+
+def candle_por_abertura(df, abertura_utc):
+
+    ts = int(abertura_utc.timestamp() * 1000)
+
+    linha = df[df["time"] == ts]
+
+    if linha.empty:
+        return None
+
+    return linha.iloc[-1]
         
 # ==========================
 # INDICADORES
@@ -303,43 +318,37 @@ def escolher_melhor_ativo():
 
 def criar_sinal(symbol, direcao):
 
-    # 🔴 EVITAR DUPLICADO
     if ja_tem_operacao(symbol):
         return
 
     preco = get_price(symbol)
-
     if preco is None:
         return
 
-    tempo = agora()
-
-    entrada = tempo + timedelta(minutes=2)
-
-    p1 = entrada + timedelta(minutes=1)
-
-    p2 = p1 + timedelta(minutes=1)
+    # horário exato da vela de entrada em UTC
+    base_utc = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
     op = {
         "symbol": symbol,
         "direcao": direcao,
         "preco": preco,
-        "tempo_entrada": entrada,
-        "tempo_protecao1": p1,
-        "tempo_protecao2": p2,
-        "etapa": 0
+        "etapa": 0,
+        "tempo_entrada": base_utc,
+        "tempo_protecao1": base_utc + timedelta(minutes=1),
+        "tempo_protecao2": base_utc + timedelta(minutes=2),
     }
 
     operacoes_ativas.append(op)
 
+    entrada_msg = agora().replace(second=0, microsecond=0)
+
     enviar(
         "✅ ENTRADA CONFIRMADA ✅\n\n"
         f"🌎 Ativo: {symbol}\n"
-        f"📊 Estratégia: "
-        f"{'🟢 COMPRA' if direcao=='BUY' else '🔴 VENDA'}\n"
-        f"⏰ Entrada: {entrada.strftime('%H:%M')}\n\n"
-        f"⚠️ Proteção 1 {p1.strftime('%H:%M')}\n"
-        f"⚠️ Proteção 2 {p2.strftime('%H:%M')}"
+        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
+        f"⏰ Entrada: {entrada_msg.strftime('%H:%M')}\n\n"
+        f"⚠️ Proteção 1 { (entrada_msg + timedelta(minutes=1)).strftime('%H:%M') }\n"
+        f"⚠️ Proteção 2 { (entrada_msg + timedelta(minutes=2)).strftime('%H:%M') }"
     )
 
 
@@ -369,13 +378,13 @@ def enviar_resultado(symbol, resultado):
 # VERIFICAR RESULTADOS
 # ==========================
 
+
 def verificar_resultados():
 
     global wins
     global losses
 
-    agora_time = agora()
-
+    agora_utc = datetime.now(timezone.utc)
     novas_operacoes = []
 
     for op in operacoes_ativas:
@@ -389,130 +398,97 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # Últimos candles fechados
-        c1 = df.iloc[-2]  # último fechado
-        c2 = df.iloc[-3]
-        c3 = df.iloc[-4]
-
-        # ==========================
-        # ENTRADA
-        # ==========================
-
+        # vela da etapa atual e a vela anterior
         if op["etapa"] == 0:
 
-            # ESPERAR FECHAR VELA
-            if agora_time >= op["tempo_entrada"] + timedelta(minutes=1):
-
-                entrada_preco = float(c2["close"])
-                saida_preco = float(c1["close"])
-
-                win = (
-                    saida_preco > entrada_preco
-                    if direcao == "BUY"
-                    else saida_preco < entrada_preco
-                )
-
-                if win:
-
-                    wins += 1
-
-                    enviar_resultado(
-                        symbol,
-                        "WIN na Entrada"
-                    )
-
-                    continue
-
-                else:
-
-                    op["etapa"] = 1
-                    novas_operacoes.append(op)
-
-            else:
-
+            # espera fechar a vela da entrada
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1):
                 novas_operacoes.append(op)
-
-        # ==========================
-        # PROTEÇÃO 1
-        # ==========================
-
-        elif op["etapa"] == 1:
-
-            if agora_time >= op["tempo_protecao1"] + timedelta(minutes=1):
-
-                entrada_preco = float(c3["close"])
-                saida_preco = float(c2["close"])
-
-                win = (
-                    saida_preco > entrada_preco
-                    if direcao == "BUY"
-                    else saida_preco < entrada_preco
-                )
-
-                if win:
-
-                    wins += 1
-
-                    enviar_resultado(
-                        symbol,
-                        "WIN na Proteção 1"
-                    )
-
-                    continue
-
-                else:
-
-                    op["etapa"] = 2
-                    novas_operacoes.append(op)
-
-            else:
-
-                novas_operacoes.append(op)
-
-        # ==========================
-        # PROTEÇÃO 2
-        # ==========================
-
-        elif op["etapa"] == 2:
-
-            if agora_time >= op["tempo_protecao2"] + timedelta(minutes=1):
-
-                entrada_preco = float(c2["close"])
-                saida_preco = float(c1["close"])
-
-                win = (
-                    saida_preco > entrada_preco
-                    if direcao == "BUY"
-                    else saida_preco < entrada_preco
-                )
-
-                if win:
-
-                    wins += 1
-
-                    enviar_resultado(
-                        symbol,
-                        "WIN na Proteção 2"
-                    )
-
-                else:
-
-                    losses += 1
-
-                    enviar_resultado(
-                        symbol,
-                        "LOSS após Proteção 2"
-                    )
-
                 continue
 
-            else:
+            vela_atual = candle_por_abertura(df, op["tempo_entrada"])
+            vela_anterior = candle_por_abertura(df, op["tempo_entrada"] - timedelta(minutes=1))
 
+            if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                enviar_resultado(symbol, "WIN na Entrada")
+                continue
+
+            op["etapa"] = 1
+            novas_operacoes.append(op)
+            continue
+
+        if op["etapa"] == 1:
+
+            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=1):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(df, op["tempo_protecao1"])
+            vela_anterior = candle_por_abertura(df, op["tempo_protecao1"] - timedelta(minutes=1))
+
+            if vela_atual is None or vela_anterior is None:
+                novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                enviar_resultado(symbol, "WIN na Proteção 1")
+                continue
+
+            op["etapa"] = 2
+            novas_operacoes.append(op)
+            continue
+
+        if op["etapa"] == 2:
+
+            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(df, op["tempo_protecao2"])
+            vela_anterior = candle_por_abertura(df, op["tempo_protecao2"] - timedelta(minutes=1))
+
+            if vela_atual is None or vela_anterior is None:
+                novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                enviar_resultado(symbol, "WIN na Proteção 2")
+            else:
+                losses += 1
+                enviar_resultado(symbol, "LOSS após Proteção 2")
+
+            continue
 
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
+                
 
+                    
 # ==========================
 # LOOP PRINCIPAL
 # ==========================
