@@ -316,7 +316,7 @@ def escolher_melhor_ativo():
 if trend_pct < 0.0007:
     continue
 
-score = trend_pct + abs(rsi - 50) * 0.05
+        score = trend_pct + abs(rsi - 50) * 0.05
         
         score *= asset_multiplier(symbol)
         score *= learning_multiplier(symbol)
