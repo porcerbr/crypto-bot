@@ -26,6 +26,14 @@ LAST_UPDATE_ID = None
 BOT_ATIVO = False
 
 # ==========================
+# COOLDOWN POR ATIVO
+# ==========================
+
+COOLDOWN_MINUTOS = 7  # pode ajustar 5–10
+
+ultimo_trade_por_ativo = {}
+
+# ==========================
 # UNIVERSO DINÂMICO
 # ==========================
 
@@ -296,6 +304,17 @@ def escolher_melhor_ativo():
     melhor_direcao = None
 
     for symbol in ACTIVE_SYMBOLS:
+
+        # verifica cooldown
+if symbol in ultimo_trade_por_ativo:
+
+    tempo_passado = (
+        utc_now() - ultimo_trade_por_ativo[symbol]
+    ).total_seconds()
+
+    if tempo_passado < COOLDOWN_MINUTOS * 60:
+        log(f"{symbol} em cooldown")
+        continue
 
         candles = get_candles(symbol)
 
@@ -669,6 +688,8 @@ def processar_setup_pendente():
             "tempo_protecao1": p1,
             "tempo_protecao2": p2,
         })
+
+        ultimo_trade_por_ativo[symbol] = utc_now()
 
         enviar(
             "✅ ENTRADA CONFIRMADA ✅\n\n"
