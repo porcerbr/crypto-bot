@@ -732,7 +732,7 @@ def verificar_resultados():
         if op["etapa"] == 0:
 
             # aguardar fechamento real da vela
-if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
                 novas_operacoes.append(op)
 
                 continue
@@ -804,7 +804,7 @@ log(
         if op["etapa"] == 1:
 
             # aguardar fechamento real da vela
-if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
 
                 novas_operacoes.append(op)
 
@@ -871,7 +871,7 @@ if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
         if op["etapa"] == 2:
 
             # aguardar fechamento real da vela
-if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
 
                 novas_operacoes.append(op)
 
