@@ -606,7 +606,7 @@ def criar_sinal(symbol, direcao, score):
 
     entrada_time = (
         next_minute(agora_utc)
-        + timedelta(minutes=2)
+        + timedelta(minutes=1)
     )
 
     setup_pendente = {
@@ -731,8 +731,8 @@ def verificar_resultados():
 
         if op["etapa"] == 0:
 
-            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1):
-
+            # aguardar fechamento real da vela
+if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
                 novas_operacoes.append(op)
 
                 continue
@@ -741,6 +741,12 @@ def verificar_resultados():
                 candles,
                 op["tempo_entrada"]
             )
+
+log(
+    f"CHECK {symbol} | "
+    f"Anterior={vela_anterior['close']} "
+    f"Atual={vela_atual['close']}"
+)
 
             vela_anterior = candle_por_abertura(
                 candles,
@@ -797,7 +803,8 @@ def verificar_resultados():
 
         if op["etapa"] == 1:
 
-            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=1):
+            # aguardar fechamento real da vela
+if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
 
                 novas_operacoes.append(op)
 
@@ -863,7 +870,8 @@ def verificar_resultados():
 
         if op["etapa"] == 2:
 
-            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1):
+            # aguardar fechamento real da vela
+if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
 
                 novas_operacoes.append(op)
 
