@@ -313,8 +313,8 @@ def escolher_melhor_ativo():
 
         trend_pct = abs(e9 - e21) / closes[-1]
 
-if trend_pct < 0.0007:
-    continue
+        if trend_pct < 0.0007:
+            continue
 
         score = trend_pct + abs(rsi - 50) * 0.05
         
