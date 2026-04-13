@@ -5,30 +5,29 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 # ==========================
-# CONFIGURAÇÃO
+# CONFIG
 # ==========================
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
-SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "XRPUSDT",
-    "SOLUSDT",
-    "ADAUSDT",
-]
-
-INTERVAL = "1m"
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "ADAUSDT"]
 SIGNAL_INTERVAL = 300  # 5 minutos
 BR_TZ = timezone(timedelta(hours=-3))
 
+# ==========================
+# ESTADO
+# ==========================
 wins = 0
 losses = 0
+
 operacoes_ativas = []
 setup_pendente = None
 last_signal_time = None
+last_trade_time = None
+
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
+adaptive_mode = "NORMAL"
 
 performance = {
     "BTCUSDT": {"win": 0, "loss": 0},
@@ -68,10 +67,7 @@ def fmt_br(dt):
 def enviar(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
+        payload = {"chat_id": CHAT_ID, "text": msg}
         r = requests.post(url, data=payload, timeout=10)
         if r.status_code != 200:
             log(f"Erro Telegram: {r.status_code} | {r.text}")
@@ -101,6 +97,7 @@ def verificar_comandos():
 
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
+
             if "message" not in update:
                 continue
 
@@ -120,12 +117,24 @@ def verificar_comandos():
         log(f"Erro comandos: {e}")
 
 # ==========================
-# KUCOIN HELPERS
+# KUCOIN
 # ==========================
 def to_kucoin_symbol(symbol):
     return symbol.replace("USDT", "-USDT")
 
 def get_candles(symbol, limit=120):
+    """
+    Retorna candles em ordem crescente de tempo.
+    Cada candle:
+    {
+        "time": datetime UTC,
+        "open": float,
+        "close": float,
+        "high": float,
+        "low": float,
+        "volume": float
+    }
+    """
     try:
         kucoin_symbol = to_kucoin_symbol(symbol)
         url = "https://api.kucoin.com/api/v1/market/candles"
@@ -133,6 +142,7 @@ def get_candles(symbol, limit=120):
             "type": "1min",
             "symbol": kucoin_symbol
         }
+
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
@@ -140,22 +150,22 @@ def get_candles(symbol, limit=120):
             log(f"Resposta inválida candles {symbol}: {data}")
             return None
 
-        rows = data["data"]
+        rows = data["data"][:limit]
         candles = []
 
-        for row in reversed(rows[-limit:]):
+        # KuCoin costuma vir do mais recente para o mais antigo
+        for row in reversed(rows):
             try:
                 open_ts = int(float(row[0]))
                 open_dt = datetime.fromtimestamp(open_ts, tz=timezone.utc)
-                candle = {
+                candles.append({
                     "time": open_dt,
                     "open": float(row[1]),
                     "close": float(row[2]),
                     "high": float(row[3]),
                     "low": float(row[4]),
                     "volume": float(row[5]),
-                }
-                candles.append(candle)
+                })
             except Exception:
                 continue
 
@@ -292,12 +302,6 @@ def liquidity_sweep(candles):
 
     return False
 
-def session_filter():
-    hour = br_now().hour
-    if 1 <= hour <= 6:
-        return False
-    return True
-
 def asset_multiplier(symbol):
     data = performance.get(symbol, {"win": 1, "loss": 1})
     total = data["win"] + data["loss"]
@@ -314,6 +318,22 @@ def asset_multiplier(symbol):
 
     return 1.0
 
+def update_mode():
+    global adaptive_mode, last_trade_time
+
+    if last_trade_time is None:
+        adaptive_mode = "AGRESSIVO"
+        return
+
+    idle_minutes = (utc_now() - last_trade_time).seconds / 60
+
+    if idle_minutes > 90:
+        adaptive_mode = "AGRESSIVO"
+    elif idle_minutes > 45:
+        adaptive_mode = "NORMAL"
+    else:
+        adaptive_mode = "CONSERVADOR"
+
 def ja_tem_operacao(symbol):
     for op in operacoes_ativas:
         if op["symbol"] == symbol:
@@ -324,9 +344,35 @@ def ja_tem_operacao(symbol):
 # ESCOLHER MELHOR ATIVO
 # ==========================
 def escolher_melhor_ativo():
+    update_mode()
+
     melhor_symbol = None
     melhor_score = -999
     melhor_direcao = None
+
+    if adaptive_mode == "CONSERVADOR":
+        adx_min = 18
+        rsi_low, rsi_high = 46, 54
+        allow_non_trend = False
+        move_max = 0.0025
+        buy_min = 55
+        sell_max = 45
+    elif adaptive_mode == "NORMAL":
+        adx_min = 14
+        rsi_low, rsi_high = 44, 56
+        allow_non_trend = False
+        move_max = 0.0030
+        buy_min = 54
+        sell_max = 46
+    else:
+        adx_min = 10
+        rsi_low, rsi_high = 42, 58
+        allow_non_trend = True
+        move_max = 0.0040
+        buy_min = 52
+        sell_max = 48
+
+    log(f"MODO: {adaptive_mode}")
 
     for symbol in SYMBOLS:
         if ja_tem_operacao(symbol):
@@ -347,26 +393,30 @@ def escolher_melhor_ativo():
         if e9 is None or e21 is None or rsi is None or adx_val is None or atr_val is None:
             continue
 
-        if not session_filter():
+        regime = market_regime(closes)
+
+        if regime == "UNKNOWN":
+            continue
+
+        if not allow_non_trend and regime != "TREND":
+            continue
+
+        if allow_non_trend and regime == "CHOP":
             continue
 
         if liquidity_sweep(candles):
             continue
 
-        regime = market_regime(closes)
-        if regime != "TREND":
-            continue
-
-        if adx_val < 18:
+        if adx_val < adx_min:
             continue
 
         if atr_val < closes[-1] * 0.0009:
             continue
 
-        if 48 < rsi < 52:
+        if rsi_low < rsi < rsi_high:
             continue
 
-        if abs(closes[-1] - closes[-2]) / closes[-2] > 0.0025:
+        if abs(closes[-1] - closes[-2]) / closes[-2] > move_max:
             continue
 
         ema_slope = abs(e9 - ema_last(closes[:-5], 9)) if len(closes) > 15 else 0
@@ -375,9 +425,9 @@ def escolher_melhor_ativo():
 
         trend_pct = abs(e9 - e21) / closes[-1] * 100
 
-        if e9 > e21 and rsi >= 55:
+        if e9 > e21 and rsi >= buy_min:
             direcao = "BUY"
-        elif e9 < e21 and rsi <= 45:
+        elif e9 < e21 and rsi <= sell_max:
             direcao = "SELL"
         else:
             continue
@@ -399,7 +449,7 @@ def escolher_melhor_ativo():
     return melhor_symbol, melhor_direcao, melhor_score
 
 # ==========================
-# SINAL
+# SINAL / ENTRADA
 # ==========================
 def criar_sinal(symbol, direcao, score):
     global setup_pendente, last_signal_time
@@ -480,7 +530,7 @@ def enviar_resultado(symbol, resultado):
     log(f"RESULTADO | {symbol} | {resultado} | W={wins} L={losses}")
 
 def verificar_resultados():
-    global wins, losses
+    global wins, losses, last_trade_time
 
     agora_utc = utc_now()
     novas_operacoes = []
@@ -494,6 +544,7 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=1):
                 novas_operacoes.append(op)
@@ -515,6 +566,7 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
+                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Entrada")
                 continue
 
@@ -522,6 +574,7 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=1):
                 novas_operacoes.append(op)
@@ -543,6 +596,7 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
+                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Proteção 1")
                 continue
 
@@ -550,6 +604,7 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1):
                 novas_operacoes.append(op)
@@ -571,10 +626,12 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
+                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Proteção 2")
             else:
                 losses += 1
                 performance[symbol]["loss"] += 1
+                last_trade_time = utc_now()
                 enviar_resultado(symbol, "LOSS após Proteção 2")
 
             continue
@@ -588,7 +645,7 @@ def verificar_resultados():
 def main():
     global last_signal_time
 
-    if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
+    if TOKEN == "SEU_TOKEN_AQUI" or CHAT_ID == "SEU_CHAT_ID_AQUI":
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
         return
 
