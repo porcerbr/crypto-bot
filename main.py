@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ==========================
 
-TOKEN = os.getenv("7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ", "")
-CHAT_ID = os.getenv("1056795017", "")
+TOKEN = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
+CHAT_ID = "1056795017"
 
 SYMBOLS = [
     "BTCUSDT",
