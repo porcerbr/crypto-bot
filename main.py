@@ -195,6 +195,67 @@ def remover_webhook():
         pass
 
 # ==========================
+# TELEGRAM COMMANDS
+# ==========================
+
+def verificar_comandos():
+
+    global LAST_UPDATE_ID
+    global BOT_ATIVO
+
+    try:
+
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+
+        params = {}
+
+        if LAST_UPDATE_ID is not None:
+            params["offset"] = LAST_UPDATE_ID + 1
+
+        r = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        data = r.json()
+
+        if "result" not in data:
+            return
+
+        for update in data["result"]:
+
+            LAST_UPDATE_ID = update["update_id"]
+
+            if "message" not in update:
+                continue
+
+            texto = update["message"].get(
+                "text",
+                ""
+            ).strip()
+
+            if texto == "/start":
+
+                BOT_ATIVO = True
+
+                enviar("🟢 BOT ATIVADO")
+
+                log("BOT ATIVADO")
+
+            elif texto == "/stop":
+
+                BOT_ATIVO = False
+
+                enviar("🔴 BOT PARADO")
+
+                log("BOT PARADO")
+
+    except Exception as e:
+
+        log(f"Erro comandos: {e}")
+
+# ==========================
 # MULTIPLICADOR POR ATIVO
 # ==========================
 def asset_multiplier(symbol):
