@@ -313,8 +313,8 @@ def escolher_melhor_ativo():
          ).total_seconds()
 
            if tempo_passado < COOLDOWN_MINUTOS * 60:
-             log(f"{symbol} em cooldown")
-                   continue
+            log(f"{symbol} em cooldown")
+            continue
 
         candles = get_candles(symbol)
 
