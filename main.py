@@ -457,7 +457,7 @@ def rsi_last(prices, period=14):
 # AUTO SELEÇÃO DE UNIVERSO
 # ==========================
 
- def get_market_symbols():
+def get_market_symbols():
 
     try:
 
