@@ -703,37 +703,7 @@ def enviar_resultado(symbol, resultado):
     )
 
 
-def verificar_resultados():
-
-    global wins
-    global losses
-
-    agora_utc = utc_now()
-
-    novas_operacoes = []
-
-    for op in operacoes_ativas:
-
-        symbol = op["symbol"]
-
-        direcao = op["direcao"]
-
-        candles = get_candles(symbol)
-
-        if candles is None:
-
-            novas_operacoes.append(op)
-
-            continue
-
-
-        # ETAPA 0
-
-if op["etapa"] == 0:
-
-    if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
-
-        novas_operacoes.append(op)
+.append(op)
 
         continue
 
@@ -833,107 +803,240 @@ if op["etapa"] == 1:
 
     )
 
-    if win:
+def verificar_resultados():
 
-        wins += 1
+    global wins
+    global losses
 
-        performance[symbol]["win"] += 1
+    agora_utc = utc_now()
 
-        registrar_resultado_aprendizado(
-            symbol,
-            True
-        )
+    novas_operacoes = []
 
-        enviar_resultado(
-            symbol,
-            "WIN na Proteção 1"
-        )
+    for op in operacoes_ativas:
 
-        continue
+        symbol = op["symbol"]
 
-    op["etapa"] = 2
+        direcao = op["direcao"]
 
-    novas_operacoes.append(op)
+        candles = get_candles(symbol)
 
-    continue
+        if candles is None:
+
+            novas_operacoes.append(op)
+
+            continue
 
 
-    
-        # ETAPA 2
+        # ==========================
+        # ETAPA 0 — ENTRADA
+        # ==========================
 
-if op["etapa"] == 2:
+        if op["etapa"] == 0:
 
-    if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1, seconds=5):
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1, seconds=5):
 
-        novas_operacoes.append(op)
+                novas_operacoes.append(op)
 
-        continue
+                continue
 
-    vela_atual = candle_por_abertura(
-        candles,
-        op["tempo_protecao2"]
+            vela_atual = candle_por_abertura(
+                candles,
+                op["tempo_entrada"]
+            )
+
+            vela_anterior = candle_por_abertura(
+                candles,
+                op["tempo_entrada"] - timedelta(minutes=1)
+            )
+
+            if vela_atual is None or vela_anterior is None:
+
+                novas_operacoes.append(op)
+
+                continue
+
+            win = (
+
+                vela_atual["close"] > vela_anterior["close"]
+
+                if direcao == "BUY"
+
+                else
+
+                vela_atual["close"] < vela_anterior["close"]
+
+            )
+
+            if win:
+
+                wins += 1
+
+                performance[symbol]["win"] += 1
+
+                registrar_resultado_aprendizado(
+                    symbol,
+                    True
+                )
+
+                enviar_resultado(
+                    symbol,
+                    "WIN na Entrada"
+                )
+
+                continue
+
+            op["etapa"] = 1
+
+            novas_operacoes.append(op)
+
+            continue
+
+
+        # ==========================
+        # ETAPA 1 — PROTEÇÃO 1
+        # ==========================
+
+        if op["etapa"] == 1:
+
+            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=1, seconds=5):
+
+                novas_operacoes.append(op)
+
+                continue
+
+            vela_atual = candle_por_abertura(
+                candles,
+                op["tempo_protecao1"]
+            )
+
+            vela_anterior = candle_por_abertura(
+                candles,
+                op["tempo_protecao1"] - timedelta(minutes=1)
+            )
+
+            if vela_atual is None or vela_anterior is None:
+
+                novas_operacoes.append(op)
+
+                continue
+
+            win = (
+
+                vela_atual["close"] > vela_anterior["close"]
+
+                if direcao == "BUY"
+
+                else
+
+                vela_atual["close"] < vela_anterior["close"]
+
+            )
+
+            if win:
+
+                wins += 1
+
+                performance[symbol]["win"] += 1
+
+                registrar_resultado_aprendizado(
+                    symbol,
+                    True
+                )
+
+                enviar_resultado(
+                    symbol,
+                    "WIN na Proteção 1"
+                )
+
+                continue
+
+            op["etapa"] = 2
+
+            novas_operacoes.append(op)
+
+            continue
+
+
+        # ==========================
+        # ETAPA 2 — PROTEÇÃO 2
+        # ==========================
+
+        if op["etapa"] == 2:
+
+            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1, seconds=5):
+
+                novas_operacoes.append(op)
+
+                continue
+
+            vela_atual = candle_por_abertura(
+                candles,
+                op["tempo_protecao2"]
+            )
+
+            vela_anterior = candle_por_abertura(
+                candles,
+                op["tempo_protecao2"] - timedelta(minutes=1)
+            )
+
+            if vela_atual is None or vela_anterior is None:
+
+                novas_operacoes.append(op)
+
+                continue
+
+            win = (
+
+                vela_atual["close"] > vela_anterior["close"]
+
+                if direcao == "BUY"
+
+                else
+
+                vela_atual["close"] < vela_anterior["close"]
+
+            )
+
+            if win:
+
+                wins += 1
+
+                performance[symbol]["win"] += 1
+
+                registrar_resultado_aprendizado(
+                    symbol,
+                    True
+                )
+
+                enviar_resultado(
+                    symbol,
+                    "WIN na Proteção 2"
+                )
+
+            else:
+
+                losses += 1
+
+                performance[symbol]["loss"] += 1
+
+                registrar_resultado_aprendizado(
+                    symbol,
+                    False
+                )
+
+                enviar_resultado(
+                    symbol,
+                    "LOSS após Proteção 2"
+                )
+
+            continue
+
+
+    operacoes_ativas.clear()
+
+    operacoes_ativas.extend(
+        novas_operacoes
     )
-
-    vela_anterior = candle_por_abertura(
-        candles,
-        op["tempo_protecao2"]
-        - timedelta(minutes=1)
-    )
-
-    if vela_atual is None or vela_anterior is None:
-
-        novas_operacoes.append(op)
-
-        continue
-
-    win = (
-
-        vela_atual["close"]
-        > vela_anterior["close"]
-
-        if direcao == "BUY"
-
-        else
-
-        vela_atual["close"]
-        < vela_anterior["close"]
-
-    )
-
-    if win:
-
-        wins += 1
-
-        performance[symbol]["win"] += 1
-
-        registrar_resultado_aprendizado(
-            symbol,
-            True
-        )
-
-        enviar_resultado(
-            symbol,
-            "WIN na Proteção 2"
-        )
-
-    else:
-
-        losses += 1
-
-        performance[symbol]["loss"] += 1
-
-        registrar_resultado_aprendizado(
-            symbol,
-            False
-        )
-
-        enviar_resultado(
-            symbol,
-            "LOSS após Proteção 2"
-        )
-
-    continue
-
 
 # ==========================
 # LOOP PRINCIPAL
