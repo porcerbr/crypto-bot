@@ -1,21 +1,15 @@
-import requests
 import time
+import requests
 from datetime import datetime, timedelta, timezone
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
-
 TOKEN = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
 CHAT_ID = "1056795017"
 
-SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "XRPUSDT",
-    "SOLUSDT",
-    "ADAUSDT"
-]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "ADAUSDT"]
+INTERVAL = "1m"
 
 wins = 0
 losses = 0
@@ -24,25 +18,30 @@ operacoes_ativas = []
 setup_pendente = None
 
 last_signal_time = None
-SIGNAL_INTERVAL = 300  # 5 minutos
+SIGNAL_INTERVAL = 300  # 5 min
 
 BR_TZ = timezone(timedelta(hours=-3))
+
+# Performance (ML simples)
+performance = {
+    "BTCUSDT": {"win": 0, "loss": 0},
+    "ETHUSDT": {"win": 0, "loss": 0},
+    "XRPUSDT": {"win": 0, "loss": 0},
+    "SOLUSDT": {"win": 0, "loss": 0},
+    "ADAUSDT": {"win": 0, "loss": 0},
+}
 
 # ==========================
 # TEMPO
 # ==========================
-
 def utc_now():
     return datetime.now(timezone.utc)
 
 def br_now():
     return utc_now().astimezone(BR_TZ)
 
-def floor_minute(dt):
-    return dt.replace(second=0, microsecond=0)
-
 def next_minute(dt):
-    return floor_minute(dt) + timedelta(minutes=1)
+    return dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
 
 def fmt_br(dt):
     return dt.astimezone(BR_TZ).strftime("%H:%M")
@@ -50,471 +49,299 @@ def fmt_br(dt):
 # ==========================
 # TELEGRAM
 # ==========================
-
 def enviar(msg):
-
     try:
-
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": msg
-        }
-
-        r = requests.post(url, data=payload, timeout=10)
-
-        print("Telegram status:", r.status_code)
-
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
     except Exception as e:
+        print("Telegram error:", e)
 
-        print("Erro Telegram:", e)
-
+# ==========================
+# COMANDOS
+# ==========================
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
 
 def verificar_comandos():
-
-    global LAST_UPDATE_ID
-    global BOT_ATIVO
+    global LAST_UPDATE_ID, BOT_ATIVO
 
     try:
-
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-
         params = {}
 
         if LAST_UPDATE_ID:
             params["offset"] = LAST_UPDATE_ID + 1
 
         r = requests.get(url, params=params, timeout=10)
-
         data = r.json()
 
-        if "result" not in data:
-            return
-
-        for update in data["result"]:
-
+        for update in data.get("result", []):
             LAST_UPDATE_ID = update["update_id"]
 
-            if "message" not in update:
-                continue
+            msg = update.get("message", {})
+            text = msg.get("text", "").strip()
 
-            texto = update["message"].get("text","")
-
-            if texto == "/start":
-
+            if text == "/start":
                 BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
 
-            elif texto == "/stop":
-
+            elif text == "/stop":
                 BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
 
     except Exception as e:
-
-        print("Erro comandos:", e)
+        print("comandos error:", e)
 
 # ==========================
 # KUCOIN
 # ==========================
+def to_symbol(s):
+    return s.replace("USDT", "-USDT")
 
-def to_kucoin_symbol(symbol):
-
-    return symbol.replace("USDT", "-USDT")
-
-def get_price(symbol):
-
+def get_candles(symbol, limit=120):
     try:
-
-        url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
-
-        params = {
-            "symbol": to_kucoin_symbol(symbol)
-        }
-
-        r = requests.get(url, params=params, timeout=10)
-
-        data = r.json()
-
-        price = data.get("data", {}).get("price")
-
-        if price is None:
-            return None
-
-        return float(price)
-
-    except:
-
-        return None
-
-def get_candles(symbol, timeframe="1min"):
-
-    try:
-
         url = "https://api.kucoin.com/api/v1/market/candles"
-
-        params = {
-            "type": timeframe,
-            "symbol": to_kucoin_symbol(symbol)
-        }
+        params = {"type": "1min", "symbol": to_symbol(symbol)}
 
         r = requests.get(url, params=params, timeout=10)
-
         data = r.json()
 
-        if "data" not in data:
-            return None
-
-        rows = data["data"]
-
+        rows = data.get("data", [])
         candles = []
 
-        for row in reversed(rows):
-
-            ts = int(float(row[0]))
-
-            candle = {
-                "time": datetime.fromtimestamp(ts, tz=timezone.utc),
+        for row in reversed(rows[-limit:]):
+            candles.append({
+                "time": datetime.fromtimestamp(int(float(row[0])), tz=timezone.utc),
                 "open": float(row[1]),
                 "close": float(row[2]),
                 "high": float(row[3]),
-                "low": float(row[4])
-            }
-
-            candles.append(candle)
+                "low": float(row[4]),
+                "volume": float(row[5]),
+            })
 
         return candles
 
-    except:
-
+    except Exception as e:
+        print("candles error:", e)
         return None
 
 # ==========================
 # INDICADORES
 # ==========================
-
-def ema_last(prices, period):
-
+def ema(prices, period):
     if len(prices) < period:
         return None
 
     k = 2 / (period + 1)
-
-    ema = sum(prices[:period]) / period
+    ema_val = sum(prices[:period]) / period
 
     for p in prices[period:]:
+        ema_val = (p - ema_val) * k + ema_val
 
-        ema = (p - ema) * k + ema
+    return ema_val
 
-    return ema
-
-def rsi_last(prices, period=14):
-
+def rsi(prices, period=14):
     if len(prices) < period + 1:
         return None
 
-    gains = 0
-    losses_ = 0
+    gains, losses = 0, 0
 
     for i in range(1, period + 1):
-
-        diff = prices[i] - prices[i-1]
-
-        if diff >= 0:
+        diff = prices[i] - prices[i - 1]
+        if diff > 0:
             gains += diff
         else:
-            losses_ += abs(diff)
+            losses += abs(diff)
 
-    avg_gain = gains / period
-    avg_loss = losses_ / period
-
-    if avg_loss == 0:
+    if losses == 0:
         return 100
 
-    rs = avg_gain / avg_loss
+    rs = gains / losses
+    return 100 - (100 / (1 + rs))
 
-    return 100 - (100/(1+rs))
+def adx_simple(closes):
+    if len(closes) < 20:
+        return 0
 
-# ==========================
-# ESCOLHER MELHOR ATIVO
-# ==========================
+    tr = sum(abs(closes[i] - closes[i-1]) for i in range(1, len(closes)))
+    return tr / len(closes)
 
-def escolher_melhor_ativo():
-
-    melhor_symbol = None
-    melhor_score = -1
-    melhor_direcao = None
-
-    for symbol in SYMBOLS:
-
-        candles_m5 = get_candles(symbol,"5min")
-        candles_m1 = get_candles(symbol,"1min")
-
-        if not candles_m5 or not candles_m1:
-            continue
-
-        closes5 = [c["close"] for c in candles_m5]
-        closes1 = [c["close"] for c in candles_m1]
-
-        ema9_5 = ema_last(closes5,9)
-        ema21_5 = ema_last(closes5,21)
-
-        ema9_1 = ema_last(closes1,9)
-        ema21_1 = ema_last(closes1,21)
-
-        rsi1 = rsi_last(closes1)
-
-        if None in [ema9_5,ema21_5,ema9_1,ema21_1,rsi1]:
-            continue
-
-        last = candles_m1[-1]
-
-        corpo = abs(last["close"] - last["open"])
-        range_ = last["high"] - last["low"]
-
-        if range_ == 0:
-            continue
-
-        body_ratio = corpo / range_
-
-        if body_ratio < 0.45:
-            continue
-
-        direcao = None
-
-        if ema9_5 > ema21_5 and ema9_1 > ema21_1 and rsi1 > 50:
-            direcao = "BUY"
-
-        elif ema9_5 < ema21_5 and ema9_1 < ema21_1 and rsi1 < 50:
-            direcao = "SELL"
-
-        if direcao is None:
-            continue
-
-        score = abs(ema9_1 - ema21_1)
-
-        if score > melhor_score:
-
-            melhor_score = score
-            melhor_symbol = symbol
-            melhor_direcao = direcao
-
-    return melhor_symbol, melhor_direcao, melhor_score
+def atr(closes):
+    return sum(abs(closes[i] - closes[i-1]) for i in range(-14, -1)) / 14
 
 # ==========================
-# CRIAR SINAL
+# REGIME DE MERCADO
 # ==========================
+def market_regime(closes):
+    if len(closes) < 60:
+        return "UNKNOWN"
 
-def criar_sinal(symbol,direcao,score):
+    ema9 = ema(closes, 9)
+    ema21 = ema(closes, 21)
 
-    global setup_pendente
-    global last_signal_time
+    slope = abs(ema9 - ema(closes[:-10], 9))
 
-    agora = utc_now()
+    if abs(ema9 - ema21) / closes[-1] < 0.0015:
+        return "RANGE"
 
-    entrada_time = next_minute(agora) + timedelta(minutes=2)
+    if slope < closes[-1] * 0.0003:
+        return "CHOP"
+
+    return "TREND"
+
+# ==========================
+# SMART MONEY (LIQUIDITY SWEEP)
+# ==========================
+def liquidity_sweep(candles):
+    if len(candles) < 6:
+        return False
+
+    prev_high = max(c["high"] for c in candles[-6:-1])
+    prev_low = min(c["low"] for c in candles[-6:-1])
+
+    last = candles[-1]
+
+    if last["high"] > prev_high and last["close"] < prev_high:
+        return True
+
+    if last["low"] < prev_low and last["close"] > prev_low:
+        return True
+
+    return False
+
+# ==========================
+# SESSÃO
+# ==========================
+def session_filter():
+    h = br_now().hour
+    if 1 <= h <= 6:
+        return False
+    return True
+
+# ==========================
+# PERFORMANCE ML
+# ==========================
+def asset_multiplier(symbol):
+    data = performance.get(symbol, {"win": 1, "loss": 1})
+    total = data["win"] + data["loss"]
+
+    if total < 10:
+        return 1
+
+    winrate = data["win"] / total
+
+    if winrate > 0.65:
+        return 1.2
+    if winrate < 0.4:
+        return 0.7
+
+    return 1
+
+# ==========================
+# MELHOR ATIVO
+# ==========================
+def escolher():
+    best = None
+    best_score = -999
+
+    for s in SYMBOLS:
+        candles = get_candles(s)
+        if not candles:
+            continue
+
+        closes = [c["close"] for c in candles]
+
+        e9 = ema(closes, 9)
+        e21 = ema(closes, 21)
+        rsi_val = rsi(closes)
+        adx_val = adx_simple(closes)
+
+        if not e9 or not e21 or not rsi_val:
+            continue
+
+        if not session_filter():
+            continue
+
+        if liquidity_sweep(candles):
+            continue
+
+        regime = market_regime(closes)
+        if regime != "TREND":
+            continue
+
+        atr_val = atr(closes)
+        if atr_val < closes[-1] * 0.0009:
+            continue
+
+        if e9 > e21 and rsi_val >= 55:
+            direction = "BUY"
+        elif e9 < e21 and rsi_val <= 45:
+            direction = "SELL"
+        else:
+            continue
+
+        score = (abs(e9 - e21) * 2) + (abs(rsi_val - 50)) + adx_val
+
+        score *= asset_multiplier(s)
+
+        if score > best_score:
+            best_score = score
+            best = (s, direction, score)
+
+    return best
+
+# ==========================
+# SINAL
+# ==========================
+def criar_signal(symbol, direction, score):
+    global setup_pendente, last_signal_time
+
+    entry = next_minute(utc_now()) + timedelta(minutes=2)
 
     setup_pendente = {
-        "symbol":symbol,
-        "direcao":direcao,
-        "entrada_time":entrada_time
+        "symbol": symbol,
+        "direction": direction,
+        "entry": entry,
+        "score": score
     }
 
-    last_signal_time = agora
+    last_signal_time = utc_now()
 
-    enviar(
-        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
-        f"🌎 {symbol}\n"
-        f"📊 {'🟢 COMPRA' if direcao=='BUY' else '🔴 VENDA'}\n"
-        f"⏰ Entrada: {fmt_br(entrada_time)}"
-    )
+    enviar(f"""
+⚠️ PREPARAR ENTRADA
 
-def processar_setup_pendente():
-
-    global setup_pendente
-
-    if setup_pendente is None:
-        return
-
-    agora = utc_now()
-
-    if agora >= setup_pendente["entrada_time"]:
-
-        symbol = setup_pendente["symbol"]
-        direcao = setup_pendente["direcao"]
-
-        entrada = setup_pendente["entrada_time"]
-
-        p1 = entrada + timedelta(minutes=1)
-        p2 = entrada + timedelta(minutes=2)
-
-        operacoes_ativas.append({
-            "symbol":symbol,
-            "direcao":direcao,
-            "etapa":0,
-            "tempo_entrada":entrada,
-            "tempo_protecao1":p1,
-            "tempo_protecao2":p2
-        })
-
-        enviar(
-            "✅ ENTRADA CONFIRMADA ✅\n\n"
-            f"🌎 {symbol}\n"
-            f"📊 {'🟢 COMPRA' if direcao=='BUY' else '🔴 VENDA'}\n"
-            f"⏰ {fmt_br(entrada)}\n\n"
-            f"⚠️ P1 {fmt_br(p1)}\n"
-            f"⚠️ P2 {fmt_br(p2)}"
-        )
-
-        setup_pendente = None
-
-# ==========================
-# RESULTADOS
-# ==========================
-
-def enviar_resultado(symbol,resultado):
-
-    total = wins + losses
-
-    taxa = (wins/total)*100 if total>0 else 0
-
-    enviar(
-        "🏆 RESULTADO\n\n"
-        f"{symbol}\n"
-        f"{resultado}\n\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Precisão: {round(taxa,1)}%"
-    )
-
-#=================
-#VERIFICAR RESULTADO 
-#==================
-
-def verificar_resultados():
-    global wins
-    global losses
-    agora_utc = utc_now()
-    novas_operacoes = []
-    for op in operacoes_ativas:
-        symbol = op["symbol"]
-        direcao = op["direcao"]
-        candles = get_candles(symbol)
-        if candles is None or len(candles) < 5:
-            novas_operacoes.append(op)
-            continue
-        # ETAPA 0 — ENTRADA
-        if op["etapa"] == 0:
-            if agora_utc < op["tempo_entrada"] + timedelta(minutes=1):
-                novas_operacoes.append(op)
-                continue
-            vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=1))
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-            if win:
-                wins += 1
-                enviar_resultado(symbol, "WIN na Entrada")
-                continue
-            op["etapa"] = 1
-            novas_operacoes.append(op)
-            continue
-        # ETAPA 1 — PROTEÇÃO 1
-        if op["etapa"] == 1:
-            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=1):
-                novas_operacoes.append(op)
-                continue
-            vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=1))
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-            if win:
-                wins += 1
-                enviar_resultado(symbol, "WIN na Proteção 1")
-                continue
-            op["etapa"] = 2
-            novas_operacoes.append(op)
-            continue
-        # ETAPA 2 — PROTEÇÃO 2
-        if op["etapa"] == 2:
-            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=1):
-                novas_operacoes.append(op)
-                continue
-            vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=1))
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-            if win:
-                wins += 1
-                enviar_resultado(symbol, "WIN na Proteção 2")
-            else:
-                losses += 1
-                enviar_resultado(symbol, "LOSS após Proteção 2")
-            continue
-    operacoes_ativas.clear()
-    operacoes_ativas.extend(novas_operacoes)
+Ativo: {symbol}
+Direção: {direction}
+Entrada: {fmt_br(entry)}
+Força: {round(score,2)}
+""")
 
 # ==========================
 # LOOP
 # ==========================
-
 def main():
+    global setup_pendente
 
-    global last_signal_time
-
-    enviar("🤖 BOT INICIADO")
+    enviar("🤖 BOT 2.0 INSTITUCIONAL ONLINE")
 
     while True:
-
         try:
-
             verificar_comandos()
 
-            if BOT_ATIVO:
+            if not BOT_ATIVO:
+                time.sleep(5)
+                continue
 
-                processar_setup_pendente()
-
-                agora = utc_now()
-
-                if setup_pendente is None:
-
-                    if last_signal_time is None or (
-                        agora - last_signal_time
-                    ).seconds >= SIGNAL_INTERVAL:
-
-                        symbol,direcao,score = escolher_melhor_ativo()
-
-                        if symbol:
-
-                            criar_sinal(symbol,direcao,score)
-
-            time.sleep(15)
-
-        except Exception as e:
-
-            print("Erro geral:",e)
+            if setup_pendente is None:
+                result = escolher()
+                if result:
+                    criar_signal(*result)
 
             time.sleep(10)
 
-main()
+        except Exception as e:
+            print("loop error:", e)
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main()
