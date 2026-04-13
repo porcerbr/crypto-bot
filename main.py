@@ -315,13 +315,21 @@ def ja_tem_operacao(symbol):
 # ==========================
 # ESCOLHER MELHOR ATIVO
 # ==========================
+
 def escolher_melhor_ativo():
     update_mode()
+
+    candidatos = []
 
     melhor_symbol = None
     melhor_score = -999
     melhor_direcao = None
 
+    log(f"==============================")
+    log(f"MODO: {adaptive_mode}")
+    log(f"==============================")
+
+    # parâmetros adaptativos (igual seu sistema atual)
     if adaptive_mode == "CONSERVADOR":
         rsi_buy = 56
         rsi_sell = 44
@@ -352,9 +360,8 @@ def escolher_melhor_ativo():
         max_move = 0.0080
         allow_chop = True
 
-    log(f"MODO: {adaptive_mode}")
-
     for symbol in SYMBOLS:
+
         if ja_tem_operacao(symbol):
             continue
 
@@ -374,58 +381,73 @@ def escolher_melhor_ativo():
 
         regime = market_regime(closes)
 
-        if regime == "UNKNOWN":
-            continue
-
-        if not allow_chop and regime != "TREND":
-            continue
-
-        if allow_chop and regime == "CHOP":
-            continue
-
-        if liquidity_sweep(candles):
-            continue
-
         trend_pct = abs(e9 - e21) / closes[-1]
-
-        if trend_pct < min_trend:
-            continue
-
-        if atr_val < closes[-1] * min_atr:
-            continue
-
-        if rsi_neutro_min < rsi < rsi_neutro_max:
-            continue
-
-        if abs(closes[-1] - closes[-2]) / closes[-2] > max_move:
-            continue
-
         ema_slope = abs(e9 - ema_last(closes[:-5], 9)) if len(closes) > 15 else 0
-        if ema_slope < closes[-1] * 0.0002:
-            continue
 
-        if e9 > e21 and rsi >= rsi_buy:
-            direcao = "BUY"
-        elif e9 < e21 and rsi <= rsi_sell:
-            direcao = "SELL"
-        else:
-            continue
+        # ==========================
+        # SCORE UNIVERSAL (HEDGE FUND CORE)
+        # ==========================
+        score = 0
 
-        score = (
-            trend_pct * 2.5 +
-            abs(rsi - 50) * 0.2 +
-            (atr_val / closes[-1]) * 100
-        )
+        # tendência
+        score += trend_pct * 3
+
+        # momentum RSI
+        score += abs(rsi - 50) * 0.15
+
+        # volatilidade
+        score += (atr_val / closes[-1]) * 100
+
+        # força EMA
+        score += ema_slope * 50
+
+        # penalidade de regime
+        if regime == "RANGE":
+            score *= 0.7
+        elif regime == "CHOP":
+            score *= 0.5
+
+        # penalidade de liquidez ruim
+        if liquidity_sweep(candles):
+            score *= 0.4
 
         score *= asset_multiplier(symbol)
 
+        # direção (não bloqueia mais)
+        if e9 > e21:
+            direcao = "BUY"
+        else:
+            direcao = "SELL"
+
+        log(f"{symbol} SCORE FINAL = {score:.3f} | {regime}")
+
+        candidatos.append((symbol, direcao, score))
+
+        # mantém também o melhor clássico
         if score > melhor_score:
-            melhor_score = score
             melhor_symbol = symbol
             melhor_direcao = direcao
+            melhor_score = score
 
-    return melhor_symbol, melhor_direcao, melhor_score
+    # ==========================
+    # FALLBACK INTELIGENTE
+    # ==========================
 
+    if not candidatos:
+        log("FALLBACK ABSOLUTO ATIVADO")
+
+        # fallback bruto (nunca trava o bot)
+        return SYMBOLS[0], "BUY", 0.1
+
+    # pega top 1 e top 2
+    candidatos.sort(key=lambda x: x[2], reverse=True)
+
+    top_symbol, top_dir, top_score = candidatos[0]
+
+    log(f"TOP ESCOLHIDO: {top_symbol} | {top_dir} | {top_score:.3f}")
+
+    return top_symbol, top_dir, top_score
+        
 # ==========================
 # CRIAR SINAL
 # ==========================
