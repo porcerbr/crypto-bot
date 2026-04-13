@@ -703,7 +703,7 @@ def enviar_resultado(symbol, resultado):
     )
 
 
-.append(op)
+
 
         continue
 
