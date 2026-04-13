@@ -461,7 +461,7 @@ def get_market_symbols():
 
     try:
 
-        url = "https://api.binance.com/api/v3/ticker/24hr"
+        url = "https://api.kucoin.com/api/v1/market/allTickers"
 
         r = requests.get(url, timeout=10)
 
@@ -471,49 +471,39 @@ def get_market_symbols():
 
             return ["BTCUSDT", "ETHUSDT"]
 
-        try:
+        data = r.json()
 
-            data = r.json()
+        if "data" not in data:
 
-        except Exception:
-
-            log("Market scan JSON inválido")
+            log("Market scan resposta inválida")
 
             return ["BTCUSDT", "ETHUSDT"]
 
-        # Se não for lista → erro Binance
-        if not isinstance(data, list):
-
-            log("Market scan retornou erro da Binance")
-
-            return ["BTCUSDT", "ETHUSDT"]
+        tickers = data["data"].get("ticker", [])
 
         symbols = []
 
-        for item in data:
+        for item in tickers:
 
             try:
 
-                if not isinstance(item, dict):
-                    continue
+                symbol = item.get("symbol", "")
 
-                symbol = item.get("symbol")
-
-                if not symbol:
-                    continue
-
-                if not symbol.endswith("USDT"):
-                    continue
-
-                if "UP" in symbol or "DOWN" in symbol:
+                if not symbol.endswith("-USDT"):
                     continue
 
                 volume = float(
-                    item.get("quoteVolume", 0)
+                    item.get("volValue", 0)
                 )
 
                 if volume < 50000000:
                     continue
+
+                # converter formato
+                symbol = symbol.replace(
+                    "-USDT",
+                    "USDT"
+                )
 
                 symbols.append(
                     (symbol, volume)
@@ -541,10 +531,10 @@ def get_market_symbols():
 
     except Exception as e:
 
-        log(f"Erro market scan geral: {e}")
+        log(f"Erro market scan: {e}")
 
         return ["BTCUSDT", "ETHUSDT"]
-
+                
 # ==========================
 # QUALITY SCORE DO ATIVO
 # ==========================
