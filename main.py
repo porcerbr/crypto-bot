@@ -12,7 +12,7 @@ TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
 INTERVAL = "1m"
-SIGNAL_INTERVAL = 300
+SIGNAL_INTERVAL = 120
 BR_TZ = timezone(timedelta(hours=-3))
 
 wins = 0
@@ -313,7 +313,7 @@ def escolher_melhor_ativo():
 
         trend_pct = abs(e9 - e21) / closes[-1]
 
-        if trend_pct < 0.0007:
+        if trend_pct < 0.0006:
             continue
 
         score = trend_pct + abs(rsi - 50) * 0.05
