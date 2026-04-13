@@ -6,16 +6,8 @@ from datetime import datetime, timedelta, timezone
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
-TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-CHAT_ID = os.getenv("CHAT_ID", "1056795017")
-
-SYMBOLS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "XRPUSDT",
-    "SOLUSDT",
-    "ADAUSDT",
-]
+TOKEN = os.getenv("BOT_TOKEN", "COLOQUE_SEU_TOKEN_AQUI")
+CHAT_ID = os.getenv("CHAT_ID", "COLOQUE_SEU_CHAT_ID_AQUI")
 
 INTERVAL = "1m"
 SIGNAL_INTERVAL = 300  # 5 minutos
@@ -33,23 +25,34 @@ setup_pendente = None
 # Controle global para evitar spam
 last_signal_time = None
 
-# Horário do último resultado real para modo adaptativo
-last_trade_time = None
-
 # Telegram updates
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
 
-# Modo adaptativo
-adaptive_mode = "NORMAL"
+# ==========================
+# UNIVERSO DINÂMICO
+# ==========================
+ACTIVE_SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+]
 
-# Histórico simples por ativo
+last_universe_update = None
+UNIVERSE_REFRESH = 900  # 15 min
+
+# Performance simples por ativo
 performance = {
     "BTCUSDT": {"win": 0, "loss": 0},
     "ETHUSDT": {"win": 0, "loss": 0},
     "XRPUSDT": {"win": 0, "loss": 0},
     "SOLUSDT": {"win": 0, "loss": 0},
     "ADAUSDT": {"win": 0, "loss": 0},
+    "BNBUSDT": {"win": 0, "loss": 0},
+    "DOGEUSDT": {"win": 0, "loss": 0},
+    "TRXUSDT": {"win": 0, "loss": 0},
+    "TONUSDT": {"win": 0, "loss": 0},
+    "AVAXUSDT": {"win": 0, "loss": 0},
+    "LINKUSDT": {"win": 0, "loss": 0},
 }
 
 # ==========================
@@ -222,58 +225,9 @@ def rsi_last(prices, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def atr_like(closes, period=14):
-    if len(closes) < period + 1:
-        return None
-    vals = []
-    start = max(1, len(closes) - period)
-    for i in range(start, len(closes)):
-        vals.append(abs(closes[i] - closes[i - 1]))
-    if not vals:
-        return None
-    return sum(vals) / len(vals)
-
 # ==========================
-# ADAPTAÇÃO / FILTROS
+# MULTIPLICADOR POR ATIVO
 # ==========================
-def market_regime(closes):
-    if len(closes) < 60:
-        return "UNKNOWN"
-
-    ema9 = ema_last(closes, 9)
-    ema21 = ema_last(closes, 21)
-    ema50 = ema_last(closes, 50)
-
-    if ema9 is None or ema21 is None or ema50 is None:
-        return "UNKNOWN"
-
-    slope = abs(ema9 - ema_last(closes[:-10], 9)) if len(closes) > 20 else 0
-    trend_strength = abs(ema21 - ema50) / closes[-1]
-
-    if trend_strength < 0.0015:
-        return "RANGE"
-
-    if slope < closes[-1] * 0.0003:
-        return "CHOP"
-
-    return "TREND"
-
-def liquidity_sweep(candles):
-    if len(candles) < 6:
-        return False
-
-    prev_high = max(c["high"] for c in candles[-6:-1])
-    prev_low = min(c["low"] for c in candles[-6:-1])
-    last = candles[-1]
-
-    if last["high"] > prev_high and last["close"] < prev_high:
-        return True
-
-    if last["low"] < prev_low and last["close"] > prev_low:
-        return True
-
-    return False
-
 def asset_multiplier(symbol):
     data = performance.get(symbol, {"win": 1, "loss": 1})
     total = data["win"] + data["loss"]
@@ -284,87 +238,105 @@ def asset_multiplier(symbol):
     winrate = data["win"] / total
 
     if winrate > 0.65:
-        return 1.2
-    if winrate < 0.4:
-        return 0.7
+        return 1.15
+    if winrate < 0.40:
+        return 0.85
 
     return 1.0
 
-def update_mode():
-    global adaptive_mode, last_trade_time
+# ==========================
+# AUTO SELEÇÃO DE UNIVERSO
+# ==========================
+def get_market_symbols():
+    try:
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        r = requests.get(url, timeout=10)
+        data = r.json()
 
-    if last_trade_time is None:
-        adaptive_mode = "AGRESSIVO"
-        return
+        symbols = []
 
-    idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
+        for item in data:
+            symbol = item.get("symbol", "")
+            if not symbol.endswith("USDT"):
+                continue
+            if "UP" in symbol or "DOWN" in symbol:
+                continue
 
-    if idle_minutes > 90:
-        adaptive_mode = "AGRESSIVO"
-    elif idle_minutes > 45:
-        adaptive_mode = "NORMAL"
-    else:
-        adaptive_mode = "CONSERVADOR"
+            try:
+                volume = float(item.get("quoteVolume", 0))
+            except Exception:
+                continue
 
-def ja_tem_operacao(symbol):
-    for op in operacoes_ativas:
-        if op["symbol"] == symbol:
-            return True
-    return False
+            if volume < 50000000:
+                continue
+
+            symbols.append((symbol, volume))
+
+        symbols.sort(key=lambda x: x[1], reverse=True)
+        return [s[0] for s in symbols[:30]]
+
+    except Exception as e:
+        log(f"Erro market scan: {e}")
+        return ["BTCUSDT", "ETHUSDT"]
+
+def asset_quality_score(symbol):
+    candles = get_candles(symbol)
+    if not candles or len(candles) < 60:
+        return 0
+
+    closes = [c["close"] for c in candles]
+
+    e9 = ema_last(closes, 9)
+    e21 = ema_last(closes, 21)
+    rsi = rsi_last(closes, 14)
+
+    if e9 is None or e21 is None or rsi is None:
+        return 0
+
+    volatility = abs(closes[-1] - closes[-10]) / closes[-1]
+    trend = abs(e9 - e21) / closes[-1]
+
+    score = 0
+    score += volatility * 50
+    score += trend * 120
+    score += abs(rsi - 50) * 0.3
+
+    return score
+
+def update_active_symbols():
+    global ACTIVE_SYMBOLS, last_universe_update
+
+    log("ATUALIZANDO UNIVERSO DE ATIVOS...")
+
+    market = get_market_symbols()
+    scored = []
+
+    for symbol in market:
+        score = asset_quality_score(symbol)
+        scored.append((symbol, score))
+        log(f"{symbol} QUALITY SCORE = {score:.2f}")
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    top = [s[0] for s in scored[:8]]
+
+    if len(top) < 3:
+        top = ["BTCUSDT", "ETHUSDT"]
+
+    ACTIVE_SYMBOLS = top
+    last_universe_update = utc_now()
+
+    log(f"NOVO UNIVERSO: {ACTIVE_SYMBOLS}")
 
 # ==========================
 # ESCOLHER MELHOR ATIVO
 # ==========================
-
 def escolher_melhor_ativo():
-    update_mode()
-
-    candidatos = []
-
     melhor_symbol = None
-    melhor_score = -999
+    melhor_score = -1
     melhor_direcao = None
 
-    log(f"==============================")
-    log(f"MODO: {adaptive_mode}")
-    log(f"==============================")
-
-    # parâmetros adaptativos (igual seu sistema atual)
-    if adaptive_mode == "CONSERVADOR":
-        rsi_buy = 56
-        rsi_sell = 44
-        rsi_neutro_min = 46
-        rsi_neutro_max = 54
-        min_trend = 0.010
-        min_atr = 0.0005
-        max_move = 0.0060
-        allow_chop = False
-
-    elif adaptive_mode == "NORMAL":
-        rsi_buy = 54
-        rsi_sell = 46
-        rsi_neutro_min = 44
-        rsi_neutro_max = 56
-        min_trend = 0.008
-        min_atr = 0.00045
-        max_move = 0.0065
-        allow_chop = False
-
-    else:
-        rsi_buy = 52
-        rsi_sell = 48
-        rsi_neutro_min = 42
-        rsi_neutro_max = 58
-        min_trend = 0.006
-        min_atr = 0.00040
-        max_move = 0.0080
-        allow_chop = True
-
-    for symbol in SYMBOLS:
-
-        if ja_tem_operacao(symbol):
-            continue
-
+    for symbol in ACTIVE_SYMBOLS:
         candles = get_candles(symbol)
         if not candles or len(candles) < 60:
             continue
@@ -374,80 +346,28 @@ def escolher_melhor_ativo():
         e9 = ema_last(closes, 9)
         e21 = ema_last(closes, 21)
         rsi = rsi_last(closes, 14)
-        atr_val = atr_like(closes, 14)
 
-        if e9 is None or e21 is None or rsi is None or atr_val is None:
+        if e9 is None or e21 is None or rsi is None:
             continue
 
-        regime = market_regime(closes)
-
         trend_pct = abs(e9 - e21) / closes[-1]
-        ema_slope = abs(e9 - ema_last(closes[:-5], 9)) if len(closes) > 15 else 0
-
-        # ==========================
-        # SCORE UNIVERSAL (HEDGE FUND CORE)
-        # ==========================
-        score = 0
-
-        # tendência
-        score += trend_pct * 3
-
-        # momentum RSI
-        score += abs(rsi - 50) * 0.15
-
-        # volatilidade
-        score += (atr_val / closes[-1]) * 100
-
-        # força EMA
-        score += ema_slope * 50
-
-        # penalidade de regime
-        if regime == "RANGE":
-            score *= 0.7
-        elif regime == "CHOP":
-            score *= 0.5
-
-        # penalidade de liquidez ruim
-        if liquidity_sweep(candles):
-            score *= 0.4
-
+        score = trend_pct + abs(rsi - 50) * 0.05
         score *= asset_multiplier(symbol)
 
-        # direção (não bloqueia mais)
-        if e9 > e21:
+        if e9 > e21 and rsi >= 50:
             direcao = "BUY"
-        else:
+        elif e9 < e21 and rsi <= 50:
             direcao = "SELL"
+        else:
+            continue
 
-        log(f"{symbol} SCORE FINAL = {score:.3f} | {regime}")
-
-        candidatos.append((symbol, direcao, score))
-
-        # mantém também o melhor clássico
         if score > melhor_score:
+            melhor_score = score
             melhor_symbol = symbol
             melhor_direcao = direcao
-            melhor_score = score
 
-    # ==========================
-    # FALLBACK INTELIGENTE
-    # ==========================
+    return melhor_symbol, melhor_direcao, melhor_score
 
-    if not candidatos:
-        log("FALLBACK ABSOLUTO ATIVADO")
-
-        # fallback bruto (nunca trava o bot)
-        return SYMBOLS[0], "BUY", 0.1
-
-    # pega top 1 e top 2
-    candidatos.sort(key=lambda x: x[2], reverse=True)
-
-    top_symbol, top_dir, top_score = candidatos[0]
-
-    log(f"TOP ESCOLHIDO: {top_symbol} | {top_dir} | {top_score:.3f}")
-
-    return top_symbol, top_dir, top_score
-        
 # ==========================
 # CRIAR SINAL
 # ==========================
@@ -515,7 +435,7 @@ def processar_setup_pendente():
         setup_pendente = None
 
 # ==========================
-# RESULTADOS
+# RESULTADO
 # ==========================
 def enviar_resultado(symbol, resultado):
     total = wins + losses
@@ -532,7 +452,8 @@ def enviar_resultado(symbol, resultado):
     log(f"RESULTADO | {symbol} | {resultado} | W={wins} L={losses}")
 
 def verificar_resultados():
-    global wins, losses, last_trade_time
+    global wins
+    global losses
 
     agora_utc = utc_now()
     novas_operacoes = []
@@ -554,6 +475,7 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
             vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=1))
+
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -567,7 +489,6 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
-                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Entrada")
                 continue
 
@@ -583,6 +504,7 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
             vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=1))
+
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -596,7 +518,6 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
-                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Proteção 1")
                 continue
 
@@ -612,6 +533,7 @@ def verificar_resultados():
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
             vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=1))
+
             if vela_atual is None or vela_anterior is None:
                 novas_operacoes.append(op)
                 continue
@@ -625,12 +547,10 @@ def verificar_resultados():
             if win:
                 wins += 1
                 performance[symbol]["win"] += 1
-                last_trade_time = utc_now()
                 enviar_resultado(symbol, "WIN na Proteção 2")
             else:
                 losses += 1
                 performance[symbol]["loss"] += 1
-                last_trade_time = utc_now()
                 enviar_resultado(symbol, "LOSS após Proteção 2")
 
             continue
@@ -643,6 +563,7 @@ def verificar_resultados():
 # ==========================
 def main():
     global last_signal_time
+    global last_universe_update
 
     if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
@@ -657,6 +578,9 @@ def main():
             verificar_comandos()
 
             if BOT_ATIVO:
+                if last_universe_update is None or (utc_now() - last_universe_update).total_seconds() > UNIVERSE_REFRESH:
+                    update_active_symbols()
+
                 processar_setup_pendente()
                 verificar_resultados()
 
