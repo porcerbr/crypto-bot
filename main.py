@@ -546,6 +546,113 @@ def get_market_symbols():
         return ["BTCUSDT", "ETHUSDT"]
 
 # ==========================
+# QUALITY SCORE DO ATIVO
+# ==========================
+
+def asset_quality_score(symbol):
+
+    candles = get_candles(symbol)
+
+    if not candles or len(candles) < 60:
+        return 0
+
+    closes = [c["close"] for c in candles]
+
+    e9 = ema_last(closes, 9)
+    e21 = ema_last(closes, 21)
+    rsi = rsi_last(closes, 14)
+
+    if e9 is None or e21 is None or rsi is None:
+        return 0
+
+    volatility = abs(
+        closes[-1] - closes[-10]
+    ) / closes[-1]
+
+    trend = abs(
+        e9 - e21
+    ) / closes[-1]
+
+    score = 0
+
+    score += volatility * 50
+    score += trend * 120
+    score += abs(rsi - 50) * 0.3
+
+    return score
+
+
+# ==========================
+# ATUALIZAR UNIVERSO
+# ==========================
+
+def update_active_symbols():
+
+    global ACTIVE_SYMBOLS
+    global last_universe_update
+
+    log("ATUALIZANDO UNIVERSO...")
+
+    market = get_market_symbols()
+
+    scored = []
+
+    for symbol in market:
+
+        try:
+
+            score = asset_quality_score(symbol)
+
+            scored.append(
+                (symbol, score)
+            )
+
+            log(
+                f"{symbol} SCORE {score:.2f}"
+            )
+
+        except Exception as e:
+
+            log(
+                f"Erro scoring {symbol}: {e}"
+            )
+
+    if len(scored) == 0:
+
+        ACTIVE_SYMBOLS = [
+            "BTCUSDT",
+            "ETHUSDT"
+        ]
+
+        log(
+            "Fallback universo BTC/ETH"
+        )
+
+        return
+
+    scored.sort(
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    top = [s[0] for s in scored[:8]]
+
+    if len(top) < 3:
+
+        top = [
+            "BTCUSDT",
+            "ETHUSDT"
+        ]
+
+    ACTIVE_SYMBOLS = top
+
+    last_universe_update = utc_now()
+
+    log(
+        f"NOVO UNIVERSO: {ACTIVE_SYMBOLS}"
+    )
+
+# ==========================
 # CRIAR SINAL
 # ==========================
 
