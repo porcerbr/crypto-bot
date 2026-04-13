@@ -457,7 +457,7 @@ def rsi_last(prices, period=14):
 # AUTO SELEÇÃO DE UNIVERSO
 # ==========================
 
-def get_market_symbols():
+ def get_market_symbols():
 
     try:
 
@@ -465,33 +465,60 @@ def get_market_symbols():
 
         r = requests.get(url, timeout=10)
 
+        if r.status_code != 200:
+
+            log(
+                f"Erro market scan HTTP {r.status_code}"
+            )
+
+            return ["BTCUSDT", "ETHUSDT"]
+
         data = r.json()
+
+        # segurança extra
+        if not isinstance(data, list):
+
+            log(
+                "Erro market scan: resposta inválida"
+            )
+
+            return ["BTCUSDT", "ETHUSDT"]
 
         symbols = []
 
         for item in data:
 
-            symbol = item.get("symbol", "")
-
-            if not symbol.endswith("USDT"):
-                continue
-
-            if "UP" in symbol or "DOWN" in symbol:
-                continue
-
             try:
+
+                symbol = item.get("symbol", "")
+
+                if not symbol.endswith("USDT"):
+                    continue
+
+                if "UP" in symbol or "DOWN" in symbol:
+                    continue
+
                 volume = float(
                     item.get("quoteVolume", 0)
                 )
-            except:
+
+                if volume < 50000000:
+                    continue
+
+                symbols.append(
+                    (symbol, volume)
+                )
+
+            except Exception:
                 continue
 
-            if volume < 50000000:
-                continue
+        if not symbols:
 
-            symbols.append(
-                (symbol, volume)
+            log(
+                "Market scan vazio — fallback BTC/ETH"
             )
+
+            return ["BTCUSDT", "ETHUSDT"]
 
         symbols.sort(
             key=lambda x: x[1],
@@ -505,76 +532,6 @@ def get_market_symbols():
         log(f"Erro market scan: {e}")
 
         return ["BTCUSDT", "ETHUSDT"]
-
-
-def asset_quality_score(symbol):
-
-    candles = get_candles(symbol)
-
-    if not candles or len(candles) < 60:
-        return 0
-
-    closes = [c["close"] for c in candles]
-
-    e9 = ema_last(closes, 9)
-    e21 = ema_last(closes, 21)
-    rsi = rsi_last(closes, 14)
-
-    if e9 is None or e21 is None:
-        return 0
-
-    volatility = abs(
-        closes[-1] - closes[-10]
-    ) / closes[-1]
-
-    trend = abs(
-        e9 - e21
-    ) / closes[-1]
-
-    score = 0
-
-    score += volatility * 50
-    score += trend * 120
-    score += abs(rsi - 50) * 0.3
-
-    return score
-
-
-def update_active_symbols():
-
-    global ACTIVE_SYMBOLS
-    global last_universe_update
-
-    log("ATUALIZANDO UNIVERSO...")
-
-    market = get_market_symbols()
-
-    scored = []
-
-    for symbol in market:
-
-        score = asset_quality_score(symbol)
-
-        scored.append(
-            (symbol, score)
-        )
-
-    scored.sort(
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    top = [s[0] for s in scored[:8]]
-
-    if len(top) < 3:
-        top = ["BTCUSDT", "ETHUSDT"]
-
-    ACTIVE_SYMBOLS = top
-
-    last_universe_update = utc_now()
-
-    log(f"NOVO UNIVERSO: {ACTIVE_SYMBOLS}")
-
 
 # ==========================
 # CRIAR SINAL
