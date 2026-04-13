@@ -748,7 +748,7 @@ log(
     f"Atual={vela_atual['close']}"
 )
 
-            vela_anterior = candle_por_abertura(
+        vela_anterior = candle_por_abertura(
                 candles,
                 op["tempo_entrada"]
                 - timedelta(minutes=1)
