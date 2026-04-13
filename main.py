@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
-TOKEN = os.getenv("BOT_TOKEN", "COLOQUE_SEU_TOKEN_AQUI")
-CHAT_ID = os.getenv("CHAT_ID", "COLOQUE_SEU_CHAT_ID_AQUI")
+TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
+CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
 INTERVAL = "1m"
 SIGNAL_INTERVAL = 300  # 5 minutos
