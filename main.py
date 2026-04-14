@@ -849,7 +849,7 @@ if OTC_ONLY:
         0.05 * liquidity_strength
     )
 
-model_prob = model_probability(features)
+    model_prob = model_probability(features)
     combined = (0.62 * rule_score) + (0.38 * model_prob)
 
     combined *= asset_multiplier(symbol)
