@@ -31,8 +31,7 @@ BOT_ATIVO = False
 # ==========================
 
 ACTIVE_SYMBOLS = [
-
-    "BTCUSDT",
+    "BTCUSDT",
     "ETHUSDT",
     "XRPUSDT",
     "SOLUSDT",
