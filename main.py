@@ -21,6 +21,12 @@ UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
 
+# Pequeno atraso extra para reduzir leitura antecipada da expiração
+EXTRA_EVAL_DELAY_SECONDS = 2
+
+# Tolerância para OTC/latência
+TOLERANCIA = 0.00015
+
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
 REPORT_AFTER_TRADES = 25
 
@@ -54,11 +60,6 @@ otc_state = {
     "drift": {}
 }
 
-
-# ==========================
-# UNIVERSO
-# ==========================
-
 # ==========================
 # UNIVERSO
 # ==========================
@@ -89,7 +90,7 @@ def normalize_symbol(name: str):
         "SOLANA": "SOLUSDT",
         "TRON": "TRXUSDT",
         "POLKADOT": "DOTUSDT",
-        "POLYGON": "MATICUSDT",
+        "POLYGON": "POLUSDT",
         "TONCOIN": "TONUSDT",
         "LITECOIN": "LTCUSDT",
         "BNB": "BNBUSDT",
@@ -101,20 +102,16 @@ def normalize_symbol(name: str):
 
     return None
 
-
 # GERA OS ATIVOS CORRETOS
 ACTIVE_SYMBOLS = []
 
 for item in RAW_SYMBOLS:
     s = normalize_symbol(item)
-
     if s and s not in ACTIVE_SYMBOLS:
         ACTIVE_SYMBOLS.append(s)
 
-
 # IMPORTANTE — usado pelo universo dinâmico
 MARKET_CANDIDATES = ACTIVE_SYMBOLS[:]
-
 
 # RESTAURA performance (corrige erro principal)
 performance = {
@@ -241,6 +238,14 @@ def filtro_otc(candles):
         return False
 
     return True
+
+def comparar_resultado(preco_entrada, preco_saida, direcao):
+    if preco_entrada is None or preco_saida is None:
+        return None
+
+    if direcao == "BUY":
+        return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
+    return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
 
 # ==========================
 # MODELO / PERSISTÊNCIA
@@ -1091,9 +1096,11 @@ def verificar_resultados():
         direcao = op["direcao"]
         meta = op.get("meta", {})
 
+        delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
+
         # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
-            if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
@@ -1104,7 +1111,7 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            win = saida_preco > entrada_preco if direcao == "BUY" else saida_preco < entrada_preco
+            win = comparar_resultado(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
@@ -1123,7 +1130,7 @@ def verificar_resultados():
 
         # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
-            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
@@ -1134,7 +1141,7 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            win = saida_preco > entrada_preco if direcao == "BUY" else saida_preco < entrada_preco
+            win = comparar_resultado(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
@@ -1153,7 +1160,7 @@ def verificar_resultados():
 
         # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
-            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
@@ -1164,7 +1171,7 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            win = saida_preco > entrada_preco if direcao == "BUY" else saida_preco < entrada_preco
+            win = comparar_resultado(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
