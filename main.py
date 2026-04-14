@@ -55,17 +55,50 @@ otc_state = {
 }
 
 # ==========================
-# UNIVERSO OTC
+# UNIVERSO
 # ==========================
+RAW_SYMBOLS = [
+    "Bitcoin Cash (OTC)",
+    "BNB (OTC)",
+    "Bitcoin (OTC)",
+    "Polkadot (OTC)",
+    "Ethereum (OTC)",
+    "NEAR Protocol (OTC)",
+    "Solana (OTC)",
+    "Toncoin (OTC)",
+    "dogwifhat (OTC)",
+]
+
+def normalize_symbol(name: str):
+    n = name.upper()
+
+    mapping = {
+        "BITCOIN CASH": "BCHUSDT",
+        "BITCOIN": "BTCUSDT",
+        "ETHEREUM": "ETHUSDT",
+        "BNB": "BNBUSDT",
+        "POLKADOT": "DOTUSDT",
+        "NEAR": "NEARUSDT",
+        "SOLANA": "SOLUSDT",
+        "TONCOIN": "TONUSDT",
+        "DOGWIFHAT": "WIFUSDT",
+    }
+
+    for key, value in mapping.items():
+        if key in n:
+            return value
+    return None
+
 ACTIVE_ASSETS = [
-    {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
-    {"id": "LTC_OTC", "label": "Litecoin (OTC)", "source": "LTCUSDT", "otc": True},
-    {"id": "ADA_OTC", "label": "Cardano (OTC)", "source": "ADAUSDT", "otc": True},
+    {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
     {"id": "BNB_OTC", "label": "BNB (OTC)", "source": "BNBUSDT", "otc": True},
-    {"id": "XRP_OTC", "label": "XRP (OTC)", "source": "XRPUSDT", "otc": True},
+    {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
+    {"id": "DOT_OTC", "label": "Polkadot (OTC)", "source": "DOTUSDT", "otc": True},
     {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
+    {"id": "NEAR_OTC", "label": "NEAR Protocol (OTC)", "source": "NEARUSDT", "otc": True},
     {"id": "SOL_OTC", "label": "Solana (OTC)", "source": "SOLUSDT", "otc": True},
-    {"id": "DOGE_OTC", "label": "DOGE (OTC)", "source": "DOGEUSDT", "otc": True},
+    {"id": "TON_OTC", "label": "Toncoin (OTC)", "source": "TONUSDT", "otc": True},
+    {"id": "WIF_OTC", "label": "dogwifhat (OTC)", "source": "WIFUSDT", "otc": True},
 ]
 
 MARKET_CANDIDATES = ACTIVE_ASSETS[:]
@@ -883,11 +916,11 @@ def update_active_symbols():
 
     if not scored:
         ACTIVE_ASSETS = [
-            {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
+            {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
             {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
         ]
         last_universe_update = utc_now()
-        log("Fallback universo OTC BTC/ETH")
+        log("Fallback universo OTC BCH/ETH")
         return
 
     scored.sort(key=lambda x: x[1], reverse=True)
@@ -895,9 +928,9 @@ def update_active_symbols():
 
     if len(top) < 3:
         top = [
+            {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
+            {"id": "BNB_OTC", "label": "BNB (OTC)", "source": "BNBUSDT", "otc": True},
             {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
-            {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
-            {"id": "SOL_OTC", "label": "Solana (OTC)", "source": "SOLUSDT", "otc": True},
         ]
 
     ACTIVE_ASSETS = top
