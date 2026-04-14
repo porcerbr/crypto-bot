@@ -54,34 +54,41 @@ otc_state = {
     "drift": {}
 }
 
+
 # ==========================
 # UNIVERSO
 # ==========================
 RAW_SYMBOLS = [
-    "Bitcoin Cash (OTC)",
-    "BNB (OTC)",
-    "Bitcoin (OTC)",
-    "Polkadot (OTC)",
-    "Ethereum (OTC)",
-    "NEAR Protocol (OTC)",
-    "Solana (OTC)",
-    "Toncoin (OTC)",
-    "dogwifhat (OTC)",
+    "Avalanche OTC",
+    "Bitcoin OTC",
+    "Dogecoin OTC",
+    "Ethereum OTC",
+    "Chainlink OTC",
+    "Solana OTC",
+    "TRON OTC",
+    "Polkadot OTC",
+    "Polygon OTC",
+    "Toncoin OTC",
+    "Litecoin OTC",
+    "BNB OTC",
 ]
 
 def normalize_symbol(name: str):
     n = name.upper()
 
     mapping = {
-        "BITCOIN CASH": "BCHUSDT",
+        "AVALANCHE": "AVAXUSDT",
         "BITCOIN": "BTCUSDT",
+        "DOGECOIN": "DOGEUSDT",
         "ETHEREUM": "ETHUSDT",
-        "BNB": "BNBUSDT",
-        "POLKADOT": "DOTUSDT",
-        "NEAR": "NEARUSDT",
+        "CHAINLINK": "LINKUSDT",
         "SOLANA": "SOLUSDT",
+        "TRON": "TRXUSDT",
+        "POLKADOT": "DOTUSDT",
+        "POLYGON": "MATICUSDT",
         "TONCOIN": "TONUSDT",
-        "DOGWIFHAT": "WIFUSDT",
+        "LITECOIN": "LTCUSDT",
+        "BNB": "BNBUSDT",
     }
 
     for key, value in mapping.items():
@@ -90,19 +97,19 @@ def normalize_symbol(name: str):
     return None
 
 ACTIVE_ASSETS = [
-    {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
-    {"id": "BNB_OTC", "label": "BNB (OTC)", "source": "BNBUSDT", "otc": True},
-    {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
-    {"id": "DOT_OTC", "label": "Polkadot (OTC)", "source": "DOTUSDT", "otc": True},
-    {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
-    {"id": "NEAR_OTC", "label": "NEAR Protocol (OTC)", "source": "NEARUSDT", "otc": True},
-    {"id": "SOL_OTC", "label": "Solana (OTC)", "source": "SOLUSDT", "otc": True},
-    {"id": "TON_OTC", "label": "Toncoin (OTC)", "source": "TONUSDT", "otc": True},
-    {"id": "WIF_OTC", "label": "dogwifhat (OTC)", "source": "WIFUSDT", "otc": True},
+    {"id": "AVAX_OTC", "label": "Avalanche OTC", "source": "AVAXUSDT", "otc": True},
+    {"id": "BTC_OTC", "label": "Bitcoin OTC", "source": "BTCUSDT", "otc": True},
+    {"id": "DOGE_OTC", "label": "Dogecoin OTC", "source": "DOGEUSDT", "otc": True},
+    {"id": "ETH_OTC", "label": "Ethereum OTC", "source": "ETHUSDT", "otc": True},
+    {"id": "LINK_OTC", "label": "Chainlink OTC", "source": "LINKUSDT", "otc": True},
+    {"id": "SOL_OTC", "label": "Solana OTC", "source": "SOLUSDT", "otc": True},
+    {"id": "TRX_OTC", "label": "TRON OTC", "source": "TRXUSDT", "otc": True},
+    {"id": "DOT_OTC", "label": "Polkadot OTC", "source": "DOTUSDT", "otc": True},
+    {"id": "MATIC_OTC", "label": "Polygon OTC", "source": "MATICUSDT", "otc": True},
+    {"id": "TON_OTC", "label": "Toncoin OTC", "source": "TONUSDT", "otc": True},
+    {"id": "LTC_OTC", "label": "Litecoin OTC", "source": "LTCUSDT", "otc": True},
+    {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
 ]
-
-MARKET_CANDIDATES = ACTIVE_ASSETS[:]
-performance = {a["id"]: {"win": 0, "loss": 0} for a in ACTIVE_ASSETS}
 
 # ==========================
 # APRENDIZADO
