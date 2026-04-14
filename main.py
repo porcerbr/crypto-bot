@@ -224,6 +224,11 @@ def filtro_otc(candles):
 
     return True
 
+def comparar_preco(preco_entrada, preco_saida, direcao):
+    if preco_entrada is None or preco_saida is None:
+        return None
+    return preco_saida > preco_entrada if direcao == "BUY" else preco_saida < preco_entrada
+
 # ==========================
 # MODELO / PERSISTÊNCIA
 # ==========================
@@ -434,6 +439,24 @@ def verificar_comandos():
 # ==========================
 # KUCOIN HELPERS
 # ==========================
+def get_price(asset):
+    try:
+        kucoin_symbol = asset["source"].replace("USDT", "-USDT")
+        url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
+        params = {"symbol": kucoin_symbol}
+
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+
+        price = data.get("data", {}).get("price")
+        if price is None:
+            return None
+
+        return float(price)
+    except Exception as e:
+        log(f"Erro preço {asset['id']}: {e}")
+        return None
+
 def get_candles(asset, limit=150):
     try:
         kucoin_symbol = asset["source"].replace("USDT", "-USDT")
@@ -477,6 +500,15 @@ def candle_por_abertura(candles, abertura_utc):
         if floor_timeframe(candle["time"]) == alvo:
             return candle
     return None
+
+def obter_preco_abertura(candles, abertura_utc):
+    vela = candle_por_abertura(candles, abertura_utc)
+    if vela is None:
+        return None
+    try:
+        return float(vela["open"])
+    except Exception:
+        return None
 
 # ==========================
 # INDICADORES
@@ -1063,17 +1095,20 @@ def verificar_resultados():
                 continue
 
             vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
+            if vela_atual is None:
                 novas_operacoes.append(op)
                 continue
 
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
+            entrada_preco = op.get("preco_entrada")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_entrada"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
@@ -1087,6 +1122,8 @@ def verificar_resultados():
                 continue
 
             op["etapa"] = 1
+            if op.get("preco_entrada_stage1") is None:
+                op["preco_entrada_stage1"] = obter_preco_abertura(candles, op["tempo_protecao1"])
             novas_operacoes.append(op)
             continue
 
@@ -1097,17 +1134,20 @@ def verificar_resultados():
                 continue
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
+            if vela_atual is None:
                 novas_operacoes.append(op)
                 continue
 
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
+            entrada_preco = op.get("preco_entrada_stage1")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_protecao1"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
@@ -1121,6 +1161,8 @@ def verificar_resultados():
                 continue
 
             op["etapa"] = 2
+            if op.get("preco_entrada_stage2") is None:
+                op["preco_entrada_stage2"] = obter_preco_abertura(candles, op["tempo_protecao2"])
             novas_operacoes.append(op)
             continue
 
@@ -1131,17 +1173,20 @@ def verificar_resultados():
                 continue
 
             vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
+            if vela_atual is None:
                 novas_operacoes.append(op)
                 continue
 
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
+            entrada_preco = op.get("preco_entrada_stage2")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_protecao2"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
 
             if win:
                 wins += 1
@@ -1359,6 +1404,10 @@ def processar_setup_pendente():
         p1 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES)
         p2 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES * 2)
 
+        preco_entrada = get_price(asset)
+        if preco_entrada is None:
+            preco_entrada = setup_pendente.get("meta", {}).get("preco_entrada")
+
         ultimo_trade_por_ativo[asset["id"]] = utc_now()
 
         operacoes_ativas.append({
@@ -1370,6 +1419,9 @@ def processar_setup_pendente():
             "tempo_entrada": entrada_time,
             "tempo_protecao1": p1,
             "tempo_protecao2": p2,
+            "preco_entrada": preco_entrada,
+            "preco_entrada_stage1": None,
+            "preco_entrada_stage2": None,
             "meta": setup_pendente.get("meta", {}),
         })
 
@@ -1382,7 +1434,458 @@ def processar_setup_pendente():
             f"⚠️ Proteção 2: {fmt_br(p2)}"
         )
 
-        log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao}")
+        log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao} | preco={preco_entrada}")
+        setup_pendente = None
+
+# ==========================
+# REPORT
+# ==========================
+def report_learning_to_telegram(force=False):
+    global last_learning_report_time, last_learning_report_trade_count
+
+    total = wins + losses
+    if total < 5 and not force:
+        return
+
+    now = utc_now()
+    if not force and last_learning_report_time is not None:
+        elapsed = (now - last_learning_report_time).total_seconds()
+        trades_since = total_closed_trades - last_learning_report_trade_count
+        if elapsed < REPORT_INTERVAL_SECONDS and trades_since < REPORT_AFTER_TRADES:
+            return
+
+    def bucket_rank(bucket_name, reverse=True, min_trades=5, limit=5):
+        bucket = learning_data.get(bucket_name, {})
+        rows = []
+        for key, data in bucket.items():
+            t = data["win"] + data["loss"]
+            if t >= min_trades:
+                wr = (data["win"] / t) * 100 if t else 0
+                rows.append((wr, t, key))
+        rows.sort(reverse=reverse)
+        return rows[:limit]
+
+    lines = []
+    lines.append("📊 RELATÓRIO DE APRENDIZADO")
+    lines.append("")
+    lines.append(f"Trades fechados: {total}")
+    lines.append(f"Wins: {wins}")
+    lines.append(f"Losses: {losses}")
+    lines.append(f"Precisão geral: {((wins / total) * 100) if total else 0:.1f}%")
+    lines.append("")
+
+    def add_section(title, rows):
+        lines.append(title + ":")
+        if not rows:
+            lines.append("- sem dados suficientes")
+        for wr, t, key in rows:
+            lines.append(f"- {key}: {wr:.1f}% ({t})")
+        lines.append("")
+
+    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
+    add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
+    add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
+    add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
+    add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
+    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
+
+    lines.append("Pesos atuais:")
+    for k, v in model_state["feature_weights"].items():
+        lines.append(f"- {k}: {v:.2f}")
+    lines.append(f"- bias: {model_state['bias']:.2f}")
+    lines.append("")
+    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
+
+    enviar("\n".join(lines))
+
+    last_learning_report_time = now
+    last_learning_report_trade_count = total_closed_trades
+
+# ==========================
+# RESULTADO
+# ==========================
+def enviar_resultado(asset_label, resultado):
+    total = wins + losses
+    taxa = (wins / total) * 100 if total > 0 else 0
+
+    enviar(
+        "🏆 RESULTADO\n\n"
+        f"🌎 {asset_label}\n"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Precisão: {round(taxa, 1)}%"
+    )
+    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
+
+# ==========================
+# VERIFICAR RESULTADOS
+# ==========================
+def verificar_resultados():
+    global wins, losses
+
+    agora_utc = utc_now()
+    novas_operacoes = []
+
+    for op in operacoes_ativas:
+        asset = op["asset"]
+        asset_id = asset["id"]
+        asset_label = asset["label"]
+        direcao = op["direcao"]
+        meta = op.get("meta", {})
+        candles = get_candles(asset)
+
+        if candles is None or len(candles) < 5:
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 0 — ENTRADA
+        if op["etapa"] == 0:
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
+            if vela_atual is None:
+                novas_operacoes.append(op)
+                continue
+
+            entrada_preco = op.get("preco_entrada")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_entrada"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "entrada", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Entrada")
+                maybe_send_learning_report()
+                continue
+
+            op["etapa"] = 1
+            if op.get("preco_entrada_stage1") is None:
+                op["preco_entrada_stage1"] = obter_preco_abertura(candles, op["tempo_protecao1"])
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 1 — PROTEÇÃO 1
+        if op["etapa"] == 1:
+            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
+            if vela_atual is None:
+                novas_operacoes.append(op)
+                continue
+
+            entrada_preco = op.get("preco_entrada_stage1")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_protecao1"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "proteção_1", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Proteção 1")
+                maybe_send_learning_report()
+                continue
+
+            op["etapa"] = 2
+            if op.get("preco_entrada_stage2") is None:
+                op["preco_entrada_stage2"] = obter_preco_abertura(candles, op["tempo_protecao2"])
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 2 — PROTEÇÃO 2
+        if op["etapa"] == 2:
+            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
+            if vela_atual is None:
+                novas_operacoes.append(op)
+                continue
+
+            entrada_preco = op.get("preco_entrada_stage2")
+            if entrada_preco is None:
+                entrada_preco = obter_preco_abertura(candles, op["tempo_protecao2"])
+
+            if entrada_preco is None:
+                novas_operacoes.append(op)
+                continue
+
+            saida_preco = float(vela_atual["close"])
+            win = comparar_preco(entrada_preco, saida_preco, direcao)
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "proteção_2", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Proteção 2")
+            else:
+                losses += 1
+                performance[asset_id]["loss"] += 1
+                registrar_resultado_aprendizado(asset_id, False, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), False)
+                register_trade_history(asset_id, False, "proteção_2", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "LOSS após Proteção 2")
+
+            maybe_send_learning_report()
+            continue
+
+    operacoes_ativas.clear()
+    operacoes_ativas.extend(novas_operacoes)
+
+# ==========================
+# ESCOLHA INTELIGENTE
+# ==========================
+def escolher_melhor_ativo():
+    update_mode()
+
+    melhor_asset = None
+    melhor_score = -1
+    melhor_direcao = None
+    melhor_meta = None
+
+    fallback_asset = None
+    fallback_score = -1
+    fallback_direcao = None
+    fallback_meta = None
+
+    if adaptive_mode == "CONSERVADOR":
+        min_trend = 0.0009
+        min_atr = 0.00045
+        min_vol = 0.95
+        rsi_buy = 56
+        rsi_sell = 44
+        allow_chop = False
+        max_move = 0.012
+        min_combined = 0.58
+    elif adaptive_mode == "NORMAL":
+        min_trend = 0.00065
+        min_atr = 0.00035
+        min_vol = 0.90
+        rsi_buy = 54
+        rsi_sell = 46
+        allow_chop = False
+        max_move = 0.016
+        min_combined = 0.54
+    else:
+        min_trend = 0.00045
+        min_atr = 0.00025
+        min_vol = 0.85
+        rsi_buy = 52
+        rsi_sell = 48
+        allow_chop = True
+        max_move = 0.022
+        min_combined = 0.50
+
+    log(f"MODO: {adaptive_mode}")
+
+    for asset in ACTIVE_ASSETS:
+        asset_id = asset["id"]
+        asset_label = asset["label"]
+
+        if ja_tem_operacao(asset_id):
+            if DEBUG_REJEICOES:
+                log(f"{asset_label} -> IGNORADO (já em operação)")
+            continue
+
+        if em_cooldown(asset_id):
+            if DEBUG_REJEICOES:
+                log(f"{asset_label} -> IGNORADO (cooldown)")
+            continue
+
+        candles = get_candles(asset)
+        if not candles or len(candles) < 60:
+            if DEBUG_REJEICOES:
+                log(f"{asset_label} -> REJECT (sem candles)")
+            continue
+
+        analysis = analisar_ativo(asset, candles)
+        if not analysis:
+            if DEBUG_REJEICOES:
+                log(f"{asset_label} -> REJECT (análise None)")
+            continue
+
+        score = analysis["score"]
+        meta = analysis["meta"]
+        direction = analysis["direction"]
+
+        trend_pct = meta["trend_pct"]
+        atr_norm = meta["atr_norm"]
+        vol_ratio = meta["volume_ratio"]
+        regime = meta["regime"]
+        rsi = meta["rsi"]
+        last_move = meta["last_move"]
+        fib_zone = meta["fib_zone"]
+        model_prob = meta["model_prob"]
+        rule_score = meta["rule_score"]
+
+        if score > fallback_score:
+            fallback_score = score
+            fallback_asset = asset
+            fallback_direcao = direction
+            fallback_meta = meta
+
+        reasons = []
+
+        if not allow_chop and regime != "TREND":
+            reasons.append(f"REGIME {regime}")
+
+        if trend_pct < min_trend:
+            reasons.append(f"TREND {trend_pct:.6f}")
+
+        if atr_norm < min_atr:
+            reasons.append(f"ATR {atr_norm:.6f}")
+
+        if vol_ratio < min_vol:
+            reasons.append(f"VOLUME {vol_ratio:.2f}")
+
+        if last_move > max_move:
+            reasons.append("MOVE SPIKE")
+
+        if not ((direction == "BUY" and rsi >= rsi_buy) or (direction == "SELL" and rsi <= rsi_sell)):
+            reasons.append("DIR/RSI")
+
+        if score < min_combined:
+            reasons.append(f"SCORE {score:.3f}")
+
+        if reasons:
+            if DEBUG_REJEICOES:
+                log(f"{asset_label} -> REJECT ({', '.join(reasons)}) | score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}")
+            continue
+
+        if DEBUG_REJEICOES:
+            log(
+                f"{asset_label} -> OK score={score:.3f} "
+                f"regime={regime} fib={fib_zone} rsi={rsi:.2f} "
+                f"p={model_prob:.2f} rule={rule_score:.2f}"
+            )
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_asset = asset
+            melhor_direcao = direction
+            melhor_meta = meta
+
+    if melhor_asset is not None:
+        log(f"ESCOLHIDO: {melhor_asset['label']} | {melhor_direcao} | {melhor_score:.3f}")
+        return melhor_asset, melhor_direcao, melhor_score, melhor_meta
+
+    if fallback_asset is not None:
+        log(f"FALLBACK: {fallback_asset['label']} | {fallback_direcao} | {fallback_score:.3f}")
+        return fallback_asset, fallback_direcao, fallback_score, fallback_meta
+
+    log("Nenhum ativo disponível no fallback")
+    return None, None, None, None
+
+# ==========================
+# SINAL
+# ==========================
+def criar_sinal(asset, direcao, score, meta):
+    global setup_pendente, last_signal_time
+
+    agora_utc = utc_now()
+    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=2)
+
+    setup_pendente = {
+        "asset": asset,
+        "direcao": direcao,
+        "score": score,
+        "entrada_time": entrada_time,
+        "preparado": False,
+        "meta": meta or {},
+    }
+
+    last_signal_time = agora_utc
+
+    enviar(
+        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
+        f"🌎 Ativo: {asset['label']}\n"
+        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
+        f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
+        f"📈 Força: {score:.3f}\n"
+        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
+        f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
+    )
+    log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
+
+# ==========================
+# SETUP
+# ==========================
+def processar_setup_pendente():
+    global setup_pendente
+
+    if setup_pendente is None:
+        return
+
+    agora_utc = utc_now()
+
+    if agora_utc >= setup_pendente["entrada_time"]:
+        asset = setup_pendente["asset"]
+        direcao = setup_pendente["direcao"]
+        entrada_time = setup_pendente["entrada_time"]
+        p1 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES)
+        p2 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES * 2)
+
+        preco_entrada = get_price(asset)
+        if preco_entrada is None:
+            preco_entrada = setup_pendente.get("meta", {}).get("preco_entrada")
+
+        ultimo_trade_por_ativo[asset["id"]] = utc_now()
+
+        operacoes_ativas.append({
+            "asset": asset,
+            "asset_id": asset["id"],
+            "asset_label": asset["label"],
+            "direcao": direcao,
+            "etapa": 0,
+            "tempo_entrada": entrada_time,
+            "tempo_protecao1": p1,
+            "tempo_protecao2": p2,
+            "preco_entrada": preco_entrada,
+            "preco_entrada_stage1": None,
+            "preco_entrada_stage2": None,
+            "meta": setup_pendente.get("meta", {}),
+        })
+
+        enviar(
+            "✅ ENTRADA CONFIRMADA ✅\n\n"
+            f"🌎 Ativo: {asset['label']}\n"
+            f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
+            f"⏰ Entrada: {fmt_br(entrada_time)}\n\n"
+            f"⚠️ Proteção 1: {fmt_br(p1)}\n"
+            f"⚠️ Proteção 2: {fmt_br(p2)}"
+        )
+
+        log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao} | preco={preco_entrada}")
         setup_pendente = None
 
 # ==========================
