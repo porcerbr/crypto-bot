@@ -256,6 +256,13 @@ def verificar_comandos():
 # ==========================
 # KUCOIN HELPERS
 # ==========================
+
+def ja_tem_operacao(symbol):
+    for op in operacoes_ativas:
+        if op["symbol"] == symbol:
+            return True
+    return False
+
 def to_kucoin_symbol(symbol):
     return symbol.replace("USDT", "-USDT")
 
