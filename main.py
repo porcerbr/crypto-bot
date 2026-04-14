@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
-INTERVAL = "1m"
-TREND_INTERVAL = "15m"
+INTERVAL = "1min"
+TREND_INTERVAL = "15min"
 SIGNAL_INTERVAL = 120
 BR_TZ = timezone(timedelta(hours=-3))
 
@@ -277,7 +277,7 @@ def asset_multiplier(symbol):
 def to_kucoin_symbol(symbol):
     return symbol.replace("USDT", "-USDT")
 
-def get_candles(symbol, interval="1m", limit=120):
+def get_candles(symbol, interval="1min", limit=120):
     try:
         kucoin_symbol = to_kucoin_symbol(symbol)
 
@@ -290,9 +290,9 @@ def get_candles(symbol, interval="1m", limit=120):
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        if "data" not in data:
-            log(f"Resposta inválida candles {symbol} ({interval})")
-            return None
+        if "data" not in data or not isinstance(data["data"], list):
+    log(f"Resposta inválida candles {symbol} ({interval}) -> {data}")
+    return None
 
         rows = data["data"][:limit]
         candles = []
