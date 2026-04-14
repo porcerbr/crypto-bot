@@ -68,32 +68,64 @@ otc_state = {
 # UNIVERSO OTC (FORMATO CORRETO)
 # ==========================
 
+# ==========================
+# UNIVERSO OTC (FORMATO CORRETO)
+# ==========================
+
 MARKET_CANDIDATES = [
-
+    # Criptos OTC já existentes
     {"id": "AVAX_OTC", "label": "Avalanche OTC", "source": "AVAXUSDT", "otc": True},
-
     {"id": "BTC_OTC", "label": "Bitcoin OTC", "source": "BTCUSDT", "otc": True},
-
     {"id": "DOGE_OTC", "label": "Dogecoin OTC", "source": "DOGEUSDT", "otc": True},
-
     {"id": "ETH_OTC", "label": "Ethereum OTC", "source": "ETHUSDT", "otc": True},
-
     {"id": "LINK_OTC", "label": "Chainlink OTC", "source": "LINKUSDT", "otc": True},
-
     {"id": "SOL_OTC", "label": "Solana OTC", "source": "SOLUSDT", "otc": True},
-
     {"id": "TRX_OTC", "label": "TRON OTC", "source": "TRXUSDT", "otc": True},
-
     {"id": "DOT_OTC", "label": "Polkadot OTC", "source": "DOTUSDT", "otc": True},
-
-    {"id": "MATIC_OTC", "label": "Polygon OTC", "source": "MATICUSDT", "otc": True},
-
+    {"id": "MATIC_OTC", "label": "Polygon OTC", "source": "POLUSDT", "otc": True},
     {"id": "TON_OTC", "label": "Toncoin OTC", "source": "TONUSDT", "otc": True},
-
     {"id": "LTC_OTC", "label": "Litecoin OTC", "source": "LTCUSDT", "otc": True},
-
     {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
 
+    # Forex / pares OTC novos
+    {"id": "AED_CNY_OTC", "label": "AED/CNY OTC", "source": "AEDCNY", "otc": True},
+    {"id": "AUD_CAD_OTC", "label": "AUD/CAD OTC", "source": "AUDCAD", "otc": True},
+    {"id": "AUD_CHF_OTC", "label": "AUD/CHF OTC", "source": "AUDCHF", "otc": True},
+    {"id": "AUD_NZD_OTC", "label": "AUD/NZD OTC", "source": "AUDNZD", "otc": True},
+    {"id": "AUD_USD_OTC", "label": "AUD/USD OTC", "source": "AUDUSD", "otc": True},
+    {"id": "BHD_CNY_OTC", "label": "BHD/CNY OTC", "source": "BHDCNY", "otc": True},
+    {"id": "CAD_JPY_OTC", "label": "CAD/JPY OTC", "source": "CADJPY", "otc": True},
+    {"id": "CHF_JPY_OTC", "label": "CHF/JPY OTC", "source": "CHFJPY", "otc": True},
+    {"id": "CHF_NOK_OTC", "label": "CHF/NOK OTC", "source": "CHFNOK", "otc": True},
+    {"id": "EUR_JPY_OTC", "label": "EUR/JPY OTC", "source": "EURJPY", "otc": True},
+    {"id": "EUR_NZD_OTC", "label": "EUR/NZD OTC", "source": "EURNZD", "otc": True},
+    {"id": "EUR_RUB_OTC", "label": "EUR/RUB OTC", "source": "EURRUB", "otc": True},
+    {"id": "EUR_USD_OTC", "label": "EUR/USD OTC", "source": "EURUSD", "otc": True},
+    {"id": "GBP_AUD_OTC", "label": "GBP/AUD OTC", "source": "GBPAUD", "otc": True},
+    {"id": "GBP_USD_OTC", "label": "GBP/USD OTC", "source": "GBPUSD", "otc": True},
+    {"id": "KES_USD_OTC", "label": "KES/USD OTC", "source": "KESUSD", "otc": True},
+    {"id": "LBP_USD_OTC", "label": "LBP/USD OTC", "source": "LBPUSD", "otc": True},
+    {"id": "MAD_USD_OTC", "label": "MAD/USD OTC", "source": "MADUSD", "otc": True},
+    {"id": "OMR_CNY_OTC", "label": "OMR/CNY OTC", "source": "OMRCNY", "otc": True},
+    {"id": "SAR_CNY_OTC", "label": "SAR/CNY OTC", "source": "SARCNY", "otc": True},
+    {"id": "TND_USD_OTC", "label": "TND/USD OTC", "source": "TNDUSD", "otc": True},
+    {"id": "UAH_USD_OTC", "label": "UAH/USD OTC", "source": "UAHUSD", "otc": True},
+    {"id": "USD_ARS_OTC", "label": "USD/ARS OTC", "source": "USDARS", "otc": True},
+    {"id": "USD_BRL_OTC", "label": "USD/BRL OTC", "source": "USDBRL", "otc": True},
+    {"id": "USD_CAD_OTC", "label": "USD/CAD OTC", "source": "USDCAD", "otc": True},
+    {"id": "USD_IDR_OTC", "label": "USD/IDR OTC", "source": "USDIDR", "otc": True},
+    {"id": "USD_MXN_OTC", "label": "USD/MXN OTC", "source": "USDMXN", "otc": True},
+    {"id": "USD_MYR_OTC", "label": "USD/MYR OTC", "source": "USDMYR", "otc": True},
+    {"id": "USD_PHP_OTC", "label": "USD/PHP OTC", "source": "USDPHP", "otc": True},
+    {"id": "USD_RUB_OTC", "label": "USD/RUB OTC", "source": "USDRUB", "otc": True},
+    {"id": "USD_THB_OTC", "label": "USD/THB OTC", "source": "USDTHB", "otc": True},
+    {"id": "USD_VND_OTC", "label": "USD/VND OTC", "source": "USDVND", "otc": True},
+    {"id": "YER_USD_OTC", "label": "YER/USD OTC", "source": "YERUSD", "otc": True},
+    {"id": "ZAR_USD_OTC", "label": "ZAR/USD OTC", "source": "ZARUSD", "otc": True},
+    {"id": "USD_COP_OTC", "label": "USD/COP OTC", "source": "USDCOP", "otc": True},
+    {"id": "EUR_GBP_OTC", "label": "EUR/GBP OTC", "source": "EURGBP", "otc": True},
+    {"id": "EUR_HUF_OTC", "label": "EUR/HUF OTC", "source": "EURHUF", "otc": True},
+    {"id": "NZD_JPY_OTC", "label": "NZD/JPY OTC", "source": "NZDJPY", "otc": True},
 ]
 
 performance = {
