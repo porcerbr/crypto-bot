@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
-TOKEN = os.getenv("BOT_TOKEN", "")
-CHAT_ID = os.getenv("CHAT_ID", "")
+TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
+CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
 INTERVAL = "1m"
 TREND_INTERVAL = "15m"
