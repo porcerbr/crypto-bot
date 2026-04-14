@@ -771,8 +771,8 @@ def analisar_ativo(symbol, candles):
         return None
 
     if OTC_ONLY:
-    if not filtro_otc(candles):
-        return None
+        if not filtro_otc(candles):
+            return None
 
     closes = [c["close"] for c in candles]
     price = closes[-1]
