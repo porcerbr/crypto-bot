@@ -111,7 +111,7 @@ ACTIVE_ASSETS = [
     {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
 ]
 
-MARKET_CANDIDATES = [a["source"] for a in ACTIVE_ASSETS]
+MARKET_CANDIDATES = ACTIVE_ASSETS
 
 # ==========================
 # APRENDIZADO
