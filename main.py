@@ -849,7 +849,7 @@ if OTC_ONLY:
         0.05 * liquidity_strength
     )
 
-    model_prob = model_probability(features)
+model_prob = model_probability(features)
     combined = (0.62 * rule_score) + (0.38 * model_prob)
 
     combined *= asset_multiplier(symbol)
@@ -860,6 +860,9 @@ if OTC_ONLY:
         "direction": direction,
         "pattern": pattern,
     })
+
+    otc_factor = calibrar_otc(symbol, candles)
+    combined *= otc_factor
 
     if liquidity_sweep(candles):
         combined *= 0.92
@@ -883,28 +886,13 @@ if OTC_ONLY:
         "pattern": pattern,
     }
 
-combined = (0.62 * rule_score) + (0.38 * model_prob)
-
-otc_factor = calibrar_otc(symbol, candles)
-combined *= otc_factor
-
-combined *= asset_multiplier(symbol)
-combined *= score_from_learning({
-    "symbol": symbol,
-    "regime": regime,
-    "fib_zone": fib_ctx["fib_zone"],
-    "direction": direction,
-    "pattern": pattern,
-})
-
     return {
-        
         "symbol": symbol,
         "direction": direction,
         "score": combined,
         "meta": meta,
     }
-
+    
 # ==========================
 # UNIVERSO DINÂMICO
 # ==========================
