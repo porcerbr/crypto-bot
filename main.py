@@ -282,6 +282,7 @@ def get_candles(symbol, interval="1min", limit=120):
         kucoin_symbol = to_kucoin_symbol(symbol)
 
         url = "https://api.kucoin.com/api/v1/market/candles"
+
         params = {
             "type": interval,
             "symbol": kucoin_symbol
@@ -291,8 +292,8 @@ def get_candles(symbol, interval="1min", limit=120):
         data = r.json()
 
         if "data" not in data or not isinstance(data["data"], list):
-    log(f"Resposta inválida candles {symbol} ({interval}) -> {data}")
-    return None
+            log(f"Resposta inválida candles {symbol} ({interval}) -> {data}")
+            return None
 
         rows = data["data"][:limit]
         candles = []
@@ -316,17 +317,8 @@ def get_candles(symbol, interval="1min", limit=120):
         return candles
 
     except Exception as e:
-        log(f"Erro candles {symbol} ({interval}): {e}")
+        log(f"Erro candles {symbol}: {e}")
         return None
-
-def candle_por_abertura(candles, abertura_utc):
-    alvo = floor_minute(abertura_utc)
-
-    for candle in candles:
-        if floor_minute(candle["time"]) == alvo:
-            return candle
-
-    return None
 
 # ==========================
 # INDICADORES
