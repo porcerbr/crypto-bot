@@ -1250,8 +1250,8 @@ def criar_sinal(symbol, direcao, score, meta):
     global setup_pendente, last_signal_time
 
     agora_utc = utc_now()
-    entrada_time = next_timeframe(agora_utc)
-
+    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=2)
+    
     setup_pendente = {
         "symbol": symbol,
         "direcao": direcao,
