@@ -898,6 +898,7 @@ combined *= score_from_learning({
 })
 
     return {
+        
         "symbol": symbol,
         "direction": direction,
         "score": combined,
