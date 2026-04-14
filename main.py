@@ -214,8 +214,8 @@ def calibrar_otc(symbol, candles):
 
     return otc_state["drift"][symbol]
 
-    def filtro_otc(candles):
-        
+    
+def filtro_otc(candles):
     if len(candles) < 20:
         return False
 
@@ -770,7 +770,7 @@ def analisar_ativo(symbol, candles):
     if not candles or len(candles) < 60:
         return None
 
-    if OTC_ONLY:
+if OTC_ONLY:
     if not filtro_otc(candles):
         return None
 
@@ -824,9 +824,6 @@ def analisar_ativo(symbol, candles):
         "direction": direction,
     })
 
- otc_factor = calibrar_otc(symbol, candles)
-
-score *= otc_factor
 
     features = {
         "trend_strength": trend_strength,
@@ -885,6 +882,20 @@ score *= otc_factor
         "combined": combined,
         "pattern": pattern,
     }
+
+combined = (0.62 * rule_score) + (0.38 * model_prob)
+
+otc_factor = calibrar_otc(symbol, candles)
+combined *= otc_factor
+
+combined *= asset_multiplier(symbol)
+combined *= score_from_learning({
+    "symbol": symbol,
+    "regime": regime,
+    "fib_zone": fib_ctx["fib_zone"],
+    "direction": direction,
+    "pattern": pattern,
+})
 
     return {
         "symbol": symbol,
