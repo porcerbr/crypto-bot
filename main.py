@@ -58,6 +58,10 @@ otc_state = {
 # ==========================
 # UNIVERSO
 # ==========================
+
+# ==========================
+# UNIVERSO
+# ==========================
 RAW_SYMBOLS = [
     "Avalanche OTC",
     "Bitcoin OTC",
@@ -94,24 +98,29 @@ def normalize_symbol(name: str):
     for key, value in mapping.items():
         if key in n:
             return value
+
     return None
 
-ACTIVE_ASSETS = [
-    {"id": "AVAX_OTC", "label": "Avalanche OTC", "source": "AVAXUSDT", "otc": True},
-    {"id": "BTC_OTC", "label": "Bitcoin OTC", "source": "BTCUSDT", "otc": True},
-    {"id": "DOGE_OTC", "label": "Dogecoin OTC", "source": "DOGEUSDT", "otc": True},
-    {"id": "ETH_OTC", "label": "Ethereum OTC", "source": "ETHUSDT", "otc": True},
-    {"id": "LINK_OTC", "label": "Chainlink OTC", "source": "LINKUSDT", "otc": True},
-    {"id": "SOL_OTC", "label": "Solana OTC", "source": "SOLUSDT", "otc": True},
-    {"id": "TRX_OTC", "label": "TRON OTC", "source": "TRXUSDT", "otc": True},
-    {"id": "DOT_OTC", "label": "Polkadot OTC", "source": "DOTUSDT", "otc": True},
-    {"id": "MATIC_OTC", "label": "Polygon OTC", "source": "MATICUSDT", "otc": True},
-    {"id": "TON_OTC", "label": "Toncoin OTC", "source": "TONUSDT", "otc": True},
-    {"id": "LTC_OTC", "label": "Litecoin OTC", "source": "LTCUSDT", "otc": True},
-    {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
-]
 
-MARKET_CANDIDATES = ACTIVE_ASSETS
+# GERA OS ATIVOS CORRETOS
+ACTIVE_SYMBOLS = []
+
+for item in RAW_SYMBOLS:
+    s = normalize_symbol(item)
+
+    if s and s not in ACTIVE_SYMBOLS:
+        ACTIVE_SYMBOLS.append(s)
+
+
+# IMPORTANTE — usado pelo universo dinâmico
+MARKET_CANDIDATES = ACTIVE_SYMBOLS[:]
+
+
+# RESTAURA performance (corrige erro principal)
+performance = {
+    s: {"win": 0, "loss": 0}
+    for s in ACTIVE_SYMBOLS
+}
 
 # ==========================
 # APRENDIZADO
