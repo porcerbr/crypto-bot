@@ -26,6 +26,7 @@ REPORT_AFTER_TRADES = 25
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
+OTC_ONLY = True
 
 wins = 0
 losses = 0
@@ -48,60 +49,27 @@ total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
 
-OTC_ONLY = True
-
 otc_state = {
     "bias": {},
     "drift": {}
 }
 
 # ==========================
-# UNIVERSO
+# UNIVERSO OTC
 # ==========================
-RAW_SYMBOLS = [
-    "Bitcoin",
-    "Litecoin",
-    "Cardano",
-    "BNB",
-    "Bitcoin (OTC)",
-    "Litecoin (OTC)",
-    "Cardano (OTC)",
-    "BNB (OTC)",
-    "XRP",
-    "Ethereum",
-    "Solana",
-    "DOGE (OTC)",
-    "DOGE",
-    "Ethereum (OTC)",
-    "Solana (OTC)",
+ACTIVE_ASSETS = [
+    {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
+    {"id": "LTC_OTC", "label": "Litecoin (OTC)", "source": "LTCUSDT", "otc": True},
+    {"id": "ADA_OTC", "label": "Cardano (OTC)", "source": "ADAUSDT", "otc": True},
+    {"id": "BNB_OTC", "label": "BNB (OTC)", "source": "BNBUSDT", "otc": True},
+    {"id": "XRP_OTC", "label": "XRP (OTC)", "source": "XRPUSDT", "otc": True},
+    {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
+    {"id": "SOL_OTC", "label": "Solana (OTC)", "source": "SOLUSDT", "otc": True},
+    {"id": "DOGE_OTC", "label": "DOGE (OTC)", "source": "DOGEUSDT", "otc": True},
 ]
 
-def normalize_symbol(name: str):
-    n = name.upper()
-    mapping = {
-        "BITCOIN": "BTCUSDT",
-        "ETHEREUM": "ETHUSDT",
-        "CARDANO": "ADAUSDT",
-        "BNB": "BNBUSDT",
-        "XRP": "XRPUSDT",
-        "SOLANA": "SOLUSDT",
-        "DOGE": "DOGEUSDT",
-        "LITECOIN": "LTCUSDT",
-    }
-    for key, value in mapping.items():
-        if key in n:
-            return value
-    return None
-
-ACTIVE_SYMBOLS = []
-for item in RAW_SYMBOLS:
-    s = normalize_symbol(item)
-    if s and s not in ACTIVE_SYMBOLS:
-        ACTIVE_SYMBOLS.append(s)
-
-MARKET_CANDIDATES = ACTIVE_SYMBOLS[:]
-
-performance = {s: {"win": 0, "loss": 0} for s in ACTIVE_SYMBOLS}
+MARKET_CANDIDATES = ACTIVE_ASSETS[:]
+performance = {a["id"]: {"win": 0, "loss": 0} for a in ACTIVE_ASSETS}
 
 # ==========================
 # APRENDIZADO
@@ -183,16 +151,15 @@ def safe_bucket(bucket_name):
     if bucket_name not in learning_data:
         learning_data[bucket_name] = {}
 
-def calibrar_otc(symbol, candles):
+def calibrar_otc(asset_id, candles):
     if not candles or len(candles) < 30:
         return 1.0
 
     closes = [c["close"] for c in candles]
-
     real_move = abs(closes[-1] - closes[-2])
 
     avg_move = sum(
-        abs(closes[i] - closes[i-1])
+        abs(closes[i] - closes[i - 1])
         for i in range(-10, -1)
     ) / 10
 
@@ -200,30 +167,22 @@ def calibrar_otc(symbol, candles):
         return 1.0
 
     ratio = real_move / avg_move
-
-    # suavização OTC (evita overfitting)
     ratio = max(0.75, min(1.25, ratio))
 
-    # memória por ativo
-    if symbol not in otc_state["drift"]:
-        otc_state["drift"][symbol] = ratio
+    if asset_id not in otc_state["drift"]:
+        otc_state["drift"][asset_id] = ratio
     else:
-        otc_state["drift"][symbol] = (
-            otc_state["drift"][symbol] * 0.8 + ratio * 0.2
-        )
+        otc_state["drift"][asset_id] = otc_state["drift"][asset_id] * 0.8 + ratio * 0.2
 
-    return otc_state["drift"][symbol]
+    return otc_state["drift"][asset_id]
 
-    
 def filtro_otc(candles):
     if len(candles) < 20:
         return False
 
     closes = [c["close"] for c in candles]
-
     volatility = abs(closes[-1] - closes[-5]) / closes[-1]
 
-    # OTC fake zones
     if volatility < 0.0002:
         return False
 
@@ -292,11 +251,11 @@ def _bump_bucket(bucket_name, key, win):
     else:
         learning_data[bucket_name][key]["loss"] += 1
 
-def registrar_resultado_aprendizado(symbol, win, meta=None):
+def registrar_resultado_aprendizado(asset_id, win, meta=None):
     meta = meta or {}
     hour = str(br_now().hour)
 
-    _bump_bucket("asset_stats", symbol, win)
+    _bump_bucket("asset_stats", asset_id, win)
     _bump_bucket("hour_stats", hour, win)
     _bump_bucket("regime_stats", meta.get("regime"), win)
     _bump_bucket("fib_stats", meta.get("fib_zone"), win)
@@ -325,8 +284,8 @@ def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.1
         return down
     return 1.0
 
-def learning_multiplier(symbol):
-    return bucket_multiplier("asset_stats", symbol, min_total=5, high=0.65, low=0.40, up=1.20, down=0.80)
+def learning_multiplier(asset_id):
+    return bucket_multiplier("asset_stats", asset_id, min_total=5, high=0.65, low=0.40, up=1.20, down=0.80)
 
 def hour_multiplier():
     return bucket_multiplier("hour_stats", str(br_now().hour), min_total=5, high=0.65, low=0.40, up=1.15, down=0.85)
@@ -433,7 +392,7 @@ def verificar_comandos():
                     f"Losses: {losses}\n"
                     f"Precisão: {wr:.1f}%\n"
                     f"Modo: {adaptive_mode}\n"
-                    f"Universo: {', '.join(ACTIVE_SYMBOLS[:10])}"
+                    f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
 
     except Exception as e:
@@ -442,12 +401,9 @@ def verificar_comandos():
 # ==========================
 # KUCOIN HELPERS
 # ==========================
-def to_kucoin_symbol(symbol):
-    return symbol.replace("USDT", "-USDT")
-
-def get_candles(symbol, limit=150):
+def get_candles(asset, limit=150):
     try:
-        kucoin_symbol = to_kucoin_symbol(symbol)
+        kucoin_symbol = asset["source"].replace("USDT", "-USDT")
         url = "https://api.kucoin.com/api/v1/market/candles"
         params = {"type": CANDLE_TYPE, "symbol": kucoin_symbol}
 
@@ -455,7 +411,7 @@ def get_candles(symbol, limit=150):
         data = r.json()
 
         if "data" not in data or not isinstance(data["data"], list):
-            log(f"Resposta inválida candles {symbol}: {data}")
+            log(f"Resposta inválida candles {asset['id']}: {data}")
             return None
 
         rows = data["data"][:limit]
@@ -479,7 +435,7 @@ def get_candles(symbol, limit=150):
         return candles
 
     except Exception as e:
-        log(f"Erro candles {symbol}: {e}")
+        log(f"Erro candles {asset['id']}: {e}")
         return None
 
 def candle_por_abertura(candles, abertura_utc):
@@ -679,8 +635,8 @@ def fib_analysis(candles, direction):
         "levels": levels,
     }
 
-def asset_multiplier(symbol):
-    data = performance.get(symbol, {"win": 1, "loss": 1})
+def asset_multiplier(asset_id):
+    data = performance.get(asset_id, {"win": 1, "loss": 1})
     total = data["win"] + data["loss"]
     if total < 10:
         return 1.0
@@ -692,10 +648,10 @@ def asset_multiplier(symbol):
         return 0.85
     return 1.0
 
-def em_cooldown(symbol):
-    if symbol not in ultimo_trade_por_ativo:
+def em_cooldown(asset_id):
+    if asset_id not in ultimo_trade_por_ativo:
         return False
-    delta = (utc_now() - ultimo_trade_por_ativo[symbol]).total_seconds()
+    delta = (utc_now() - ultimo_trade_por_ativo[asset_id]).total_seconds()
     return delta < COOLDOWN_MINUTES * 60
 
 def update_mode():
@@ -714,21 +670,21 @@ def update_mode():
     else:
         adaptive_mode = "CONSERVADOR"
 
-def ja_tem_operacao(symbol):
+def ja_tem_operacao(asset_id):
     for op in operacoes_ativas:
-        if op["symbol"] == symbol:
+        if op["asset_id"] == asset_id:
             return True
     return False
 
 def score_from_learning(meta):
-    symbol = meta.get("symbol")
+    asset_id = meta.get("asset_id")
     regime = meta.get("regime")
     fib_zone = meta.get("fib_zone")
     direction = meta.get("direction")
     pattern = meta.get("pattern")
 
     mult = 1.0
-    mult *= learning_multiplier(symbol)
+    mult *= learning_multiplier(asset_id)
     mult *= hour_multiplier()
     mult *= regime_multiplier(regime)
     mult *= fib_multiplier(fib_zone)
@@ -766,13 +722,12 @@ def atualizar_pesos(features, win):
 # ==========================
 # ANÁLISE INTELIGENTE
 # ==========================
-def analisar_ativo(symbol, candles):
+def analisar_ativo(asset, candles):
     if not candles or len(candles) < 60:
         return None
 
-    if OTC_ONLY:
-        if not filtro_otc(candles):
-            return None
+    if OTC_ONLY and not filtro_otc(candles):
+        return None
 
     closes = [c["close"] for c in candles]
     price = closes[-1]
@@ -824,7 +779,6 @@ def analisar_ativo(symbol, candles):
         "direction": direction,
     })
 
-
     features = {
         "trend_strength": trend_strength,
         "rsi_alignment": rsi_alignment,
@@ -852,23 +806,24 @@ def analisar_ativo(symbol, candles):
     model_prob = model_probability(features)
     combined = (0.62 * rule_score) + (0.38 * model_prob)
 
-    combined *= asset_multiplier(symbol)
+    combined *= asset_multiplier(asset["id"])
     combined *= score_from_learning({
-        "symbol": symbol,
+        "asset_id": asset["id"],
         "regime": regime,
         "fib_zone": fib_ctx["fib_zone"],
         "direction": direction,
         "pattern": pattern,
     })
 
-    otc_factor = calibrar_otc(symbol, candles)
+    otc_factor = calibrar_otc(asset["id"], candles)
     combined *= otc_factor
 
     if liquidity_sweep(candles):
         combined *= 0.92
 
     meta = {
-        "symbol": symbol,
+        "asset_id": asset["id"],
+        "asset_label": asset["label"],
         "direction": direction,
         "regime": regime,
         "fib_zone": fib_ctx["fib_zone"],
@@ -887,70 +842,77 @@ def analisar_ativo(symbol, candles):
     }
 
     return {
-        "symbol": symbol,
+        "asset": asset,
         "direction": direction,
         "score": combined,
         "meta": meta,
     }
-    
+
 # ==========================
 # UNIVERSO DINÂMICO
 # ==========================
 def get_market_symbols():
     return MARKET_CANDIDATES[:]
 
-def asset_quality_score(symbol):
-    candles = get_candles(symbol)
+def asset_quality_score(asset):
+    candles = get_candles(asset)
     if not candles:
         return 0.0
 
-    analysis = analisar_ativo(symbol, candles)
+    analysis = analisar_ativo(asset, candles)
     if not analysis:
         return 0.0
 
     return analysis["score"]
 
 def update_active_symbols():
-    global ACTIVE_SYMBOLS, last_universe_update
+    global ACTIVE_ASSETS, last_universe_update
 
     log("ATUALIZANDO UNIVERSO...")
 
     market = get_market_symbols()
     scored = []
 
-    for symbol in market:
+    for asset in market:
         try:
-            score = asset_quality_score(symbol)
-            scored.append((symbol, score))
-            log(f"{symbol} SCORE {score:.2f}")
+            score = asset_quality_score(asset)
+            scored.append((asset, score))
+            log(f"{asset['label']} SCORE {score:.2f}")
         except Exception as e:
-            log(f"Erro scoring {symbol}: {e}")
+            log(f"Erro scoring {asset['label']}: {e}")
 
     if not scored:
-        ACTIVE_SYMBOLS = ["BTCUSDT", "ETHUSDT"]
+        ACTIVE_ASSETS = [
+            {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
+            {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
+        ]
         last_universe_update = utc_now()
-        log("Fallback universo BTC/ETH")
+        log("Fallback universo OTC BTC/ETH")
         return
 
     scored.sort(key=lambda x: x[1], reverse=True)
     top = [s[0] for s in scored[:8]]
 
     if len(top) < 3:
-        top = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        top = [
+            {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
+            {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
+            {"id": "SOL_OTC", "label": "Solana (OTC)", "source": "SOLUSDT", "otc": True},
+        ]
 
-    ACTIVE_SYMBOLS = top
+    ACTIVE_ASSETS = top
     last_universe_update = utc_now()
-    log(f"NOVO UNIVERSO: {ACTIVE_SYMBOLS}")
+    log(f"NOVO UNIVERSO: {[a['label'] for a in ACTIVE_ASSETS]}")
 
 # ==========================
 # RESULTADOS / HISTÓRICO
 # ==========================
-def register_trade_history(symbol, win, stage, meta):
+def register_trade_history(asset_id, win, stage, meta):
     global total_closed_trades
     total_closed_trades += 1
     trade_history.append({
         "time": utc_now().isoformat(),
-        "symbol": symbol,
+        "asset_id": asset_id,
         "win": bool(win),
         "stage": stage,
         "regime": meta.get("regime"),
@@ -1002,44 +964,174 @@ def maybe_send_learning_report(force=False):
             lines.append(f"- {key}: {wr:.1f}% ({t})")
         lines.append("")
 
-    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True))
-    add_section("Melhores ativos", bucket_rank("asset_stats", True))
-    add_section("Ativos a evitar", bucket_rank("asset_stats", False))
-    add_section("Melhores horários", bucket_rank("hour_stats", True))
-    add_section("Melhores regimes", bucket_rank("regime_stats", True))
-    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True))
+    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
+    add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
+    add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
+    add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
+    add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
+    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
 
     lines.append("Pesos atuais:")
     for k, v in model_state["feature_weights"].items():
         lines.append(f"- {k}: {v:.2f}")
     lines.append(f"- bias: {model_state['bias']:.2f}")
     lines.append("")
-    lines.append(f"Universo atual: {', '.join(ACTIVE_SYMBOLS[:10])}")
+    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
     enviar("\n".join(lines))
 
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
 
-def enviar_resultado(symbol, resultado):
+def enviar_resultado(asset_label, resultado):
     total = wins + losses
     taxa = (wins / total) * 100 if total > 0 else 0
 
     enviar(
         "🏆 RESULTADO\n\n"
-        f"🌎 {symbol}\n"
+        f"🌎 {asset_label}\n"
         f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
         f"Wins: {wins}\n"
         f"Losses: {losses}\n"
         f"Precisão: {round(taxa, 1)}%"
     )
-    log(f"RESULTADO | {symbol} | {resultado} | W={wins} L={losses}")
+    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
-def marcar_trade(symbol):
+def marcar_trade(asset_id):
     global last_trade_time
-    ultimo_trade_por_ativo[symbol] = utc_now()
+    ultimo_trade_por_ativo[asset_id] = utc_now()
     last_trade_time = utc_now()
 
+# ==========================
+# VERIFICAR RESULTADOS
+# ==========================
+def verificar_resultados():
+    global wins, losses
+
+    agora_utc = utc_now()
+    novas_operacoes = []
+
+    for op in operacoes_ativas:
+        asset = op["asset"]
+        asset_id = asset["id"]
+        asset_label = asset["label"]
+        direcao = op["direcao"]
+        meta = op.get("meta", {})
+        candles = get_candles(asset)
+
+        if candles is None or len(candles) < 5:
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 0 — ENTRADA
+        if op["etapa"] == 0:
+            if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
+            vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=TIMEFRAME_MINUTES))
+
+            if vela_atual is None or vela_anterior is None:
+                novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "entrada", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Entrada")
+                maybe_send_learning_report()
+                continue
+
+            op["etapa"] = 1
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 1 — PROTEÇÃO 1
+        if op["etapa"] == 1:
+            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
+            vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=TIMEFRAME_MINUTES))
+
+            if vela_atual is None or vela_anterior is None:
+                novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "proteção_1", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Proteção 1")
+                maybe_send_learning_report()
+                continue
+
+            op["etapa"] = 2
+            novas_operacoes.append(op)
+            continue
+
+        # ETAPA 2 — PROTEÇÃO 2
+        if op["etapa"] == 2:
+            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
+                novas_operacoes.append(op)
+                continue
+
+            vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
+            vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=TIMEFRAME_MINUTES))
+
+            if vela_atual is None or vela_anterior is None:
+                novas_operacoes.append(op)
+                continue
+
+            win = (
+                float(vela_atual["close"]) > float(vela_anterior["close"])
+                if direcao == "BUY"
+                else float(vela_atual["close"]) < float(vela_anterior["close"])
+            )
+
+            if win:
+                wins += 1
+                performance[asset_id]["win"] += 1
+                registrar_resultado_aprendizado(asset_id, True, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), True)
+                register_trade_history(asset_id, True, "proteção_2", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "WIN na Proteção 2")
+            else:
+                losses += 1
+                performance[asset_id]["loss"] += 1
+                registrar_resultado_aprendizado(asset_id, False, {**meta, "asset_id": asset_id, "direction": direcao})
+                atualizar_pesos(meta.get("features", {}), False)
+                register_trade_history(asset_id, False, "proteção_2", meta)
+                marcar_trade(asset_id)
+                enviar_resultado(asset_label, "LOSS após Proteção 2")
+
+            maybe_send_learning_report()
+            continue
+
+    operacoes_ativas.clear()
+    operacoes_ativas.extend(novas_operacoes)
 
 # ==========================
 # ESCOLHA INTELIGENTE
@@ -1047,12 +1139,12 @@ def marcar_trade(symbol):
 def escolher_melhor_ativo():
     update_mode()
 
-    melhor_symbol = None
+    melhor_asset = None
     melhor_score = -1
     melhor_direcao = None
     melhor_meta = None
 
-    fallback_symbol = None
+    fallback_asset = None
     fallback_score = -1
     fallback_direcao = None
     fallback_meta = None
@@ -1087,27 +1179,30 @@ def escolher_melhor_ativo():
 
     log(f"MODO: {adaptive_mode}")
 
-    for symbol in ACTIVE_SYMBOLS:
-        if ja_tem_operacao(symbol):
+    for asset in ACTIVE_ASSETS:
+        asset_id = asset["id"]
+        asset_label = asset["label"]
+
+        if ja_tem_operacao(asset_id):
             if DEBUG_REJEICOES:
-                log(f"{symbol} -> IGNORADO (já em operação)")
+                log(f"{asset_label} -> IGNORADO (já em operação)")
             continue
 
-        if em_cooldown(symbol):
+        if em_cooldown(asset_id):
             if DEBUG_REJEICOES:
-                log(f"{symbol} -> IGNORADO (cooldown)")
+                log(f"{asset_label} -> IGNORADO (cooldown)")
             continue
 
-        candles = get_candles(symbol)
+        candles = get_candles(asset)
         if not candles or len(candles) < 60:
             if DEBUG_REJEICOES:
-                log(f"{symbol} -> REJECT (sem candles)")
+                log(f"{asset_label} -> REJECT (sem candles)")
             continue
 
-        analysis = analisar_ativo(symbol, candles)
+        analysis = analisar_ativo(asset, candles)
         if not analysis:
             if DEBUG_REJEICOES:
-                log(f"{symbol} -> REJECT (análise None)")
+                log(f"{asset_label} -> REJECT (análise None)")
             continue
 
         score = analysis["score"]
@@ -1126,7 +1221,7 @@ def escolher_melhor_ativo():
 
         if score > fallback_score:
             fallback_score = score
-            fallback_symbol = symbol
+            fallback_asset = asset
             fallback_direcao = direction
             fallback_meta = meta
 
@@ -1155,29 +1250,29 @@ def escolher_melhor_ativo():
 
         if reasons:
             if DEBUG_REJEICOES:
-                log(f"{symbol} -> REJECT ({', '.join(reasons)}) | score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}")
+                log(f"{asset_label} -> REJECT ({', '.join(reasons)}) | score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}")
             continue
 
         if DEBUG_REJEICOES:
             log(
-                f"{symbol} -> OK score={score:.3f} "
+                f"{asset_label} -> OK score={score:.3f} "
                 f"regime={regime} fib={fib_zone} rsi={rsi:.2f} "
                 f"p={model_prob:.2f} rule={rule_score:.2f}"
             )
 
         if score > melhor_score:
             melhor_score = score
-            melhor_symbol = symbol
+            melhor_asset = asset
             melhor_direcao = direction
             melhor_meta = meta
 
-    if melhor_symbol is not None:
-        log(f"ESCOLHIDO: {melhor_symbol} | {melhor_direcao} | {melhor_score:.3f}")
-        return melhor_symbol, melhor_direcao, melhor_score, melhor_meta
+    if melhor_asset is not None:
+        log(f"ESCOLHIDO: {melhor_asset['label']} | {melhor_direcao} | {melhor_score:.3f}")
+        return melhor_asset, melhor_direcao, melhor_score, melhor_meta
 
-    if fallback_symbol is not None:
-        log(f"FALLBACK: {fallback_symbol} | {fallback_direcao} | {fallback_score:.3f}")
-        return fallback_symbol, fallback_direcao, fallback_score, fallback_meta
+    if fallback_asset is not None:
+        log(f"FALLBACK: {fallback_asset['label']} | {fallback_direcao} | {fallback_score:.3f}")
+        return fallback_asset, fallback_direcao, fallback_score, fallback_meta
 
     log("Nenhum ativo disponível no fallback")
     return None, None, None, None
@@ -1185,14 +1280,14 @@ def escolher_melhor_ativo():
 # ==========================
 # SINAL
 # ==========================
-def criar_sinal(symbol, direcao, score, meta):
+def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
     agora_utc = utc_now()
     entrada_time = next_timeframe(agora_utc) + timedelta(minutes=2)
-    
+
     setup_pendente = {
-        "symbol": symbol,
+        "asset": asset,
         "direcao": direcao,
         "score": score,
         "entrada_time": entrada_time,
@@ -1204,14 +1299,14 @@ def criar_sinal(symbol, direcao, score, meta):
 
     enviar(
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
-        f"🌎 Ativo: {symbol}\n"
+        f"🌎 Ativo: {asset['label']}\n"
         f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
         f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
         f"📈 Força: {score:.3f}\n"
         f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
         f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
     )
-    log(f"SINAL | {symbol} | {direcao} | {score:.3f}")
+    log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
 # ==========================
 # SETUP
@@ -1225,16 +1320,18 @@ def processar_setup_pendente():
     agora_utc = utc_now()
 
     if agora_utc >= setup_pendente["entrada_time"]:
-        symbol = setup_pendente["symbol"]
+        asset = setup_pendente["asset"]
         direcao = setup_pendente["direcao"]
         entrada_time = setup_pendente["entrada_time"]
         p1 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES)
         p2 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES * 2)
 
-        ultimo_trade_por_ativo[symbol] = utc_now()
+        ultimo_trade_por_ativo[asset["id"]] = utc_now()
 
         operacoes_ativas.append({
-            "symbol": symbol,
+            "asset": asset,
+            "asset_id": asset["id"],
+            "asset_label": asset["label"],
             "direcao": direcao,
             "etapa": 0,
             "tempo_entrada": entrada_time,
@@ -1245,18 +1342,18 @@ def processar_setup_pendente():
 
         enviar(
             "✅ ENTRADA CONFIRMADA ✅\n\n"
-            f"🌎 Ativo: {symbol}\n"
+            f"🌎 Ativo: {asset['label']}\n"
             f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
             f"⏰ Entrada: {fmt_br(entrada_time)}\n\n"
             f"⚠️ Proteção 1: {fmt_br(p1)}\n"
             f"⚠️ Proteção 2: {fmt_br(p2)}"
         )
 
-        log(f"ENTRADA CONFIRMADA | {symbol} | {direcao}")
+        log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao}")
         setup_pendente = None
 
 # ==========================
-# PATTERN REPORT
+# REPORT
 # ==========================
 def report_learning_to_telegram(force=False):
     global last_learning_report_time, last_learning_report_trade_count
@@ -1312,7 +1409,7 @@ def report_learning_to_telegram(force=False):
         lines.append(f"- {k}: {v:.2f}")
     lines.append(f"- bias: {model_state['bias']:.2f}")
     lines.append("")
-    lines.append(f"Universo atual: {', '.join(ACTIVE_SYMBOLS[:10])}")
+    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
     enviar("\n".join(lines))
 
@@ -1320,136 +1417,24 @@ def report_learning_to_telegram(force=False):
     last_learning_report_trade_count = total_closed_trades
 
 # ==========================
-# VERIFICAR RESULTADOS
+# RESULTADO
 # ==========================
-def verificar_resultados():
-    global wins, losses
+def enviar_resultado(asset_label, resultado):
+    total = wins + losses
+    taxa = (wins / total) * 100 if total > 0 else 0
 
-    agora_utc = utc_now()
-    novas_operacoes = []
-
-    for op in operacoes_ativas:
-        symbol = op["symbol"]
-        direcao = op["direcao"]
-        meta = op.get("meta", {})
-        candles = get_candles(symbol)
-
-        if candles is None or len(candles) < 5:
-            novas_operacoes.append(op)
-            continue
-
-        # ETAPA 0 — ENTRADA
-        if op["etapa"] == 0:
-            if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
-                novas_operacoes.append(op)
-                continue
-
-            vela_atual = candle_por_abertura(candles, op["tempo_entrada"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_entrada"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-
-            if win:
-                wins += 1
-                performance[symbol]["win"] += 1
-                registrar_resultado_aprendizado(symbol, True, {**meta, "symbol": symbol, "direction": direcao})
-                atualizar_pesos(meta.get("features", {}), True)
-                register_trade_history(symbol, True, "entrada", meta)
-                marcar_trade(symbol)
-                enviar_resultado(symbol, "WIN na Entrada")
-                maybe_send_learning_report()
-                continue
-
-            op["etapa"] = 1
-            novas_operacoes.append(op)
-            continue
-
-        # ETAPA 1 — PROTEÇÃO 1
-        if op["etapa"] == 1:
-            if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
-                novas_operacoes.append(op)
-                continue
-
-            vela_atual = candle_por_abertura(candles, op["tempo_protecao1"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao1"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-
-            if win:
-                wins += 1
-                performance[symbol]["win"] += 1
-                registrar_resultado_aprendizado(symbol, True, {**meta, "symbol": symbol, "direction": direcao})
-                atualizar_pesos(meta.get("features", {}), True)
-                register_trade_history(symbol, True, "proteção_1", meta)
-                marcar_trade(symbol)
-                enviar_resultado(symbol, "WIN na Proteção 1")
-                maybe_send_learning_report()
-                continue
-
-            op["etapa"] = 2
-            novas_operacoes.append(op)
-            continue
-
-        # ETAPA 2 — PROTEÇÃO 2
-        if op["etapa"] == 2:
-            if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=EVAL_GRACE_SECONDS):
-                novas_operacoes.append(op)
-                continue
-
-            vela_atual = candle_por_abertura(candles, op["tempo_protecao2"])
-            vela_anterior = candle_por_abertura(candles, op["tempo_protecao2"] - timedelta(minutes=TIMEFRAME_MINUTES))
-
-            if vela_atual is None or vela_anterior is None:
-                novas_operacoes.append(op)
-                continue
-
-            win = (
-                float(vela_atual["close"]) > float(vela_anterior["close"])
-                if direcao == "BUY"
-                else float(vela_atual["close"]) < float(vela_anterior["close"])
-            )
-
-            if win:
-                wins += 1
-                performance[symbol]["win"] += 1
-                registrar_resultado_aprendizado(symbol, True, {**meta, "symbol": symbol, "direction": direcao})
-                atualizar_pesos(meta.get("features", {}), True)
-                register_trade_history(symbol, True, "proteção_2", meta)
-                marcar_trade(symbol)
-                enviar_resultado(symbol, "WIN na Proteção 2")
-            else:
-                losses += 1
-                performance[symbol]["loss"] += 1
-                registrar_resultado_aprendizado(symbol, False, {**meta, "symbol": symbol, "direction": direcao})
-                atualizar_pesos(meta.get("features", {}), False)
-                register_trade_history(symbol, False, "proteção_2", meta)
-                marcar_trade(symbol)
-                enviar_resultado(symbol, "LOSS após Proteção 2")
-
-            maybe_send_learning_report()
-            continue
-
-    operacoes_ativas.clear()
-    operacoes_ativas.extend(novas_operacoes)
+    enviar(
+        "🏆 RESULTADO\n\n"
+        f"🌎 {asset_label}\n"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Precisão: {round(taxa, 1)}%"
+    )
+    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
 # ==========================
-# LOOP PRINCIPAL
+# MAIN LOOP
 # ==========================
 def main():
     global last_signal_time
@@ -1479,9 +1464,9 @@ def main():
 
                 if setup_pendente is None and not operacoes_ativas:
                     if last_signal_time is None or (agora_utc - last_signal_time).total_seconds() >= SIGNAL_INTERVAL:
-                        symbol, direcao, score, meta = escolher_melhor_ativo()
-                        if symbol:
-                            criar_sinal(symbol, direcao, score, meta)
+                        asset, direcao, score, meta = escolher_melhor_ativo()
+                        if asset:
+                            criar_sinal(asset, direcao, score, meta)
 
                 maybe_send_learning_report()
 
