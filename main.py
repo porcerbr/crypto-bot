@@ -48,6 +48,13 @@ total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
 
+OTC_ONLY = True
+
+otc_state = {
+    "bias": {},
+    "drift": {}
+}
+
 # ==========================
 # UNIVERSO
 # ==========================
@@ -175,6 +182,54 @@ def log(msg):
 def safe_bucket(bucket_name):
     if bucket_name not in learning_data:
         learning_data[bucket_name] = {}
+
+def calibrar_otc(symbol, candles):
+    if not candles or len(candles) < 30:
+        return 1.0
+
+    closes = [c["close"] for c in candles]
+
+    real_move = abs(closes[-1] - closes[-2])
+
+    avg_move = sum(
+        abs(closes[i] - closes[i-1])
+        for i in range(-10, -1)
+    ) / 10
+
+    if avg_move == 0:
+        return 1.0
+
+    ratio = real_move / avg_move
+
+    # suavização OTC (evita overfitting)
+    ratio = max(0.75, min(1.25, ratio))
+
+    # memória por ativo
+    if symbol not in otc_state["drift"]:
+        otc_state["drift"][symbol] = ratio
+    else:
+        otc_state["drift"][symbol] = (
+            otc_state["drift"][symbol] * 0.8 + ratio * 0.2
+        )
+
+    return otc_state["drift"][symbol]
+
+    def filtro_otc(candles):
+    if len(candles) < 20:
+        return False
+
+    closes = [c["close"] for c in candles]
+
+    volatility = abs(closes[-1] - closes[-5]) / closes[-1]
+
+    # OTC fake zones
+    if volatility < 0.0002:
+        return False
+
+    if volatility > 0.015:
+        return False
+
+    return True
 
 # ==========================
 # MODELO / PERSISTÊNCIA
@@ -714,6 +769,10 @@ def analisar_ativo(symbol, candles):
     if not candles or len(candles) < 60:
         return None
 
+    if OTC_ONLY:
+    if not filtro_otc(candles):
+        return None
+
     closes = [c["close"] for c in candles]
     price = closes[-1]
 
@@ -763,6 +822,10 @@ def analisar_ativo(symbol, candles):
         "last_move": last_move,
         "direction": direction,
     })
+
+ otc_factor = calibrar_otc(symbol, candles)
+
+score *= otc_factor
 
     features = {
         "trend_strength": trend_strength,
