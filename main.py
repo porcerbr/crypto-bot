@@ -61,14 +61,6 @@ otc_state = {
 }
 
 # ==========================
-# UNIVERSO
-# ==========================
-
-# ==========================
-# UNIVERSO OTC (FORMATO CORRETO)
-# ==========================
-
-# ==========================
 # UNIVERSO OTC (FORMATO CORRETO)
 # ==========================
 
@@ -82,7 +74,7 @@ MARKET_CANDIDATES = [
     {"id": "SOL_OTC", "label": "Solana OTC", "source": "SOLUSDT", "otc": True},
     {"id": "TRX_OTC", "label": "TRON OTC", "source": "TRXUSDT", "otc": True},
     {"id": "DOT_OTC", "label": "Polkadot OTC", "source": "DOTUSDT", "otc": True},
-    {"id": "MATIC_OTC", "label": "Polygon OTC", "source": "POLUSDT", "otc": True},
+    {"id": "POL_OTC", "label": "Polygon OTC", "source": "POLUSDT", "otc": True},
     {"id": "TON_OTC", "label": "Toncoin OTC", "source": "TONUSDT", "otc": True},
     {"id": "LTC_OTC", "label": "Litecoin OTC", "source": "LTCUSDT", "otc": True},
     {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
@@ -127,6 +119,16 @@ MARKET_CANDIDATES = [
     {"id": "EUR_HUF_OTC", "label": "EUR/HUF OTC", "source": "EURHUF", "otc": True},
     {"id": "NZD_JPY_OTC", "label": "NZD/JPY OTC", "source": "NZDJPY", "otc": True},
 ]
+
+def _candles_funciona(asset):
+    try:
+        candles = get_candles(asset, limit=20)
+        return bool(candles)
+    except Exception:
+        return False
+
+# Mantém apenas o que a fonte realmente aceita
+MARKET_CANDIDATES = [a for a in MARKET_CANDIDATES if _candles_funciona(a)]
 
 performance = {
     asset["id"]: {"win": 0, "loss": 0}
