@@ -770,7 +770,7 @@ def analisar_ativo(symbol, candles):
     if not candles or len(candles) < 60:
         return None
 
-if OTC_ONLY:
+    if OTC_ONLY:
     if not filtro_otc(candles):
         return None
 
