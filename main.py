@@ -215,6 +215,7 @@ def calibrar_otc(symbol, candles):
     return otc_state["drift"][symbol]
 
     def filtro_otc(candles):
+        
     if len(candles) < 20:
         return False
 
