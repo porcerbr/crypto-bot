@@ -27,7 +27,7 @@ EVAL_GRACE_SECONDS = 20
 # Pequeno atraso extra para reduzir leitura antecipada da expiração
 EXTRA_EVAL_DELAY_SECONDS = 2
 
-# Tolerância para OTC/latência
+# Tolerância para latência
 TOLERANCIA = 0.00015
 
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
@@ -35,7 +35,6 @@ REPORT_AFTER_TRADES = 25
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
-OTC_ONLY = True
 
 wins = 0
 losses = 0
@@ -57,11 +56,6 @@ last_learning_report_trade_count = 0
 total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
-
-otc_state = {
-    "bias": {},
-    "drift": {}
-}
 
 # ==========================
 # UNIVERSO OTC / FOREX
@@ -87,10 +81,18 @@ MARKET_CANDIDATES = [
     {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
 ]
 
+ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
+
 performance = {
     asset["id"]: {"win": 0, "loss": 0}
     for asset in MARKET_CANDIDATES
 }
+
+def update_active_symbols():
+    global ACTIVE_ASSETS, last_universe_update
+    ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
+    last_universe_update = utc_now()
+    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
 
 # ==========================
 # APRENDIZADO
@@ -171,46 +173,6 @@ def log(msg):
 def safe_bucket(bucket_name):
     if bucket_name not in learning_data:
         learning_data[bucket_name] = {}
-
-def calibrar_otc(asset_id, candles):
-    if not candles or len(candles) < 30:
-        return 1.0
-
-    closes = [c["close"] for c in candles]
-    real_move = abs(closes[-1] - closes[-2])
-
-    avg_move = sum(
-        abs(closes[i] - closes[i - 1])
-        for i in range(-10, -1)
-    ) / 10
-
-    if avg_move == 0:
-        return 1.0
-
-    ratio = real_move / avg_move
-    ratio = max(0.75, min(1.25, ratio))
-
-    if asset_id not in otc_state["drift"]:
-        otc_state["drift"][asset_id] = ratio
-    else:
-        otc_state["drift"][asset_id] = otc_state["drift"][asset_id] * 0.8 + ratio * 0.2
-
-    return otc_state["drift"][asset_id]
-
-def filtro_otc(candles):
-    if len(candles) < 20:
-        return False
-
-    closes = [c["close"] for c in candles]
-    volatility = abs(closes[-1] - closes[-5]) / closes[-1]
-
-    if volatility < 0.0002:
-        return False
-
-    if volatility > 0.015:
-        return False
-
-    return True
 
 def comparar_resultado(preco_entrada, preco_saida, direcao):
     if preco_entrada is None or preco_saida is None:
@@ -428,7 +390,7 @@ def verificar_comandos():
         log(f"Erro comandos: {e}")
 
 # ==========================
-# KUCOIN HELPERS
+# API / HELPERS
 # ==========================
 
 def get_price(asset):
@@ -737,9 +699,6 @@ def analisar_ativo(asset, candles):
     if not candles or len(candles) < 60:
         return None
 
-    if OTC_ONLY and not filtro_otc(candles):
-        return None
-
     closes = [c["close"] for c in candles]
     price = closes[-1]
 
@@ -825,9 +784,6 @@ def analisar_ativo(asset, candles):
         "direction": direction,
         "pattern": pattern,
     })
-
-    otc_factor = calibrar_otc(asset["id"], candles)
-    combined *= otc_factor
 
     if liquidity_sweep(candles):
         combined *= 0.92
@@ -1293,7 +1249,7 @@ def criar_sinal(asset, direcao, score, meta):
 # SETUP
 # ==========================
 def processar_setup_pendente():
-    global setup_pendente
+    global setup_pendente, last_trade_time
 
     if setup_pendente is None:
         return
@@ -1313,6 +1269,7 @@ def processar_setup_pendente():
             return
 
         ultimo_trade_por_ativo[asset["id"]] = utc_now()
+        last_trade_time = utc_now()
 
         operacoes_ativas.append({
             "asset": asset,
