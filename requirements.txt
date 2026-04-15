@@ -3,3 +3,4 @@ numpy
 scikit-learn
 websocket-client
 pandas
+yfinance
