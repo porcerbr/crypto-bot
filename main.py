@@ -3,16 +3,15 @@ import os
 import time
 import json
 import math
-import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import requests
 
 try:
-    import websocket
+    import MetaTrader5 as mt5
 except Exception:
-    websocket = None
+    mt5 = None
 
 # ==========================
 # CONFIGURAÇÕES
@@ -29,10 +28,7 @@ UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
 
-# Pequeno atraso extra para reduzir leitura antecipada da expiração
 EXTRA_EVAL_DELAY_SECONDS = 2
-
-# Tolerância para latência
 TOLERANCIA = 0.00015
 
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
@@ -62,24 +58,28 @@ total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
 
-WS_THREAD = None
-WS_RUNNING = False
-
 # ==========================
-# UNIVERSO (KRAKEN)
+# UNIVERSO (FOREX MT5)
 # ==========================
 
 MARKET_CANDIDATES = [
-    {"id": "BTCUSD", "label": "BTC/USD", "source": "BTC/USD"},
-    {"id": "ETHUSD", "label": "ETH/USD", "source": "ETH/USD"},
-    {"id": "SOLUSD", "label": "SOL/USD", "source": "SOL/USD"},
-    {"id": "ADAUSD", "label": "ADA/USD", "source": "ADA/USD"},
-    {"id": "XRPUSD", "label": "XRP/USD", "source": "XRP/USD"},
-    {"id": "DOGEUSD", "label": "DOGE/USD", "source": "DOGE/USD"},
-    {"id": "LTCUSD", "label": "LTC/USD", "source": "LTC/USD"},
-    {"id": "BCHUSD", "label": "BCH/USD", "source": "BCH/USD"},
-    {"id": "LINKUSD", "label": "LINK/USD", "source": "LINK/USD"},
-    {"id": "DOTUSD", "label": "DOT/USD", "source": "DOT/USD"},
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD"},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF"},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD"},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD"},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD"},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD"},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD"},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD"},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF"},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY"},
 ]
 
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
@@ -93,13 +93,13 @@ performance = {
 # CACHE LOCAL
 # ==========================
 
-CANDLE_CACHE = {}   # symbol -> deque(candles)
-PRICE_CACHE = {}    # symbol -> (price, ts)
-PARTIAL_CANDLE = {} # symbol -> candle em formação
+MT5_CACHE = {}
+MT5_PRICE_CACHE = {}
+MT5_CACHE_TIME = {}
 
+CACHE_SECONDS = 15
 CANDLE_CACHE_MAXLEN = 300
 BOOTSTRAP_LIMIT = 150
-BOOTSTRAP_TIMEOUT = 15
 
 # ==========================
 # APRENDIZADO
@@ -184,7 +184,6 @@ def safe_bucket(bucket_name):
 def comparar_resultado(preco_entrada, preco_saida, direcao):
     if preco_entrada is None or preco_saida is None:
         return None
-
     if direcao == "BUY":
         return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
     return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
@@ -194,10 +193,8 @@ def comparar_resultado(preco_entrada, preco_saida, direcao):
 # ==========================
 def carregar_modelo():
     global learning_data, model_state
-
     if not os.path.exists(MODEL_FILE):
         return
-
     try:
         with open(MODEL_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -222,7 +219,6 @@ def carregar_modelo():
                     model_state["bias"] = float(ms.get("bias", 0.0))
                 except Exception:
                     pass
-
         log("Aprendizado carregado.")
     except Exception as e:
         log(f"Erro ao carregar aprendizado: {e}")
@@ -265,17 +261,13 @@ def registrar_resultado_aprendizado(asset_id, win, meta=None):
 def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85):
     if not key:
         return 1.0
-
     data = learning_data.get(bucket_name, {}).get(key)
     if not data:
         return 1.0
-
     total = data["win"] + data["loss"]
     if total < min_total:
         return 1.0
-
     winrate = data["win"] / total
-
     if winrate > high:
         return up
     if winrate < low:
@@ -313,14 +305,12 @@ def online_update(features, win):
     pred = model_probability(features)
     error = target - pred
     lr = 0.05
-
     for k, v in features.items():
         if k not in model_state["feature_weights"]:
             continue
         old = model_state["feature_weights"][k]
         delta = lr * error * (float(v) - 0.5)
         model_state["feature_weights"][k] = clamp(old + delta, 0.35, 2.50)
-
     model_state["bias"] = clamp(model_state["bias"] + lr * error * 0.25, -2.5, 2.5)
     salvar_modelo()
 
@@ -346,225 +336,176 @@ def remover_webhook():
 
 def verificar_comandos():
     global LAST_UPDATE_ID, BOT_ATIVO
-
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
         params = {}
         if LAST_UPDATE_ID is not None:
             params["offset"] = LAST_UPDATE_ID + 1
-
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
-
         if "result" not in data:
             return
-
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
-
             if "message" not in update:
                 continue
-
             texto = update["message"].get("text", "").strip()
-
             if texto == "/start":
                 BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
                 log("BOT ATIVADO")
-
             elif texto == "/stop":
                 BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
                 log("BOT PARADO")
-
             elif texto == "/report":
                 report_learning_to_telegram(force=True)
-
             elif texto == "/status":
                 total = wins + losses
                 wr = (wins / total) * 100 if total else 0
                 enviar(
-                    "📌 STATUS\n\n"
-                    f"Ativo: {BOT_ATIVO}\n"
-                    f"Wins: {wins}\n"
-                    f"Losses: {losses}\n"
-                    f"Precisão: {wr:.1f}%\n"
-                    f"Modo: {adaptive_mode}\n"
+                    "📌 STATUS
+
+"
+                    f"Ativo: {BOT_ATIVO}
+"
+                    f"Wins: {wins}
+"
+                    f"Losses: {losses}
+"
+                    f"Precisão: {wr:.1f}%
+"
+                    f"Modo: {adaptive_mode}
+"
                     f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
-
     except Exception as e:
         log(f"Erro comandos: {e}")
 
 # ==========================
-# KRAKEN DATA
+# MT5 DATA
 # ==========================
-KRAKEN_REST = "https://api.kraken.com/0/public/OHLC"
-KRAKEN_WS = "wss://ws.kraken.com"
+def mt5_timeframe():
+    if TIMEFRAME_MINUTES == 1:
+        return mt5.TIMEFRAME_M1
+    if TIMEFRAME_MINUTES == 5:
+        return mt5.TIMEFRAME_M5
+    if TIMEFRAME_MINUTES == 15:
+        return mt5.TIMEFRAME_M15
+    if TIMEFRAME_MINUTES == 30:
+        return mt5.TIMEFRAME_M30
+    if TIMEFRAME_MINUTES == 60:
+        return mt5.TIMEFRAME_H1
+    return mt5.TIMEFRAME_M1
+
+def mt5_initialize():
+    if mt5 is None:
+        raise RuntimeError("Biblioteca MetaTrader5 não instalada.")
+    if not mt5.initialize():
+        raise RuntimeError(f"MT5 initialize() falhou: {mt5.last_error()}")
+
+def find_mt5_symbol(symbol):
+    mt5_symbols = mt5.symbols_get()
+    if mt5_symbols is None:
+        return symbol
+    names = [s.name for s in mt5_symbols]
+    if symbol in names:
+        return symbol
+    for name in names:
+        if name.upper().startswith(symbol.upper()):
+            return name
+    return symbol
 
 def _symbol_key(asset):
     return asset["source"]
 
-def _parse_kraken_ohlc_row(row):
-    # Kraken REST OHLC:
-    # [ time, open, high, low, close, vwap, volume, count ]
-    return {
-        "time": datetime.fromtimestamp(float(row[0]), tz=timezone.utc),
-        "open": float(row[1]),
-        "high": float(row[2]),
-        "low": float(row[3]),
-        "close": float(row[4]),
-        "volume": float(row[6]),
-    }
+def _mt5_rates_to_candles(rates):
+    candles = deque(maxlen=CANDLE_CACHE_MAXLEN)
+    for r in rates:
+        candles.append({
+            "time": datetime.fromtimestamp(int(r["time"]), tz=timezone.utc),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "volume": float(r["tick_volume"]),
+        })
+    return candles
 
 def bootstrap_symbol_history(symbol, limit=BOOTSTRAP_LIMIT):
-    params = {
-        "pair": symbol,
-        "interval": TIMEFRAME_MINUTES,
-    }
-    r = requests.get(KRAKEN_REST, params=params, timeout=BOOTSTRAP_TIMEOUT)
-    r.raise_for_status()
-    data = r.json()
+    tf = mt5_timeframe()
+    symbol_name = find_mt5_symbol(symbol)
 
-    if data.get("error"):
-        raise RuntimeError(str(data["error"]))
+    if not mt5.symbol_select(symbol_name, True):
+        raise RuntimeError(f"symbol_select falhou para {symbol_name}: {mt5.last_error()}")
 
-    result = data.get("result", {})
-    candles_key = None
+    rates = mt5.copy_rates_from_pos(symbol_name, tf, 0, limit)
+    if rates is None or len(rates) == 0:
+        raise RuntimeError(f"Sem dados MT5 para {symbol_name}: {mt5.last_error()}")
 
-    for k in result.keys():
-        if k != "last":
-            candles_key = k
-            break
+    candles = _mt5_rates_to_candles(rates)
 
-    if not candles_key:
-        return deque(maxlen=CANDLE_CACHE_MAXLEN)
-
-    rows = result[candles_key]
-
-    # Kraken mantém a última vela como a atual, ainda não totalmente fechada.
-    # Mantemos a lógica do bot mais estável carregando apenas candles fechados no bootstrap.
-    if len(rows) > 1:
-        rows = rows[:-1]
-
-    candles = deque(maxlen=CANDLE_CACHE_MAXLEN)
-
-    for row in rows[-limit:]:
-        candles.append(_parse_kraken_ohlc_row(row))
+    if len(candles) >= 2:
+        now_utc = utc_now()
+        last_bar = candles[-1]
+        if last_bar["time"] + timedelta(minutes=TIMEFRAME_MINUTES) > now_utc:
+            candles.pop()
 
     return candles
 
 def init_market_data():
-    global CANDLE_CACHE, PRICE_CACHE
-
+    global MT5_CACHE, MT5_PRICE_CACHE, MT5_CACHE_TIME
+    mt5_initialize()
     for asset in ACTIVE_ASSETS:
         symbol = _symbol_key(asset)
         try:
             candles = bootstrap_symbol_history(symbol)
-            CANDLE_CACHE[symbol] = candles
+            MT5_CACHE[symbol] = candles
+            MT5_CACHE_TIME[symbol] = time.time()
             if candles:
-                PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
+                MT5_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
             log(f"Bootstrap ok: {asset['label']} ({len(candles)} candles)")
         except Exception as e:
             log(f"Bootstrap falhou {asset['label']}: {e}")
-            CANDLE_CACHE[symbol] = deque(maxlen=CANDLE_CACHE_MAXLEN)
+            MT5_CACHE[symbol] = deque(maxlen=CANDLE_CACHE_MAXLEN)
 
-def start_ws_thread():
-    global WS_THREAD, WS_RUNNING
+def refresh_symbol_history(asset):
+    symbol = _symbol_key(asset)
+    now = time.time()
 
-    if websocket is None:
-        log("Biblioteca websocket-client não instalada.")
+    if symbol in MT5_CACHE and symbol in MT5_CACHE_TIME:
+        if now - MT5_CACHE_TIME[symbol] < CACHE_SECONDS:
+            return
+
+    tf = mt5_timeframe()
+    symbol_name = find_mt5_symbol(symbol)
+
+    if not mt5.symbol_select(symbol_name, True):
+        log(f"symbol_select falhou para {symbol_name}: {mt5.last_error()}")
         return
 
-    pairs = [a["source"] for a in ACTIVE_ASSETS]
+    rates = mt5.copy_rates_from_pos(symbol_name, tf, 0, BOOTSTRAP_LIMIT)
+    if rates is None or len(rates) == 0:
+        log(f"Sem dados MT5 para {symbol_name}: {mt5.last_error()}")
+        return
 
-    def on_message(ws, message):
-        try:
-            payload = json.loads(message)
+    candles = _mt5_rates_to_candles(rates)
 
-            # Kraken v1 envia os dados como lista:
-            # [channel_id, [ohlc...], pair, channel_name]
-            if not isinstance(payload, list) or len(payload) < 4:
-                return
+    if len(candles) >= 2:
+        now_utc = utc_now()
+        last_bar = candles[-1]
+        if last_bar["time"] + timedelta(minutes=TIMEFRAME_MINUTES) > now_utc:
+            candles.pop()
 
-            ohlc = payload[1]
-            pair = payload[2]
-
-            if not isinstance(ohlc, list) or len(ohlc) < 8:
-                return
-
-            epoc_last = float(ohlc[0])
-            epoc_end = float(ohlc[1])
-
-            candle = {
-                # Usamos o início aproximado da vela como chave estável.
-                "time": datetime.fromtimestamp(epoc_end - (TIMEFRAME_MINUTES * 60), tz=timezone.utc),
-                "open": float(ohlc[2]),
-                "high": float(ohlc[3]),
-                "low": float(ohlc[4]),
-                "close": float(ohlc[5]),
-                "volume": float(ohlc[7]),
-            }
-
-            PRICE_CACHE[pair] = (candle["close"], time.time())
-
-            # Atualiza a última vela conhecida.
-            cache = CANDLE_CACHE.setdefault(pair, deque(maxlen=CANDLE_CACHE_MAXLEN))
-            if cache and cache[-1]["time"] == candle["time"]:
-                cache[-1] = candle
-            else:
-                cache.append(candle)
-
-            PARTIAL_CANDLE[pair] = {
-                "epoc_last": epoc_last,
-                "epoc_end": epoc_end,
-                "candle": candle,
-            }
-
-        except Exception as e:
-            log(f"WS parse error: {e}")
-
-    def on_error(ws, error):
-        log(f"WS error: {error}")
-
-    def on_close(ws, code, msg):
-        log(f"WS closed: {code} {msg}")
-
-    def on_open(ws):
-        log("WS conectado.")
-        sub = {
-            "event": "subscribe",
-            "pair": pairs,
-            "subscription": {
-                "name": "ohlc",
-                "interval": TIMEFRAME_MINUTES,
-            },
-        }
-        ws.send(json.dumps(sub))
-
-    def run():
-        global WS_RUNNING
-        while True:
-            try:
-                WS_RUNNING = True
-                ws = websocket.WebSocketApp(
-                    KRAKEN_WS,
-                    on_open=on_open,
-                    on_message=on_message,
-                    on_error=on_error,
-                    on_close=on_close,
-                )
-                ws.run_forever(ping_interval=20, ping_timeout=10)
-            except Exception as e:
-                log(f"WS reconnect: {e}")
-            time.sleep(5)
-
-    WS_THREAD = threading.Thread(target=run, daemon=True)
-    WS_THREAD.start()
+    MT5_CACHE[symbol] = candles
+    MT5_CACHE_TIME[symbol] = now
+    if candles:
+        MT5_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
 
 def get_candles(asset, limit=150):
     symbol = _symbol_key(asset)
-    data = CANDLE_CACHE.get(symbol)
+    refresh_symbol_history(asset)
+    data = MT5_CACHE.get(symbol)
     if not data:
         return None
     candles = list(data)[-limit:]
@@ -572,10 +513,9 @@ def get_candles(asset, limit=150):
 
 def get_price(asset):
     symbol = _symbol_key(asset)
-    cached = PRICE_CACHE.get(symbol)
+    cached = MT5_PRICE_CACHE.get(symbol)
     if cached:
         return float(cached[0])
-
     candles = get_candles(asset, limit=2)
     if candles:
         return float(candles[-1]["close"])
@@ -588,12 +528,9 @@ def avaliar_por_vela(asset, direcao):
     candles = get_candles(asset, limit=3)
     if not candles or len(candles) < 2:
         return None
-
-    candle = candles[-2]  # última vela FECHADA
-
+    candle = candles[-2]
     entrada = candle["open"]
     saida = candle["close"]
-
     if direcao == "BUY":
         return saida > entrada
     else:
@@ -611,20 +548,16 @@ def ema_last(prices, period):
 def rsi_last(prices, period=14):
     if len(prices) < period + 1:
         return None
-
     gains = 0.0
     losses = 0.0
-
     for i in range(1, period + 1):
         diff = prices[i] - prices[i - 1]
         if diff >= 0:
             gains += diff
         else:
             losses += abs(diff)
-
     avg_gain = gains / period
     avg_loss = losses / period
-
     if len(prices) > period + 1:
         for i in range(period + 1, len(prices)):
             diff = prices[i] - prices[i - 1]
@@ -632,25 +565,20 @@ def rsi_last(prices, period=14):
             loss = abs(min(diff, 0))
             avg_gain = (avg_gain * (period - 1) + gain) / period
             avg_loss = (avg_loss * (period - 1) + loss) / period
-
     if avg_loss == 0:
         return 100.0
-
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 def atr_like(closes, period=14):
     if len(closes) < period + 1:
         return None
-
     vals = []
     start = max(1, len(closes) - period)
     for i in range(start, len(closes)):
         vals.append(abs(closes[i] - closes[i - 1]))
-
     if not vals:
         return None
-
     return sum(vals) / len(vals)
 
 def average_volume(candles, window=20):
@@ -668,39 +596,29 @@ def average_volume(candles, window=20):
 def market_regime(closes):
     if len(closes) < 60:
         return "UNKNOWN"
-
     ema9 = ema_last(closes, 9)
     ema21 = ema_last(closes, 21)
     ema50 = ema_last(closes, 50)
-
     if ema9 is None or ema21 is None or ema50 is None:
         return "UNKNOWN"
-
     trend_strength = abs(ema21 - ema50) / closes[-1]
     slope = abs(ema9 - ema_last(closes[:-3], 9)) / closes[-1] if len(closes) > 20 else 0
-
     if trend_strength < 0.0010:
         return "RANGE"
-
     if slope < 0.00025:
         return "CHOP"
-
     return "TREND"
 
 def liquidity_sweep(candles):
     if len(candles) < 6:
         return False
-
     prev_high = max(c["high"] for c in candles[-6:-1])
     prev_low = min(c["low"] for c in candles[-6:-1])
     last = candles[-1]
-
     if last["high"] > prev_high and last["close"] < prev_high:
         return True
-
     if last["low"] < prev_low and last["close"] > prev_low:
         return True
-
     return False
 
 def identificar_padrao(meta):
@@ -708,39 +626,29 @@ def identificar_padrao(meta):
     fib_zone = meta.get("fib_zone")
     trend_pct = meta.get("trend_pct", 0.0)
     last_move = meta.get("last_move", 0.0)
-
     if last_move > 0.0025 and regime == "TREND":
         return "breakout_fib_extension"
-
     if fib_zone in ("0.236", "near_0.236"):
         return "fib_23_pullback"
-
     if fib_zone in ("0.382", "near_0.382"):
         return "fib_38_pullback"
-
     if fib_zone in ("0.500", "near_0.500"):
         return "fib_50_reversal"
-
     if regime == "TREND" and trend_pct > 0.0008:
         return "trend_continuation"
-
     return "trend_continuation" if regime == "TREND" else "fib_50_reversal"
 
 def fib_analysis(candles, direction):
     closes = [c["close"] for c in candles]
     if len(closes) < 20:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
-
     window = candles[-48:] if len(candles) > 48 else candles[:]
     swing_high = max(c["high"] for c in window)
     swing_low = min(c["low"] for c in window)
-
     if swing_high == swing_low:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
-
     rng = swing_high - swing_low
     price = closes[-1]
-
     if direction == "BUY":
         levels = {
             "0.236": swing_low + rng * 0.236,
@@ -757,28 +665,23 @@ def fib_analysis(candles, direction):
             "0.618": swing_high - rng * 0.618,
             "0.786": swing_high - rng * 0.786,
         }
-
     preferred = ["0.382", "0.500", "0.618"]
     best_zone = None
     best_dist = 999.0
-
     for zone in preferred:
         dist = abs(price - levels[zone]) / price
         if dist < best_dist:
             best_dist = dist
             best_zone = zone
-
     if best_dist <= 0.0025:
         fib_zone = best_zone
     elif best_dist <= 0.005:
         fib_zone = f"near_{best_zone}"
     else:
         fib_zone = "none"
-
     fib_score = max(0.0, 1.0 - best_dist * 250)
     if fib_zone == "none":
         fib_score *= 0.35
-
     return {
         "fib_zone": fib_zone,
         "fib_score": fib_score,
@@ -791,7 +694,6 @@ def asset_multiplier(asset_id):
     total = data["win"] + data["loss"]
     if total < 10:
         return 1.0
-
     winrate = data["win"] / total
     if winrate > 0.65:
         return 1.15
@@ -807,13 +709,10 @@ def em_cooldown(asset_id):
 
 def update_mode():
     global adaptive_mode, last_trade_time
-
     if last_trade_time is None:
         adaptive_mode = "AGRESSIVO"
         return
-
     idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
-
     if idle_minutes > 90:
         adaptive_mode = "AGRESSIVO"
     elif idle_minutes > 45:
@@ -833,7 +732,6 @@ def score_from_learning(meta):
     fib_zone = meta.get("fib_zone")
     direction = meta.get("direction")
     pattern = meta.get("pattern")
-
     mult = 1.0
     mult *= learning_multiplier(asset_id)
     mult *= hour_multiplier()
@@ -854,15 +752,12 @@ def model_probability(features):
     weights = model_state["feature_weights"]
     total_w = 0.0
     total = 0.0
-
     for k, v in features.items():
         w = weights.get(k, 1.0)
         total += w * float(v)
         total_w += abs(w)
-
     if total_w <= 0:
         return 0.5
-
     avg = total / total_w
     logit = (avg - 0.5) * 8.0 + model_state["bias"]
     return sigmoid(logit)
@@ -1067,7 +962,8 @@ def maybe_send_learning_report(force=False):
     lines.append("")
     lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
-    enviar("\n".join(lines))
+    enviar("
+".join(lines))
 
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
@@ -1080,11 +976,18 @@ def enviar_resultado(asset_label, resultado):
     taxa = (wins / total) * 100 if total > 0 else 0
 
     enviar(
-        "🏆 RESULTADO\n\n"
-        f"🌎 {asset_label}\n"
-        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
+        "🏆 RESULTADO
+
+"
+        f"🌎 {asset_label}
+"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}
+
+"
+        f"Wins: {wins}
+"
+        f"Losses: {losses}
+"
         f"Precisão: {round(taxa, 1)}%"
     )
     log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
@@ -1107,7 +1010,6 @@ def verificar_resultados():
 
         delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
 
-        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1134,7 +1036,6 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1161,7 +1062,6 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1327,12 +1227,19 @@ def criar_sinal(asset, direcao, score, meta):
     last_signal_time = agora_utc
 
     enviar(
-        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
-        f"🌎 Ativo: {asset['label']}\n"
-        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
-        f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
-        f"📈 Força: {score:.3f}\n"
-        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
+        "⚠️ PREPARAR ENTRADA ⚠️
+
+"
+        f"🌎 Ativo: {asset['label']}
+"
+        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}
+"
+        f"⏰ Entrada prevista: {fmt_br(entrada_time)}
+"
+        f"📈 Força: {score:.3f}
+"
+        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}
+"
         f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
@@ -1379,94 +1286,23 @@ def processar_setup_pendente():
         })
 
         enviar(
-            "✅ ENTRADA CONFIRMADA ✅\n\n"
-            f"🌎 Ativo: {asset['label']}\n"
-            f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
-            f"⏰ Entrada: {fmt_br(entrada_time)}\n\n"
-            f"⚠️ Proteção 1: {fmt_br(p1)}\n"
+            "✅ ENTRADA CONFIRMADA ✅
+
+"
+            f"🌎 Ativo: {asset['label']}
+"
+            f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}
+"
+            f"⏰ Entrada: {fmt_br(entrada_time)}
+
+"
+            f"⚠️ Proteção 1: {fmt_br(p1)}
+"
             f"⚠️ Proteção 2: {fmt_br(p2)}"
         )
 
         log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao} | preco={preco_entrada}")
         setup_pendente = None
-
-# ==========================
-# REPORT
-# ==========================
-def report_learning_to_telegram(force=False):
-    global last_learning_report_time, last_learning_report_trade_count
-
-    total = wins + losses
-    if total < 5 and not force:
-        return
-
-    now = utc_now()
-    if not force and last_learning_report_time is not None:
-        elapsed = (now - last_learning_report_time).total_seconds()
-        trades_since = total_closed_trades - last_learning_report_trade_count
-        if elapsed < REPORT_INTERVAL_SECONDS and trades_since < REPORT_AFTER_TRADES:
-            return
-
-    def bucket_rank(bucket_name, reverse=True, min_trades=5, limit=5):
-        bucket = learning_data.get(bucket_name, {})
-        rows = []
-        for key, data in bucket.items():
-            t = data["win"] + data["loss"]
-            if t >= min_trades:
-                wr = (data["win"] / t) * 100 if t else 0
-                rows.append((wr, t, key))
-        rows.sort(reverse=reverse)
-        return rows[:limit]
-
-    lines = []
-    lines.append("📊 RELATÓRIO DE APRENDIZADO")
-    lines.append("")
-    lines.append(f"Trades fechados: {total}")
-    lines.append(f"Wins: {wins}")
-    lines.append(f"Losses: {losses}")
-    lines.append(f"Precisão geral: {((wins / total) * 100) if total else 0:.1f}%")
-    lines.append("")
-
-    def add_section(title, rows):
-        lines.append(title + ":")
-        if not rows:
-            lines.append("- sem dados suficientes")
-        for wr, t, key in rows:
-            lines.append(f"- {key}: {wr:.1f}% ({t})")
-        lines.append("")
-
-    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
-    add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
-    add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
-    add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
-    add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
-    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
-
-    lines.append("Pesos atuais:")
-    for k, v in model_state["feature_weights"].items():
-        lines.append(f"- {k}: {v:.2f}")
-    lines.append(f"- bias: {model_state['bias']:.2f}")
-    lines.append("")
-    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
-
-    enviar("\n".join(lines))
-
-    last_learning_report_time = now
-    last_learning_report_trade_count = total_closed_trades
-
-def enviar_resultado(asset_label, resultado):
-    total = wins + losses
-    taxa = (wins / total) * 100 if total > 0 else 0
-
-    enviar(
-        "🏆 RESULTADO\n\n"
-        f"🌎 {asset_label}\n"
-        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Precisão: {round(taxa, 1)}%"
-    )
-    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
 # ==========================
 # MAIN LOOP
@@ -1479,8 +1315,8 @@ def main():
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente.")
         return
 
-    if websocket is None:
-        log("ERRO: instale websocket-client para usar esta versão.")
+    if mt5 is None:
+        log("ERRO: instale MetaTrader5 para usar esta versão.")
         return
 
     remover_webhook()
@@ -1488,8 +1324,6 @@ def main():
     log("BOT INICIANDO...")
 
     init_market_data()
-    start_ws_thread()
-
     enviar("🤖 BOT INICIADO COM SUCESSO")
 
     while True:
