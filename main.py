@@ -61,43 +61,27 @@ otc_state = {
 }
 
 # ==========================
-# UNIVERSO OTC (FORMATO CORRETO)
-# ==========================
-
-# ==========================
-# UNIVERSO CRIPTO OTC CORRETO
+# UNIVERSO OTC / FOREX
 # ==========================
 
 MARKET_CANDIDATES = [
-
-    {"id": "BTCETF_OTC", "label": "Bitcoin ETF OTC", "source": "BTCUSDT", "otc": True},
-
-    {"id": "BTC_OTC", "label": "Bitcoin OTC", "source": "BTCUSDT", "otc": True},
-
-    {"id": "TON_OTC", "label": "Toncoin OTC", "source": "TONUSDT", "otc": True},
-
-    {"id": "TRX_OTC", "label": "TRON OTC", "source": "TRXUSDT", "otc": True},
-
-    {"id": "AVAX_OTC", "label": "Avalanche OTC", "source": "AVAXUSDT", "otc": True},
-
-    {"id": "ADA_OTC", "label": "Cardano OTC", "source": "ADAUSDT", "otc": True},
-
-    {"id": "ETH_OTC", "label": "Ethereum OTC", "source": "ETHUSDT", "otc": True},
-
-    {"id": "LTC_OTC", "label": "Litecoin OTC", "source": "LTCUSDT", "otc": True},
-
-    {"id": "POL_OTC", "label": "Polygon OTC", "source": "MATICUSDT", "otc": True},
-
-    {"id": "SOL_OTC", "label": "Solana OTC", "source": "SOLUSDT", "otc": True},
-
-    {"id": "DOT_OTC", "label": "Polkadot OTC", "source": "DOTUSDT", "otc": True},
-
-    {"id": "LINK_OTC", "label": "Chainlink OTC", "source": "LINKUSDT", "otc": True},
-
-    {"id": "DOGE_OTC", "label": "Dogecoin OTC", "source": "DOGEUSDT", "otc": True},
-
-    {"id": "BNB_OTC", "label": "BNB OTC", "source": "BNBUSDT", "otc": True},
-
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD", "otc": True},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF", "otc": True},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY", "otc": True},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD", "otc": True},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD", "otc": True},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD", "otc": True},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP", "otc": True},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY", "otc": True},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD", "otc": True},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD", "otc": True},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD", "otc": True},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF", "otc": True},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY", "otc": True},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD", "otc": True},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD", "otc": True},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF", "otc": True},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY", "otc": True},
 ]
 
 performance = {
