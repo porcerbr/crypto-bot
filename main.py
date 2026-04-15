@@ -421,6 +421,22 @@ def get_price(asset):
 # ==========================
 # INDICADORES
 # ==========================
+
+def avaliar_por_vela(asset, direcao):
+    candles = get_candles(asset, limit=3)
+    if not candles or len(candles) < 2:
+        return None
+
+    candle = candles[-2]  # última vela FECHADA
+
+    entrada = candle["open"]
+    saida = candle["close"]
+
+    if direcao == "BUY":
+        return saida > entrada
+    else:
+        return saida < entrada
+
 def ema_last(prices, period):
     if len(prices) < period:
         return None
@@ -980,15 +996,12 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            entrada_preco = op.get("preco_entrada")
-            saida_preco = get_price(asset)
+            win = avaliar_por_vela(asset, direcao)
 
-            if entrada_preco is None or saida_preco is None:
+            if win is None:
                 novas_operacoes.append(op)
                 continue
-
-            win = comparar_resultado(entrada_preco, saida_preco, direcao)
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -1010,15 +1023,12 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            entrada_preco = op.get("preco_entrada_stage1")
-            saida_preco = get_price(asset)
+            win = avaliar_por_vela(asset, direcao)
 
-            if entrada_preco is None or saida_preco is None:
+            if win is None:
                 novas_operacoes.append(op)
                 continue
-
-            win = comparar_resultado(entrada_preco, saida_preco, direcao)
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -1040,15 +1050,12 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            entrada_preco = op.get("preco_entrada_stage2")
-            saida_preco = get_price(asset)
+            win = avaliar_por_vela(asset, direcao)
 
-            if entrada_preco is None or saida_preco is None:
+            if win is None:
                 novas_operacoes.append(op)
                 continue
-
-            win = comparar_resultado(entrada_preco, saida_preco, direcao)
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
