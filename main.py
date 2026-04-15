@@ -81,7 +81,7 @@ MARKET_CANDIDATES = [
     {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
 ]
 
-ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
+ACTIVE_ASSETS = MARKET_CANDIDATES[:5]
 
 performance = {
     asset["id"]: {"win": 0, "loss": 0}
