@@ -36,9 +36,9 @@ REPORT_AFTER_TRADES = 25
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
 
-MARKET_REFRESH_SECONDS = 30
+MARKET_REFRESH_SECONDS = 10
 CANDLE_CACHE_MAXLEN = 300
-MIN_CANDLES_FOR_ANALYSIS = 8
+MIN_CANDLES_FOR_ANALYSIS = 5
 
 wins = 0
 losses = 0
@@ -464,6 +464,28 @@ def update_local_candle(asset_id, price, now):
     state["last_close"] = float(price)
     PRICE_CACHE[asset_id] = (float(price), time.time())
 
+
+def seed_initial_candles(asset_id, price, now, count=MIN_CANDLES_FOR_ANALYSIS):
+    cache = CANDLE_CACHE.setdefault(asset_id, deque(maxlen=CANDLE_CACHE_MAXLEN))
+    state = PAIR_STATE.setdefault(asset_id, {})
+
+    if cache:
+        return
+
+    for i in range(count - 1, -1, -1):
+        ts = now - timedelta(seconds=MARKET_REFRESH_SECONDS * i)
+        cache.append({
+            "time": ts,
+            "open": float(price),
+            "high": float(price),
+            "low": float(price),
+            "close": float(price),
+            "volume": 0.0,
+        })
+
+    state["last_close"] = float(price)
+    PRICE_CACHE[asset_id] = (float(price), time.time())
+
 def refresh_market_data():
     global LATEST_MATRIX, LAST_MARKET_REFRESH
 
@@ -494,6 +516,7 @@ def refresh_market_data():
         price = get_pair_rate(base, quote, LATEST_MATRIX)
         if price is None:
             continue
+        seed_initial_candles(asset_id, price, now)
         update_local_candle(asset_id, price, now)
 
     LAST_MARKET_REFRESH = now
@@ -604,20 +627,20 @@ def market_regime(closes):
     if len(closes) < MIN_CANDLES_FOR_ANALYSIS:
         return "UNKNOWN"
 
+    ema2 = ema_last(closes, 2)
     ema3 = ema_last(closes, 3)
     ema5 = ema_last(closes, 5)
-    ema8 = ema_last(closes, 8)
 
-    if ema3 is None or ema5 is None or ema8 is None:
+    if ema2 is None or ema3 is None or ema5 is None:
         return "UNKNOWN"
 
-    trend_strength = abs(ema5 - ema8) / closes[-1]
-    slope = abs(ema3 - ema_last(closes[:-2], 3)) / closes[-1] if len(closes) > 5 else 0
+    trend_strength = abs(ema3 - ema5) / closes[-1]
+    slope = abs(ema2 - ema_last(closes[:-1], 2)) / closes[-1] if len(closes) > 3 else 0
 
-    if trend_strength < 0.0010:
+    if trend_strength < 0.00010:
         return "RANGE"
 
-    if slope < 0.00025:
+    if slope < 0.00005:
         return "CHOP"
 
     return "TREND"
@@ -644,7 +667,7 @@ def identificar_padrao(meta):
     trend_pct = meta.get("trend_pct", 0.0)
     last_move = meta.get("last_move", 0.0)
 
-    if last_move > 0.0025 and regime == "TREND":
+    if last_move > 0.0008 and regime == "TREND":
         return "breakout_fib_extension"
 
     if fib_zone in ("0.236", "near_0.236"):
@@ -663,10 +686,10 @@ def identificar_padrao(meta):
 
 def fib_analysis(candles, direction):
     closes = [c["close"] for c in candles]
-    if len(closes) < 20:
+    if len(closes) < 5:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
 
-    window = candles[-48:] if len(candles) > 48 else candles[:]
+    window = candles[-12:] if len(candles) > 12 else candles[:]
     swing_high = max(c["high"] for c in window)
     swing_low = min(c["low"] for c in window)
 
@@ -815,22 +838,22 @@ def analisar_ativo(asset, candles):
     closes = [c["close"] for c in candles]
     price = closes[-1]
 
+    e2 = ema_last(closes, 2)
+    e3 = ema_last(closes, 3)
     e5 = ema_last(closes, 5)
-    e13 = ema_last(closes, 13)
-    e21 = ema_last(closes, 21)
-    rsi = rsi_last(closes, 14)
-    atr_val = atr_like(closes, 14)
-    vol_ratio = average_volume(candles, 20)
+    rsi = rsi_last(closes, 3)
+    atr_val = atr_like(closes, 3)
+    vol_ratio = average_volume(candles, 3)
 
-    if e5 is None or e13 is None or e21 is None or rsi is None or atr_val is None:
+    if e2 is None or e3 is None or e5 is None or rsi is None or atr_val is None:
         return None
 
     regime = market_regime(closes)
-    direction = "BUY" if e5 > e13 else "SELL"
+    direction = "BUY" if e2 > e3 else "SELL"
     fib_ctx = fib_analysis(candles, direction)
 
-    trend_pct = abs(e5 - e13) / price
-    ema_slope = abs(e5 - ema_last(closes[:-3], 5)) / price if len(closes) > 8 else 0.0
+    trend_pct = abs(e2 - e3) / price
+    ema_slope = abs(e2 - ema_last(closes[:-1], 2)) / price if len(closes) > 3 else 0.0
     last_move = abs(closes[-1] - closes[-2]) / closes[-2]
     atr_norm = atr_val / price
     vol_ratio = vol_ratio if vol_ratio is not None else 1.0
@@ -840,10 +863,10 @@ def analisar_ativo(asset, candles):
     else:
         rsi_alignment = clamp((55 - rsi) / 25, 0.0, 1.0)
 
-    trend_strength = clamp(trend_pct / 0.0010, 0.0, 1.0)
-    atr_strength = clamp(atr_norm / 0.00060, 0.0, 1.0)
-    slope_strength = clamp(ema_slope / 0.00025, 0.0, 1.0)
-    volume_strength = clamp((vol_ratio - 0.85) / 0.70, 0.0, 1.0)
+    trend_strength = clamp(trend_pct / 0.00030, 0.0, 1.0)
+    atr_strength = clamp(atr_norm / 0.00020, 0.0, 1.0)
+    slope_strength = clamp(ema_slope / 0.00020, 0.0, 1.0)
+    volume_strength = clamp((vol_ratio - 0.80) / 0.50, 0.0, 1.0)
     regime_strength = {
         "TREND": 1.00,
         "RANGE": 0.65,
@@ -1146,17 +1169,17 @@ def escolher_melhor_ativo():
     fallback_meta = None
 
     if adaptive_mode == "CONSERVADOR":
-        min_trend = 0.0009
-        min_atr = 0.00045
-        min_combined = 0.58
+        min_trend = 0.00015
+        min_atr = 0.00008
+        min_combined = 0.48
     elif adaptive_mode == "NORMAL":
-        min_trend = 0.00065
-        min_atr = 0.00035
-        min_combined = 0.54
+        min_trend = 0.00010
+        min_atr = 0.00005
+        min_combined = 0.44
     else:
-        min_trend = 0.00045
-        min_atr = 0.00025
-        min_combined = 0.50
+        min_trend = 0.00006
+        min_atr = 0.00003
+        min_combined = 0.40
 
     log(f"MODO: {adaptive_mode}")
 
