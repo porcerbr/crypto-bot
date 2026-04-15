@@ -1,45 +1,63 @@
 # -*- coding: utf-8 -*-
+"""
+Bot Forex para Railway usando Yahoo Finance via yfinance.
+
+Fonte de dados:
+- yfinance é um wrapper open-source para as APIs públicas do Yahoo Finance,
+  com suporte a mercados de câmbio (currencies) e intervalos de 1m.
+- É indicado para uso pessoal / pesquisa.
+
+Observação importante:
+- Os dados de mercado de fontes públicas podem sofrer atraso, limite de uso
+  ou mudanças no provedor. O bot abaixo foi escrito para ser robusto, com cache,
+  retries e fallback no próprio histórico local.
+"""
+
 import os
 import time
 import json
 import math
-import requests
 from collections import deque
 from datetime import datetime, timedelta, timezone
+
+import requests
+import pandas as pd
+import yfinance as yf
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
+TOKEN = os.getenv("BOT_TOKEN", "COLOQUE_SEU_TOKEN_AQUI")
+CHAT_ID = os.getenv("CHAT_ID", "COLOQUE_SEU_CHAT_ID_AQUI")
 
-TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-CHAT_ID = os.getenv("CHAT_ID", "1056795017")
-
-# API recomendada para este cenário
-FOREXRATEAPI_KEY = os.getenv("FOREXRATEAPI_KEY", "3e28a2e0d178feb3eb5968d4f16a35d0")
-FOREXRATEAPI_URL = "https://api.forexrateapi.com/v1/latest"
+# Apenas 3 pares para reduzir carga e ficar mais estável
+ACTIVE_ASSETS = [
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD=X"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD=X"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY=X"},
+]
 
 TIMEFRAME_MINUTES = 1
-SIGNAL_INTERVAL = 120
+SIGNAL_INTERVAL = 75
 UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
-EVAL_GRACE_SECONDS = 20
-
-# Pequeno atraso extra para reduzir leitura antecipada da expiração
+EVAL_GRACE_SECONDS = 15
 EXTRA_EVAL_DELAY_SECONDS = 2
-
-# Tolerância para latência
-TOLERANCIA = 0.00015
-
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
-REPORT_AFTER_TRADES = 25
+REPORT_AFTER_TRADES = 15
+TOLERANCIA = 0.00015
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
+POLL_SECONDS = 75
+CACHE_SECONDS = 50
+BOOTSTRAP_LIMIT = 180
 
-MARKET_REFRESH_SECONDS = 10
-CANDLE_CACHE_MAXLEN = 300
-MIN_CANDLES_FOR_ANALYSIS = 5
+MODEL_FILE = "hedge_model.json"
 
+# ==========================
+# ESTADO
+# ==========================
 wins = 0
 losses = 0
 
@@ -47,87 +65,42 @@ operacoes_ativas = []
 setup_pendente = None
 last_signal_time = None
 last_trade_time = None
-
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
-
 last_universe_update = None
 adaptive_mode = "NORMAL"
 ultimo_trade_por_ativo = {}
-
 last_learning_report_time = None
 last_learning_report_trade_count = 0
 total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
 
-# ==========================
-# UNIVERSO FOREX
-# ==========================
-MARKET_CANDIDATES = [
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY"},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
-]
+# cache local por símbolo
+CANDLE_CACHE: dict[str, list[dict]] = {}
+CANDLE_CACHE_TIME: dict[str, float] = {}
+PRICE_CACHE: dict[str, tuple[float, float]] = {}
 
-ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
-
-performance = {
-    asset["id"]: {"win": 0, "loss": 0}
-    for asset in MARKET_CANDIDATES
-}
-
-# ==========================
-# CACHE LOCAL DE CANDLES
-# ==========================
-CANDLE_CACHE = {asset["id"]: deque(maxlen=CANDLE_CACHE_MAXLEN) for asset in MARKET_CANDIDATES}
-PRICE_CACHE = {}  # asset_id -> (price, ts)
-PAIR_STATE = {}   # asset_id -> {"last_close": float}
-
-# ==========================
-# APRENDIZADO
-# ==========================
-FEATURE_ORDER = [
-    "trend_strength",
-    "rsi_alignment",
-    "fib_confluence",
-    "volume_strength",
-    "atr_strength",
-    "slope_strength",
-    "regime_strength",
-    "momentum_strength",
-    "liquidity_strength",
-]
-
-DEFAULT_FEATURE_WEIGHTS = {
-    "trend_strength": 1.15,
-    "rsi_alignment": 1.00,
-    "fib_confluence": 1.10,
-    "volume_strength": 0.90,
-    "atr_strength": 0.85,
-    "slope_strength": 1.00,
-    "regime_strength": 0.95,
-    "momentum_strength": 0.75,
-    "liquidity_strength": 0.90,
-}
+performance = {asset["id"]: {"win": 0, "loss": 0} for asset in ACTIVE_ASSETS}
 
 learning_data = {
     "asset_stats": {},
     "hour_stats": {},
     "regime_stats": {},
-    "fib_stats": {},
-    "direction_stats": {},
     "pattern_stats": {},
 }
 
 model_state = {
-    "feature_weights": DEFAULT_FEATURE_WEIGHTS.copy(),
+    "feature_weights": {
+        "trend_strength": 1.15,
+        "rsi_alignment": 1.00,
+        "atr_strength": 0.90,
+        "pullback_strength": 1.00,
+        "momentum_strength": 0.85,
+        "wick_strength": 0.75,
+    },
     "bias": 0.0,
 }
-
-MODEL_FILE = "hedge_model.json"
 
 # ==========================
 # TEMPO
@@ -169,23 +142,17 @@ def safe_bucket(bucket_name):
 def comparar_resultado(preco_entrada, preco_saida, direcao):
     if preco_entrada is None or preco_saida is None:
         return None
-
     if direcao == "BUY":
         return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
     return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
 
-def parse_symbol(symbol: str):
-    return symbol[:3].upper(), symbol[3:].upper()
-
 # ==========================
-# MODELO / PERSISTÊNCIA
+# MODELO / APRENDIZADO
 # ==========================
 def carregar_modelo():
     global learning_data, model_state
-
     if not os.path.exists(MODEL_FILE):
         return
-
     try:
         with open(MODEL_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -217,10 +184,7 @@ def carregar_modelo():
 
 def salvar_modelo():
     try:
-        payload = {
-            "learning_data": learning_data,
-            "model_state": model_state,
-        }
+        payload = {"learning_data": learning_data, "model_state": model_state}
         with open(MODEL_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
     except Exception as e:
@@ -240,67 +204,45 @@ def _bump_bucket(bucket_name, key, win):
 def registrar_resultado_aprendizado(asset_id, win, meta=None):
     meta = meta or {}
     hour = str(br_now().hour)
-
     _bump_bucket("asset_stats", asset_id, win)
     _bump_bucket("hour_stats", hour, win)
     _bump_bucket("regime_stats", meta.get("regime"), win)
-    _bump_bucket("fib_stats", meta.get("fib_zone"), win)
-    _bump_bucket("direction_stats", meta.get("direction"), win)
     _bump_bucket("pattern_stats", meta.get("pattern"), win)
-
     salvar_modelo()
 
-def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85):
+def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.12, down=0.88):
     if not key:
         return 1.0
-
     data = learning_data.get(bucket_name, {}).get(key)
     if not data:
         return 1.0
-
     total = data["win"] + data["loss"]
     if total < min_total:
         return 1.0
-
-    winrate = data["win"] / total
-
-    if winrate > high:
+    wr = data["win"] / total
+    if wr > high:
         return up
-    if winrate < low:
+    if wr < low:
         return down
     return 1.0
 
 def learning_multiplier(asset_id):
-    return bucket_multiplier("asset_stats", asset_id, min_total=5, high=0.65, low=0.40, up=1.20, down=0.80)
+    return bucket_multiplier("asset_stats", asset_id, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85)
 
 def hour_multiplier():
-    return bucket_multiplier("hour_stats", str(br_now().hour), min_total=5, high=0.65, low=0.40, up=1.15, down=0.85)
+    return bucket_multiplier("hour_stats", str(br_now().hour), min_total=5, high=0.65, low=0.40, up=1.10, down=0.90)
 
 def regime_multiplier(regime):
-    return bucket_multiplier("regime_stats", regime, min_total=8, high=0.60, low=0.40, up=1.12, down=0.85)
-
-def fib_multiplier(fib_zone):
-    return bucket_multiplier("fib_stats", fib_zone, min_total=8, high=0.60, low=0.40, up=1.12, down=0.85)
-
-def direction_multiplier(direction):
-    return bucket_multiplier("direction_stats", direction, min_total=8, high=0.60, low=0.40, up=1.08, down=0.92)
+    return bucket_multiplier("regime_stats", regime, min_total=8, high=0.60, low=0.40, up=1.10, down=0.90)
 
 def pattern_multiplier(pattern):
-    return bucket_multiplier("pattern_stats", pattern, min_total=8, high=0.60, low=0.40, up=1.15, down=0.85)
-
-def session_multiplier():
-    hour = br_now().hour
-    if 1 <= hour <= 6:
-        return 0.85
-    if 8 <= hour <= 18:
-        return 1.10
-    return 1.0
+    return bucket_multiplier("pattern_stats", pattern, min_total=8, high=0.60, low=0.40, up=1.10, down=0.90)
 
 def online_update(features, win):
     target = 1.0 if win else 0.0
     pred = model_probability(features)
     error = target - pred
-    lr = 0.05
+    lr = 0.04
 
     for k, v in features.items():
         if k not in model_state["feature_weights"]:
@@ -312,14 +254,21 @@ def online_update(features, win):
     model_state["bias"] = clamp(model_state["bias"] + lr * error * 0.25, -2.5, 2.5)
     salvar_modelo()
 
+def atualizar_pesos(features, win):
+    online_update(features, win)
+
 # ==========================
 # TELEGRAM
 # ==========================
 def enviar(msg):
     try:
+        if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
+            log("Telegram não configurado.")
+            return
+
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {"chat_id": CHAT_ID, "text": msg}
-        r = requests.post(url, data=payload, timeout=10)
+        r = requests.post(url, data=payload, timeout=15)
         if r.status_code != 200:
             log(f"Erro Telegram: {r.status_code} | {r.text}")
     except Exception as e:
@@ -327,6 +276,8 @@ def enviar(msg):
 
 def remover_webhook():
     try:
+        if TOKEN == "COLOQUE_SEU_TOKEN_AQUI":
+            return
         url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
         requests.get(url, timeout=10)
     except Exception:
@@ -335,13 +286,16 @@ def remover_webhook():
 def verificar_comandos():
     global LAST_UPDATE_ID, BOT_ATIVO
 
+    if TOKEN == "COLOQUE_SEU_TOKEN_AQUI":
+        return
+
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
         params = {}
         if LAST_UPDATE_ID is not None:
             params["offset"] = LAST_UPDATE_ID + 1
 
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
 
         if "result" not in data:
@@ -349,7 +303,6 @@ def verificar_comandos():
 
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
-
             if "message" not in update:
                 continue
 
@@ -380,183 +333,103 @@ def verificar_comandos():
                     f"Modo: {adaptive_mode}\n"
                     f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
-
     except Exception as e:
         log(f"Erro comandos: {e}")
 
 # ==========================
-# FOREXRATEAPI
+# DADOS DE MERCADO (YAHOO / YFINANCE)
 # ==========================
-FX_BASES = ["AUD", "EUR", "GBP", "USD"]
-FX_QUOTES = sorted({"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "USD"})
+def _symbol_key(asset):
+    return asset["source"]
 
-LATEST_MATRIX = {}   # base -> rates dict
-LAST_MARKET_REFRESH = None
+def bootstrap_symbol_history(symbol, limit=BOOTSTRAP_LIMIT):
+    """
+    Busca candles 1m do Yahoo Finance via yfinance.
+    Para FX, os tickers vêm com sufixo =X (ex.: EURUSD=X).
+    """
+    t = yf.Ticker(symbol)
+    df = t.history(period="1d", interval="1m", auto_adjust=False, actions=False)
 
-def fetch_latest_rates_for_base(base):
-    if not FOREXRATEAPI_KEY:
-        raise RuntimeError("FOREXRATEAPI_KEY não configurada")
+    if df is None or df.empty:
+        raise RuntimeError(f"Sem dados para {symbol}")
 
-    currencies = [c for c in FX_QUOTES if c != base]
-    params = {
-        "api_key": FOREXRATEAPI_KEY,
-        "base": base,
-        "currencies": ",".join(currencies),
-    }
+    # remove linhas sem OHLC válidos
+    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    if df.empty:
+        raise RuntimeError(f"Sem candles válidos para {symbol}")
 
-    r = requests.get(FOREXRATEAPI_URL, params=params, timeout=15)
-    data = r.json()
+    candles = deque(maxlen=300)
+    for ts, row in df.tail(limit).iterrows():
+        if getattr(ts, "tzinfo", None) is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+        candles.append({
+            "time": ts.to_pydatetime(),
+            "open": float(row["Open"]),
+            "high": float(row["High"]),
+            "low": float(row["Low"]),
+            "close": float(row["Close"]),
+            "volume": float(row["Volume"]) if pd.notna(row["Volume"]) else 0.0,
+        })
+    return candles
 
-    if not isinstance(data, dict) or not data.get("success"):
-        raise RuntimeError(str(data))
+def init_market_data():
+    global CANDLE_CACHE, CANDLE_CACHE_TIME, PRICE_CACHE
+    for asset in ACTIVE_ASSETS:
+        symbol = _symbol_key(asset)
+        try:
+            candles = bootstrap_symbol_history(symbol)
+            CANDLE_CACHE[symbol] = list(candles)
+            CANDLE_CACHE_TIME[symbol] = time.time()
+            if candles:
+                PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
+            log(f"Bootstrap ok: {asset['label']} ({len(candles)} candles)")
+        except Exception as e:
+            log(f"Bootstrap falhou {asset['label']}: {e}")
+            CANDLE_CACHE[symbol] = []
 
-    rates = data.get("rates")
-    if not isinstance(rates, dict):
-        raise RuntimeError(str(data))
+def refresh_symbol_history(asset):
+    symbol = _symbol_key(asset)
+    now = time.time()
+    last_ts = CANDLE_CACHE_TIME.get(symbol, 0.0)
 
-    return rates
-
-def get_pair_rate(base, quote, matrix):
-    if base == quote:
-        return None
-
-    base = base.upper()
-    quote = quote.upper()
-
-    # Direto
-    if base in matrix and isinstance(matrix[base], dict):
-        if quote in matrix[base]:
-            try:
-                return float(matrix[base][quote])
-            except Exception:
-                pass
-
-    # Inverso
-    if quote in matrix and isinstance(matrix[quote], dict):
-        if base in matrix[quote]:
-            try:
-                inv = float(matrix[quote][base])
-                if inv != 0:
-                    return 1.0 / inv
-            except Exception:
-                pass
-
-    return None
-
-def update_local_candle(asset_id, price, now):
-    cache = CANDLE_CACHE.setdefault(asset_id, deque(maxlen=CANDLE_CACHE_MAXLEN))
-    state = PAIR_STATE.setdefault(asset_id, {})
-
-    prev_close = state.get("last_close")
-    if prev_close is None:
-        prev_close = price
-
-    candle = {
-        "time": now,
-        "open": float(prev_close),
-        "high": float(max(prev_close, price)),
-        "low": float(min(prev_close, price)),
-        "close": float(price),
-        "volume": 0.0,
-    }
-
-    cache.append(candle)
-    state["last_close"] = float(price)
-    PRICE_CACHE[asset_id] = (float(price), time.time())
-
-
-def seed_initial_candles(asset_id, price, now, count=MIN_CANDLES_FOR_ANALYSIS):
-    cache = CANDLE_CACHE.setdefault(asset_id, deque(maxlen=CANDLE_CACHE_MAXLEN))
-    state = PAIR_STATE.setdefault(asset_id, {})
-
-    if cache:
+    if now - last_ts < CACHE_SECONDS and symbol in CANDLE_CACHE:
         return
 
-    for i in range(count - 1, -1, -1):
-        ts = now - timedelta(seconds=MARKET_REFRESH_SECONDS * i)
-        cache.append({
-            "time": ts,
-            "open": float(price),
-            "high": float(price),
-            "low": float(price),
-            "close": float(price),
-            "volume": 0.0,
-        })
+    try:
+        candles = bootstrap_symbol_history(symbol)
+        CANDLE_CACHE[symbol] = list(candles)
+        CANDLE_CACHE_TIME[symbol] = now
+        if candles:
+            PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
+    except Exception as e:
+        log(f"Refresh falhou {asset['label']}: {e}")
 
-    state["last_close"] = float(price)
-    PRICE_CACHE[asset_id] = (float(price), time.time())
-
-def refresh_market_data():
-    global LATEST_MATRIX, LAST_MARKET_REFRESH
-
-    if not FOREXRATEAPI_KEY:
-        log("ERRO: defina FOREXRATEAPI_KEY nas variáveis de ambiente.")
-        return False
-
-    matrix = {}
-    any_ok = False
-
-    for base in FX_BASES:
-        try:
-            rates = fetch_latest_rates_for_base(base)
-            matrix[base] = rates
-            any_ok = True
-        except Exception as e:
-            log(f"ForexRateAPI falhou {base}: {e}")
-
-    if not any_ok:
-        return False
-
-    LATEST_MATRIX.update(matrix)
-    now = utc_now()
-
-    for asset in ACTIVE_ASSETS:
-        asset_id = asset["id"]
-        base, quote = parse_symbol(asset["source"])
-        price = get_pair_rate(base, quote, LATEST_MATRIX)
-        if price is None:
-            continue
-        seed_initial_candles(asset_id, price, now)
-        update_local_candle(asset_id, price, now)
-
-    LAST_MARKET_REFRESH = now
-    return True
-
-# ==========================
-# INDICADORES
-# ==========================
 def get_candles(asset, limit=150):
-    data = CANDLE_CACHE.get(asset["id"])
+    symbol = _symbol_key(asset)
+    refresh_symbol_history(asset)
+    data = CANDLE_CACHE.get(symbol, [])
     if not data:
         return None
-    candles = list(data)[-limit:]
-    return candles if candles else None
+    return data[-limit:] if len(data) > limit else list(data)
 
 def get_price(asset):
-    cached = PRICE_CACHE.get(asset["id"])
-    if cached:
+    symbol = _symbol_key(asset)
+    cached = PRICE_CACHE.get(symbol)
+    if cached and (time.time() - cached[1] < CACHE_SECONDS):
         return float(cached[0])
 
     candles = get_candles(asset, limit=2)
     if candles:
-        return float(candles[-1]["close"])
-
+        price = float(candles[-1]["close"])
+        PRICE_CACHE[symbol] = (price, time.time())
+        return price
     return None
 
-def avaliar_por_vela(asset, direcao):
-    candles = get_candles(asset, limit=3)
-    if not candles or len(candles) < 2:
-        return None
-
-    candle = candles[-2]  # última vela FECHADA
-    entrada = candle["open"]
-    saida = candle["close"]
-
-    if direcao == "BUY":
-        return saida > entrada
-    else:
-        return saida < entrada
-
+# ==========================
+# INDICADORES
+# ==========================
 def ema_last(prices, period):
     if len(prices) < period:
         return None
@@ -569,7 +442,6 @@ def ema_last(prices, period):
 def rsi_last(prices, period=14):
     if len(prices) < period + 1:
         return None
-
     gains = 0.0
     losses = 0.0
 
@@ -583,35 +455,36 @@ def rsi_last(prices, period=14):
     avg_gain = gains / period
     avg_loss = losses / period
 
-    if len(prices) > period + 1:
-        for i in range(period + 1, len(prices)):
-            diff = prices[i] - prices[i - 1]
-            gain = max(diff, 0)
-            loss = abs(min(diff, 0))
-            avg_gain = (avg_gain * (period - 1) + gain) / period
-            avg_loss = (avg_loss * (period - 1) + loss) / period
+    for i in range(period + 1, len(prices)):
+        diff = prices[i] - prices[i - 1]
+        gain = max(diff, 0)
+        loss = abs(min(diff, 0))
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
 
     if avg_loss == 0:
         return 100.0
-
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def atr_like(closes, period=14):
-    if len(closes) < period + 1:
+def atr_like(candles, period=14):
+    if len(candles) < period + 1:
         return None
 
-    vals = []
-    start = max(1, len(closes) - period)
-    for i in range(start, len(closes)):
-        vals.append(abs(closes[i] - closes[i - 1]))
+    trs = []
+    for i in range(1, len(candles)):
+        high = candles[i]["high"]
+        low = candles[i]["low"]
+        prev_close = candles[i - 1]["close"]
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
 
-    if not vals:
+    if len(trs) < period:
         return None
 
-    return sum(vals) / len(vals)
+    return sum(trs[-period:]) / period
 
-def average_volume(candles, window=20):
+def volume_strength(candles, window=20):
     if len(candles) < window + 1:
         return None
     vols = [c["volume"] for c in candles]
@@ -621,28 +494,26 @@ def average_volume(candles, window=20):
     return vols[-1] / avg
 
 # ==========================
-# CONTEXTO / FIBONACCI
+# CONTEXTO
 # ==========================
-def market_regime(closes):
-    if len(closes) < MIN_CANDLES_FOR_ANALYSIS:
+def market_regime(candles):
+    closes = [c["close"] for c in candles]
+    if len(closes) < 60:
         return "UNKNOWN"
 
-    ema2 = ema_last(closes, 2)
-    ema3 = ema_last(closes, 3)
-    ema5 = ema_last(closes, 5)
-
-    if ema2 is None or ema3 is None or ema5 is None:
+    e9 = ema_last(closes, 9)
+    e21 = ema_last(closes, 21)
+    e50 = ema_last(closes, 50)
+    if e9 is None or e21 is None or e50 is None:
         return "UNKNOWN"
 
-    trend_strength = abs(ema3 - ema5) / closes[-1]
-    slope = abs(ema2 - ema_last(closes[:-1], 2)) / closes[-1] if len(closes) > 3 else 0
+    trend_strength = abs(e21 - e50) / closes[-1]
+    slope = abs(e9 - ema_last(closes[:-3], 9)) / closes[-1] if len(closes) > 20 else 0.0
 
-    if trend_strength < 0.00010:
+    if trend_strength < 0.0010:
         return "RANGE"
-
-    if slope < 0.00005:
+    if slope < 0.00025:
         return "CHOP"
-
     return "TREND"
 
 def liquidity_sweep(candles):
@@ -655,10 +526,8 @@ def liquidity_sweep(candles):
 
     if last["high"] > prev_high and last["close"] < prev_high:
         return True
-
     if last["low"] < prev_low and last["close"] > prev_low:
         return True
-
     return False
 
 def identificar_padrao(meta):
@@ -667,29 +536,24 @@ def identificar_padrao(meta):
     trend_pct = meta.get("trend_pct", 0.0)
     last_move = meta.get("last_move", 0.0)
 
-    if last_move > 0.0008 and regime == "TREND":
-        return "breakout_fib_extension"
-
-    if fib_zone in ("0.236", "near_0.236"):
-        return "fib_23_pullback"
-
+    if last_move > 0.0025 and regime == "TREND":
+        return "breakout"
     if fib_zone in ("0.382", "near_0.382"):
-        return "fib_38_pullback"
-
+        return "fib_38"
     if fib_zone in ("0.500", "near_0.500"):
-        return "fib_50_reversal"
-
+        return "fib_50"
+    if fib_zone in ("0.618", "near_0.618"):
+        return "fib_62"
     if regime == "TREND" and trend_pct > 0.0008:
         return "trend_continuation"
-
-    return "trend_continuation" if regime == "TREND" else "fib_50_reversal"
+    return "range_reversal" if regime != "TREND" else "trend_continuation"
 
 def fib_analysis(candles, direction):
     closes = [c["close"] for c in candles]
-    if len(closes) < 5:
+    if len(closes) < 20:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
 
-    window = candles[-12:] if len(candles) > 12 else candles[:]
+    window = candles[-48:] if len(candles) > 48 else candles[:]
     swing_high = max(c["high"] for c in window)
     swing_low = min(c["low"] for c in window)
 
@@ -719,7 +583,6 @@ def fib_analysis(candles, direction):
     preferred = ["0.382", "0.500", "0.618"]
     best_zone = None
     best_dist = 999.0
-
     for zone in preferred:
         dist = abs(price - levels[zone]) / price
         if dist < best_dist:
@@ -744,19 +607,6 @@ def fib_analysis(candles, direction):
         "levels": levels,
     }
 
-def asset_multiplier(asset_id):
-    data = performance.get(asset_id, {"win": 1, "loss": 1})
-    total = data["win"] + data["loss"]
-    if total < 10:
-        return 1.0
-
-    winrate = data["win"] / total
-    if winrate > 0.65:
-        return 1.15
-    if winrate < 0.40:
-        return 0.85
-    return 1.0
-
 def em_cooldown(asset_id):
     if asset_id not in ultimo_trade_por_ativo:
         return False
@@ -771,7 +621,6 @@ def update_mode():
         return
 
     idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
-
     if idle_minutes > 90:
         adaptive_mode = "AGRESSIVO"
     elif idle_minutes > 45:
@@ -789,25 +638,18 @@ def score_from_learning(meta):
     asset_id = meta.get("asset_id")
     regime = meta.get("regime")
     fib_zone = meta.get("fib_zone")
-    direction = meta.get("direction")
     pattern = meta.get("pattern")
 
     mult = 1.0
     mult *= learning_multiplier(asset_id)
     mult *= hour_multiplier()
     mult *= regime_multiplier(regime)
-    mult *= fib_multiplier(fib_zone)
-    mult *= direction_multiplier(direction)
     mult *= pattern_multiplier(pattern)
-    mult *= session_multiplier()
     return mult
 
 # ==========================
 # IA / SCORE
 # ==========================
-def vector_from_features(features):
-    return [float(features[k]) for k in FEATURE_ORDER]
-
 def model_probability(features):
     weights = model_state["feature_weights"]
     total_w = 0.0
@@ -825,100 +667,73 @@ def model_probability(features):
     logit = (avg - 0.5) * 8.0 + model_state["bias"]
     return sigmoid(logit)
 
-def atualizar_pesos(features, win):
-    online_update(features, win)
-
 # ==========================
-# ANÁLISE INTELIGENTE
+# ANÁLISE
 # ==========================
 def analisar_ativo(asset, candles):
-    if not candles or len(candles) < MIN_CANDLES_FOR_ANALYSIS:
+    if not candles or len(candles) < 50:
         return None
 
     closes = [c["close"] for c in candles]
     price = closes[-1]
 
-    e2 = ema_last(closes, 2)
-    e3 = ema_last(closes, 3)
-    e5 = ema_last(closes, 5)
-    rsi = rsi_last(closes, 3)
-    atr_val = atr_like(closes, 3)
-    vol_ratio = average_volume(candles, 3)
+    e9 = ema_last(closes, 9)
+    e21 = ema_last(closes, 21)
+    rsi = rsi_last(closes, 14)
+    atr_val = atr_like(candles, 14)
+    vol_ratio = volume_strength(candles, 20)
 
-    if e2 is None or e3 is None or e5 is None or rsi is None or atr_val is None:
+    if e9 is None or e21 is None or rsi is None or atr_val is None:
         return None
 
-    regime = market_regime(closes)
-    direction = "BUY" if e2 > e3 else "SELL"
+    regime = market_regime(candles)
+    direction = "BUY" if e9 > e21 else "SELL"
     fib_ctx = fib_analysis(candles, direction)
 
-    trend_pct = abs(e2 - e3) / price
-    ema_slope = abs(e2 - ema_last(closes[:-1], 2)) / price if len(closes) > 3 else 0.0
+    trend_pct = abs(e9 - e21) / price
     last_move = abs(closes[-1] - closes[-2]) / closes[-2]
     atr_norm = atr_val / price
     vol_ratio = vol_ratio if vol_ratio is not None else 1.0
 
+    # pullback simples
     if direction == "BUY":
+        pullback_strength = 1.0 if candles[-2]["close"] < candles[-2]["open"] and candles[-1]["close"] > candles[-1]["open"] else 0.45
         rsi_alignment = clamp((rsi - 45) / 25, 0.0, 1.0)
     else:
+        pullback_strength = 1.0 if candles[-2]["close"] > candles[-2]["open"] and candles[-1]["close"] < candles[-1]["open"] else 0.45
         rsi_alignment = clamp((55 - rsi) / 25, 0.0, 1.0)
 
-    trend_strength = clamp(trend_pct / 0.00030, 0.0, 1.0)
-    atr_strength = clamp(atr_norm / 0.00020, 0.0, 1.0)
-    slope_strength = clamp(ema_slope / 0.00020, 0.0, 1.0)
-    volume_strength = clamp((vol_ratio - 0.80) / 0.50, 0.0, 1.0)
-    regime_strength = {
-        "TREND": 1.00,
-        "RANGE": 0.65,
-        "CHOP": 0.45,
-        "UNKNOWN": 0.30,
-    }.get(regime, 0.50)
+    trend_strength = clamp(trend_pct / 0.0010, 0.0, 1.0)
+    atr_strength = clamp(atr_norm / 0.00060, 0.0, 1.0)
     momentum_strength = clamp(last_move / 0.0015, 0.0, 1.0)
+    wick_strength = 0.35 if liquidity_sweep(candles) else 1.0
     fib_confluence = fib_ctx["fib_score"]
-    liquidity_strength = 0.35 if liquidity_sweep(candles) else 1.0
-
-    pattern = identificar_padrao({
-        "regime": regime,
-        "fib_zone": fib_ctx["fib_zone"],
-        "trend_pct": trend_pct,
-        "last_move": last_move,
-        "direction": direction,
-    })
 
     features = {
         "trend_strength": trend_strength,
         "rsi_alignment": rsi_alignment,
-        "fib_confluence": fib_confluence,
-        "volume_strength": volume_strength,
         "atr_strength": atr_strength,
-        "slope_strength": slope_strength,
-        "regime_strength": regime_strength,
+        "pullback_strength": pullback_strength,
         "momentum_strength": momentum_strength,
-        "liquidity_strength": liquidity_strength,
+        "wick_strength": wick_strength,
     }
 
     rule_score = (
-        0.28 * trend_strength +
-        0.20 * rsi_alignment +
-        0.18 * fib_confluence +
-        0.10 * volume_strength +
-        0.10 * atr_strength +
-        0.08 * slope_strength +
-        0.06 * regime_strength +
-        0.05 * momentum_strength +
-        0.05 * liquidity_strength
+        0.30 * trend_strength +
+        0.22 * pullback_strength +
+        0.16 * rsi_alignment +
+        0.14 * atr_strength +
+        0.10 * momentum_strength +
+        0.08 * wick_strength
     )
 
     model_prob = model_probability(features)
-    combined = (0.62 * rule_score) + (0.38 * model_prob)
-
-    combined *= asset_multiplier(asset["id"])
+    combined = (0.72 * rule_score) + (0.28 * model_prob)
     combined *= score_from_learning({
         "asset_id": asset["id"],
         "regime": regime,
         "fib_zone": fib_ctx["fib_zone"],
-        "direction": direction,
-        "pattern": pattern,
+        "pattern": identificar_padrao({"regime": regime, "fib_zone": fib_ctx["fib_zone"], "trend_pct": trend_pct, "last_move": last_move}),
     })
 
     if liquidity_sweep(candles):
@@ -934,14 +749,12 @@ def analisar_ativo(asset, candles):
         "trend_pct": trend_pct,
         "rsi": rsi,
         "atr_norm": atr_norm,
-        "ema_slope": ema_slope,
-        "volume_ratio": vol_ratio,
         "last_move": last_move,
         "features": features,
         "rule_score": rule_score,
         "model_prob": model_prob,
         "combined": combined,
-        "pattern": pattern,
+        "pattern": identificar_padrao({"regime": regime, "fib_zone": fib_ctx["fib_zone"], "trend_pct": trend_pct, "last_move": last_move}),
     }
 
     return {
@@ -952,7 +765,7 @@ def analisar_ativo(asset, candles):
     }
 
 # ==========================
-# RESULTADOS / HISTÓRICO
+# HISTÓRICO / RESULTADOS
 # ==========================
 def register_trade_history(asset_id, win, stage, meta):
     global total_closed_trades
@@ -1011,12 +824,11 @@ def maybe_send_learning_report(force=False):
             lines.append(f"- {key}: {wr:.1f}% ({t})")
         lines.append("")
 
-    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
     add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
     add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
     add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
     add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
-    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
+    add_section("Melhores padrões", bucket_rank("pattern_stats", True, limit=5))
 
     lines.append("Pesos atuais:")
     for k, v in model_state["feature_weights"].items():
@@ -1026,7 +838,6 @@ def maybe_send_learning_report(force=False):
     lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
     enviar("\n".join(lines))
-
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
 
@@ -1036,7 +847,6 @@ def report_learning_to_telegram(force=False):
 def enviar_resultado(asset_label, resultado):
     total = wins + losses
     taxa = (wins / total) * 100 if total > 0 else 0
-
     enviar(
         "🏆 RESULTADO\n\n"
         f"🌎 {asset_label}\n"
@@ -1050,6 +860,17 @@ def enviar_resultado(asset_label, resultado):
 # ==========================
 # VERIFICAR RESULTADOS
 # ==========================
+def avaliar_por_vela(asset, direcao):
+    candles = get_candles(asset, limit=3)
+    if not candles or len(candles) < 2:
+        return None
+    candle = candles[-2]  # última vela fechada
+    entrada = candle["open"]
+    saida = candle["close"]
+    if direcao == "BUY":
+        return saida > entrada
+    return saida < entrada
+
 def verificar_resultados():
     global wins, losses
 
@@ -1065,14 +886,12 @@ def verificar_resultados():
 
         delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
 
-        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
-
             if win is None:
                 novas_operacoes.append(op)
                 continue
@@ -1092,14 +911,12 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
-
             if win is None:
                 novas_operacoes.append(op)
                 continue
@@ -1119,14 +936,12 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
-
             if win is None:
                 novas_operacoes.append(op)
                 continue
@@ -1153,7 +968,7 @@ def verificar_resultados():
     operacoes_ativas.extend(novas_operacoes)
 
 # ==========================
-# ESCOLHA INTELIGENTE
+# SELEÇÃO
 # ==========================
 def escolher_melhor_ativo():
     update_mode()
@@ -1169,17 +984,17 @@ def escolher_melhor_ativo():
     fallback_meta = None
 
     if adaptive_mode == "CONSERVADOR":
-        min_trend = 0.00015
-        min_atr = 0.00008
-        min_combined = 0.48
+        min_trend = 0.0009
+        min_atr = 0.00045
+        min_combined = 0.60
     elif adaptive_mode == "NORMAL":
-        min_trend = 0.00010
-        min_atr = 0.00005
-        min_combined = 0.44
+        min_trend = 0.00065
+        min_atr = 0.00035
+        min_combined = 0.55
     else:
-        min_trend = 0.00006
-        min_atr = 0.00003
-        min_combined = 0.40
+        min_trend = 0.00045
+        min_atr = 0.00025
+        min_combined = 0.50
 
     log(f"MODO: {adaptive_mode}")
 
@@ -1198,7 +1013,7 @@ def escolher_melhor_ativo():
             continue
 
         candles = get_candles(asset)
-        if not candles or len(candles) < MIN_CANDLES_FOR_ANALYSIS:
+        if not candles or len(candles) < 50:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT (sem candles)")
             continue
@@ -1216,7 +1031,6 @@ def escolher_melhor_ativo():
         trend_pct = meta["trend_pct"]
         atr_norm = meta["atr_norm"]
         regime = meta["regime"]
-        rsi = meta["rsi"]
         fib_zone = meta["fib_zone"]
         model_prob = meta["model_prob"]
         rule_score = meta["rule_score"]
@@ -1228,10 +1042,8 @@ def escolher_melhor_ativo():
             fallback_meta = meta
 
         reasons = []
-
         if trend_pct < min_trend:
             reasons.append(f"TREND {trend_pct:.6f}")
-
         if atr_norm < min_atr:
             reasons.append(f"ATR {atr_norm:.6f}")
 
@@ -1243,7 +1055,7 @@ def escolher_melhor_ativo():
         if DEBUG_REJEICOES:
             log(
                 f"{asset_label} -> OK score={score:.3f} "
-                f"regime={regime} fib={fib_zone} rsi={rsi:.2f} "
+                f"regime={regime} fib={fib_zone} "
                 f"p={model_prob:.2f} rule={rule_score:.2f}"
             )
 
@@ -1271,7 +1083,7 @@ def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
     agora_utc = utc_now()
-    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=2)
+    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=1)
 
     setup_pendente = {
         "asset": asset,
@@ -1290,14 +1102,11 @@ def criar_sinal(asset, direcao, score, meta):
         f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
         f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
         f"📈 Força: {score:.3f}\n"
-        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
-        f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
+        f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}\n"
+        f"🧠 Padrão: {setup_pendente['meta'].get('pattern', 'unknown')}"
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
-# ==========================
-# SETUP
-# ==========================
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1349,35 +1158,22 @@ def processar_setup_pendente():
         setup_pendente = None
 
 # ==========================
-# UNIVERSO / LOOP DE MERCADO
-# ==========================
-def update_active_symbols():
-    global last_universe_update
-    ACTIVE_ASSETS[:] = MARKET_CANDIDATES.copy()
-    last_universe_update = utc_now()
-    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
-
-# ==========================
-# MAIN LOOP
+# MAIN
 # ==========================
 def main():
     global last_signal_time, last_universe_update
 
     if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
-        log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente.")
+        log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
         return
 
-    if not FOREXRATEAPI_KEY:
-        log("ERRO: configure FOREXRATEAPI_KEY nas variáveis de ambiente.")
-        return
-
-    remover_webhook()
     carregar_modelo()
+    remover_webhook()
     log("BOT INICIANDO...")
 
-    # Primeira leitura de mercado
-    refresh_market_data()
+    init_market_data()
     log("Mercado inicial carregado.")
+
     enviar("🤖 BOT INICIADO COM SUCESSO")
 
     while True:
@@ -1386,11 +1182,8 @@ def main():
 
             if BOT_ATIVO:
                 if last_universe_update is None or (utc_now() - last_universe_update).total_seconds() > UNIVERSE_REFRESH:
-                    update_active_symbols()
-
-                # Atualiza candles em intervalos curtos para formar histórico mais rápido
-                if LAST_MARKET_REFRESH is None or (utc_now() - LAST_MARKET_REFRESH).total_seconds() >= MARKET_REFRESH_SECONDS:
-                    refresh_market_data()
+                    last_universe_update = utc_now()
+                    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
 
                 processar_setup_pendente()
                 verificar_resultados()
@@ -1405,7 +1198,7 @@ def main():
 
                 maybe_send_learning_report()
 
-            time.sleep(15)
+            time.sleep(POLL_SECONDS)
 
         except Exception as e:
             log(f"Erro geral: {e}")
