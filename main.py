@@ -36,9 +36,9 @@ REPORT_AFTER_TRADES = 25
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
 
-MARKET_REFRESH_SECONDS = 60
+MARKET_REFRESH_SECONDS = 30
 CANDLE_CACHE_MAXLEN = 300
-MIN_CANDLES_FOR_ANALYSIS = 21
+MIN_CANDLES_FOR_ANALYSIS = 8
 
 wins = 0
 losses = 0
@@ -65,23 +65,11 @@ trade_history = deque(maxlen=500)
 # UNIVERSO FOREX
 # ==========================
 MARKET_CANDIDATES = [
-    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD"},
-    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF"},
-    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY"},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD"},
-    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD"},
-    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD"},
-    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP"},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
     {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD"},
-    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD"},
-    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD"},
-    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF"},
-    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY"},
     {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
-    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF"},
     {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
 ]
 
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
@@ -616,15 +604,15 @@ def market_regime(closes):
     if len(closes) < MIN_CANDLES_FOR_ANALYSIS:
         return "UNKNOWN"
 
+    ema3 = ema_last(closes, 3)
     ema5 = ema_last(closes, 5)
-    ema13 = ema_last(closes, 13)
-    ema21 = ema_last(closes, 21)
+    ema8 = ema_last(closes, 8)
 
-    if ema5 is None or ema13 is None or ema21 is None:
+    if ema3 is None or ema5 is None or ema8 is None:
         return "UNKNOWN"
 
-    trend_strength = abs(ema13 - ema21) / closes[-1]
-    slope = abs(ema5 - ema_last(closes[:-3], 5)) / closes[-1] if len(closes) > 8 else 0
+    trend_strength = abs(ema5 - ema8) / closes[-1]
+    slope = abs(ema3 - ema_last(closes[:-2], 3)) / closes[-1] if len(closes) > 5 else 0
 
     if trend_strength < 0.0010:
         return "RANGE"
@@ -1377,7 +1365,7 @@ def main():
                 if last_universe_update is None or (utc_now() - last_universe_update).total_seconds() > UNIVERSE_REFRESH:
                     update_active_symbols()
 
-                # Atualiza candles 1x por minuto
+                # Atualiza candles em intervalos curtos para formar histórico mais rápido
                 if LAST_MARKET_REFRESH is None or (utc_now() - LAST_MARKET_REFRESH).total_seconds() >= MARKET_REFRESH_SECONDS:
                     refresh_market_data()
 
