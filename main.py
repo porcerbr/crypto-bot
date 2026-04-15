@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ==========================
 
-TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "SUA_API_KEY_AQUI")
+TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "59f633d02fdf48b4bbd66713cf3d6a81")
 
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
@@ -68,23 +68,23 @@ otc_state = {
 # ==========================
 
 MARKET_CANDIDATES = [
-    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD", "otc": True},
-    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF", "otc": True},
-    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY", "otc": True},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD", "otc": True},
-    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD", "otc": True},
-    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD", "otc": True},
-    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP", "otc": True},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY", "otc": True},
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD", "otc": True},
-    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD", "otc": True},
-    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD", "otc": True},
-    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF", "otc": True},
-    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY", "otc": True},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD", "otc": True},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD", "otc": True},
-    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF", "otc": True},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY", "otc": True},
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUD/CAD"},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUD/CHF"},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUD/JPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EUR/AUD"},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EUR/CAD"},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EUR/GBP"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EUR/JPY"},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBP/AUD"},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBP/CAD"},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBP/CHF"},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBP/JPY"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USD/CHF"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
 ]
 
 performance = {
@@ -862,58 +862,50 @@ def analisar_ativo(asset, candles):
 # ==========================
 # UNIVERSO DINÂMICO
 # ==========================
-def get_market_symbols():
-    return MARKET_CANDIDATES[:]
 
-def asset_quality_score(asset):
-    candles = get_candles(asset)
-    if not candles:
-        return 0.0
+def get_candles(asset, limit=150):
+    try:
+        symbol = asset["source"]
 
-    analysis = analisar_ativo(asset, candles)
-    if not analysis:
-        return 0.0
+        url = "https://api.twelvedata.com/time_series"
 
-    return analysis["score"]
+        params = {
+            "symbol": symbol,
+            "interval": "1min",
+            "outputsize": limit,
+            "apikey": TWELVE_API_KEY
+        }
 
-def update_active_symbols():
-    global ACTIVE_ASSETS, last_universe_update
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
 
-    log("ATUALIZANDO UNIVERSO...")
+        if "values" not in data:
+            log(f"Resposta inválida candles {asset['id']}: {data}")
+            return None
 
-    market = get_market_symbols()
-    scored = []
+        candles = []
 
-    for asset in market:
-        try:
-            score = asset_quality_score(asset)
-            scored.append((asset, score))
-            log(f"{asset['label']} SCORE {score:.2f}")
-        except Exception as e:
-            log(f"Erro scoring {asset['label']}: {e}")
+        for row in reversed(data["values"]):
 
-    if not scored:
-        ACTIVE_ASSETS = [
-            {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
-            {"id": "ETH_OTC", "label": "Ethereum (OTC)", "source": "ETHUSDT", "otc": True},
-        ]
-        last_universe_update = utc_now()
-        log("Fallback universo OTC BCH/ETH")
-        return
+            open_dt = datetime.strptime(
+                row["datetime"],
+                "%Y-%m-%d %H:%M:%S"
+            ).replace(tzinfo=timezone.utc)
 
-    scored.sort(key=lambda x: x[1], reverse=True)
-    top = [s[0] for s in scored[:8]]
+            candles.append({
+                "time": open_dt,
+                "open": float(row["open"]),
+                "close": float(row["close"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "volume": float(row.get("volume", 0))
+            })
 
-    if len(top) < 3:
-        top = [
-            {"id": "BCH_OTC", "label": "Bitcoin Cash (OTC)", "source": "BCHUSDT", "otc": True},
-            {"id": "BNB_OTC", "label": "BNB (OTC)", "source": "BNBUSDT", "otc": True},
-            {"id": "BTC_OTC", "label": "Bitcoin (OTC)", "source": "BTCUSDT", "otc": True},
-        ]
+        return candles
 
-    ACTIVE_ASSETS = top
-    last_universe_update = utc_now()
-    log(f"NOVO UNIVERSO: {[a['label'] for a in ACTIVE_ASSETS]}")
+    except Exception as e:
+        log(f"Erro candles {asset['id']}: {e}")
+        return None
 
 # ==========================
 # RESULTADOS / HISTÓRICO
