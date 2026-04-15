@@ -777,21 +777,26 @@ def analisar_ativo(asset, candles):
         "liquidity_strength": liquidity_strength,
     }
 
-    rule_score = (
-        0.28 * trend_strength +
-        0.20 * rsi_alignment +
-        0.18 * fib_confluence +
-        0.10 * volume_strength +
-        0.10 * atr_strength +
-        0.08 * slope_strength +
-        0.06 * regime_strength +
-        0.05 * momentum_strength +
-        0.05 * liquidity_strength
-    )
+    trend_up = e9 > e21
+    trend_down = e9 < e21
+
+    # pullback simples
+    pullback_buy = closes[-2] < closes[-3] and closes[-1] > closes[-2]
+    pullback_sell = closes[-2] > closes[-3] and closes[-1] < closes[-2]
+
+    atr_ok = atr_val > 0  # depois você melhora esse filtro
+
+    rule_score = 0.0
+
+    if direction == "BUY" and trend_up and pullback_buy and atr_ok:
+        rule_score = 1.0
+
+    if direction == "SELL" and trend_down and pullback_sell and atr_ok:
+        rule_score = 1.0
 
     model_prob = model_probability(features)
-    combined = (0.62 * rule_score) + (0.38 * model_prob)
 
+    combined = (0.8 * rule_score) + (0.2 * model_prob)
     combined *= asset_multiplier(asset["id"])
     combined *= score_from_learning({
         "asset_id": asset["id"],
@@ -1159,7 +1164,6 @@ def escolher_melhor_ativo():
         regime = meta["regime"]
         rsi = meta["rsi"]
         last_move = meta["last_move"]
-        fib_zone = meta["fib_zone"]
         model_prob = meta["model_prob"]
         rule_score = meta["rule_score"]
 
@@ -1171,27 +1175,12 @@ def escolher_melhor_ativo():
 
         reasons = []
 
-        if not allow_chop and regime != "TREND":
-            reasons.append(f"REGIME {regime}")
+        quality_score = trend_pct * atr_norm
 
-        if trend_pct < min_trend:
-            reasons.append(f"TREND {trend_pct:.6f}")
-
-        if atr_norm < min_atr:
-            reasons.append(f"ATR {atr_norm:.6f}")
-
-        if vol_ratio < min_vol:
-            reasons.append(f"VOLUME {vol_ratio:.2f}")
-
-        if last_move > max_move:
-            reasons.append("MOVE SPIKE")
-
-        if not ((direction == "BUY" and rsi >= rsi_buy) or (direction == "SELL" and rsi <= rsi_sell)):
-            reasons.append("DIR/RSI")
-
-        if score < min_combined:
-            reasons.append(f"SCORE {score:.3f}")
-
+        if quality_score < min_quality:
+            continue
+        
+        
         if reasons:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT ({', '.join(reasons)}) | score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}")
