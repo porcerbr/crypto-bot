@@ -1,63 +1,41 @@
 # -*- coding: utf-8 -*-
-"""
-Bot Forex para Railway usando Yahoo Finance via yfinance.
-
-Fonte de dados:
-- yfinance é um wrapper open-source para as APIs públicas do Yahoo Finance,
-  com suporte a mercados de câmbio (currencies) e intervalos de 1m.
-- É indicado para uso pessoal / pesquisa.
-
-Observação importante:
-- Os dados de mercado de fontes públicas podem sofrer atraso, limite de uso
-  ou mudanças no provedor. O bot abaixo foi escrito para ser robusto, com cache,
-  retries e fallback no próprio histórico local.
-"""
-
 import os
 import time
 import json
 import math
+import requests
 from collections import deque
 from datetime import datetime, timedelta, timezone
-
-import requests
-import pandas as pd
-import yfinance as yf
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
+
+TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "59f633d02fdf48b4bbd66713cf3d6a81")
+
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
-# Apenas 3 pares para reduzir carga e ficar mais estável
-ACTIVE_ASSETS = [
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD=X"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD=X"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY=X"},
-]
-
 TIMEFRAME_MINUTES = 1
-SIGNAL_INTERVAL = 75
+CANDLE_TYPE = "1min"
+
+SIGNAL_INTERVAL = 120
 UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
-EVAL_GRACE_SECONDS = 15
+EVAL_GRACE_SECONDS = 20
+
+# Pequeno atraso extra para reduzir leitura antecipada da expiração
 EXTRA_EVAL_DELAY_SECONDS = 2
-REPORT_INTERVAL_SECONDS = 6 * 60 * 60
-REPORT_AFTER_TRADES = 15
+
+# Tolerância para latência
 TOLERANCIA = 0.00015
+
+REPORT_INTERVAL_SECONDS = 6 * 60 * 60
+REPORT_AFTER_TRADES = 25
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
-POLL_SECONDS = 75
-CACHE_SECONDS = 50
-BOOTSTRAP_LIMIT = 180
 
-MODEL_FILE = "hedge_model.json"
-
-# ==========================
-# ESTADO
-# ==========================
 wins = 0
 losses = 0
 
@@ -65,42 +43,99 @@ operacoes_ativas = []
 setup_pendente = None
 last_signal_time = None
 last_trade_time = None
+
 LAST_UPDATE_ID = None
 BOT_ATIVO = False
+
 last_universe_update = None
 adaptive_mode = "NORMAL"
 ultimo_trade_por_ativo = {}
+
 last_learning_report_time = None
 last_learning_report_trade_count = 0
 total_closed_trades = 0
 
 trade_history = deque(maxlen=500)
 
-# cache local por símbolo
-CANDLE_CACHE: dict[str, list[dict]] = {}
-CANDLE_CACHE_TIME: dict[str, float] = {}
-PRICE_CACHE: dict[str, tuple[float, float]] = {}
+# ==========================
+# UNIVERSO OTC / FOREX
+# ==========================
 
-performance = {asset["id"]: {"win": 0, "loss": 0} for asset in ACTIVE_ASSETS}
+MARKET_CANDIDATES = [
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUD/CAD"},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUD/CHF"},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUD/JPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EUR/AUD"},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EUR/CAD"},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EUR/GBP"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EUR/JPY"},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBP/AUD"},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBP/CAD"},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBP/CHF"},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBP/JPY"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USD/CHF"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
+]
+
+ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
+
+performance = {
+    asset["id"]: {"win": 0, "loss": 0}
+    for asset in MARKET_CANDIDATES
+}
+
+def update_active_symbols():
+    global ACTIVE_ASSETS, last_universe_update
+    ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
+    last_universe_update = utc_now()
+    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
+
+# ==========================
+# APRENDIZADO
+# ==========================
+FEATURE_ORDER = [
+    "trend_strength",
+    "rsi_alignment",
+    "fib_confluence",
+    "volume_strength",
+    "atr_strength",
+    "slope_strength",
+    "regime_strength",
+    "momentum_strength",
+    "liquidity_strength",
+]
+
+DEFAULT_FEATURE_WEIGHTS = {
+    "trend_strength": 1.15,
+    "rsi_alignment": 1.00,
+    "fib_confluence": 1.10,
+    "volume_strength": 0.90,
+    "atr_strength": 0.85,
+    "slope_strength": 1.00,
+    "regime_strength": 0.95,
+    "momentum_strength": 0.75,
+    "liquidity_strength": 0.90,
+}
 
 learning_data = {
     "asset_stats": {},
     "hour_stats": {},
     "regime_stats": {},
+    "fib_stats": {},
+    "direction_stats": {},
     "pattern_stats": {},
 }
 
 model_state = {
-    "feature_weights": {
-        "trend_strength": 1.15,
-        "rsi_alignment": 1.00,
-        "atr_strength": 0.90,
-        "pullback_strength": 1.00,
-        "momentum_strength": 0.85,
-        "wick_strength": 0.75,
-    },
+    "feature_weights": DEFAULT_FEATURE_WEIGHTS.copy(),
     "bias": 0.0,
 }
+
+MODEL_FILE = "hedge_model.json"
 
 # ==========================
 # TEMPO
@@ -142,17 +177,20 @@ def safe_bucket(bucket_name):
 def comparar_resultado(preco_entrada, preco_saida, direcao):
     if preco_entrada is None or preco_saida is None:
         return None
+
     if direcao == "BUY":
         return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
     return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
 
 # ==========================
-# MODELO / APRENDIZADO
+# MODELO / PERSISTÊNCIA
 # ==========================
 def carregar_modelo():
     global learning_data, model_state
+
     if not os.path.exists(MODEL_FILE):
         return
+
     try:
         with open(MODEL_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -184,7 +222,10 @@ def carregar_modelo():
 
 def salvar_modelo():
     try:
-        payload = {"learning_data": learning_data, "model_state": model_state}
+        payload = {
+            "learning_data": learning_data,
+            "model_state": model_state,
+        }
         with open(MODEL_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
     except Exception as e:
@@ -204,45 +245,67 @@ def _bump_bucket(bucket_name, key, win):
 def registrar_resultado_aprendizado(asset_id, win, meta=None):
     meta = meta or {}
     hour = str(br_now().hour)
+
     _bump_bucket("asset_stats", asset_id, win)
     _bump_bucket("hour_stats", hour, win)
     _bump_bucket("regime_stats", meta.get("regime"), win)
+    _bump_bucket("fib_stats", meta.get("fib_zone"), win)
+    _bump_bucket("direction_stats", meta.get("direction"), win)
     _bump_bucket("pattern_stats", meta.get("pattern"), win)
+
     salvar_modelo()
 
-def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.12, down=0.88):
+def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85):
     if not key:
         return 1.0
+
     data = learning_data.get(bucket_name, {}).get(key)
     if not data:
         return 1.0
+
     total = data["win"] + data["loss"]
     if total < min_total:
         return 1.0
-    wr = data["win"] / total
-    if wr > high:
+
+    winrate = data["win"] / total
+
+    if winrate > high:
         return up
-    if wr < low:
+    if winrate < low:
         return down
     return 1.0
 
 def learning_multiplier(asset_id):
-    return bucket_multiplier("asset_stats", asset_id, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85)
+    return bucket_multiplier("asset_stats", asset_id, min_total=5, high=0.65, low=0.40, up=1.20, down=0.80)
 
 def hour_multiplier():
-    return bucket_multiplier("hour_stats", str(br_now().hour), min_total=5, high=0.65, low=0.40, up=1.10, down=0.90)
+    return bucket_multiplier("hour_stats", str(br_now().hour), min_total=5, high=0.65, low=0.40, up=1.15, down=0.85)
 
 def regime_multiplier(regime):
-    return bucket_multiplier("regime_stats", regime, min_total=8, high=0.60, low=0.40, up=1.10, down=0.90)
+    return bucket_multiplier("regime_stats", regime, min_total=8, high=0.60, low=0.40, up=1.12, down=0.85)
+
+def fib_multiplier(fib_zone):
+    return bucket_multiplier("fib_stats", fib_zone, min_total=8, high=0.60, low=0.40, up=1.12, down=0.85)
+
+def direction_multiplier(direction):
+    return bucket_multiplier("direction_stats", direction, min_total=8, high=0.60, low=0.40, up=1.08, down=0.92)
 
 def pattern_multiplier(pattern):
-    return bucket_multiplier("pattern_stats", pattern, min_total=8, high=0.60, low=0.40, up=1.10, down=0.90)
+    return bucket_multiplier("pattern_stats", pattern, min_total=8, high=0.60, low=0.40, up=1.15, down=0.85)
+
+def session_multiplier():
+    hour = br_now().hour
+    if 1 <= hour <= 6:
+        return 0.85
+    if 8 <= hour <= 18:
+        return 1.10
+    return 1.0
 
 def online_update(features, win):
     target = 1.0 if win else 0.0
     pred = model_probability(features)
     error = target - pred
-    lr = 0.04
+    lr = 0.05
 
     for k, v in features.items():
         if k not in model_state["feature_weights"]:
@@ -254,21 +317,14 @@ def online_update(features, win):
     model_state["bias"] = clamp(model_state["bias"] + lr * error * 0.25, -2.5, 2.5)
     salvar_modelo()
 
-def atualizar_pesos(features, win):
-    online_update(features, win)
-
 # ==========================
 # TELEGRAM
 # ==========================
 def enviar(msg):
     try:
-        if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
-            log("Telegram não configurado.")
-            return
-
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {"chat_id": CHAT_ID, "text": msg}
-        r = requests.post(url, data=payload, timeout=15)
+        r = requests.post(url, data=payload, timeout=10)
         if r.status_code != 200:
             log(f"Erro Telegram: {r.status_code} | {r.text}")
     except Exception as e:
@@ -276,8 +332,6 @@ def enviar(msg):
 
 def remover_webhook():
     try:
-        if TOKEN == "COLOQUE_SEU_TOKEN_AQUI":
-            return
         url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
         requests.get(url, timeout=10)
     except Exception:
@@ -286,16 +340,13 @@ def remover_webhook():
 def verificar_comandos():
     global LAST_UPDATE_ID, BOT_ATIVO
 
-    if TOKEN == "COLOQUE_SEU_TOKEN_AQUI":
-        return
-
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
         params = {}
         if LAST_UPDATE_ID is not None:
             params["offset"] = LAST_UPDATE_ID + 1
 
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
         if "result" not in data:
@@ -303,6 +354,7 @@ def verificar_comandos():
 
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
+
             if "message" not in update:
                 continue
 
@@ -333,103 +385,58 @@ def verificar_comandos():
                     f"Modo: {adaptive_mode}\n"
                     f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
+
     except Exception as e:
         log(f"Erro comandos: {e}")
 
 # ==========================
-# DADOS DE MERCADO (YAHOO / YFINANCE)
+# API / HELPERS
 # ==========================
-def _symbol_key(asset):
-    return asset["source"]
-
-def bootstrap_symbol_history(symbol, limit=BOOTSTRAP_LIMIT):
-    """
-    Busca candles 1m do Yahoo Finance via yfinance.
-    Para FX, os tickers vêm com sufixo =X (ex.: EURUSD=X).
-    """
-    t = yf.Ticker(symbol)
-    df = t.history(period="1d", interval="1m", auto_adjust=False, actions=False)
-
-    if df is None or df.empty:
-        raise RuntimeError(f"Sem dados para {symbol}")
-
-    # remove linhas sem OHLC válidos
-    df = df.dropna(subset=["Open", "High", "Low", "Close"])
-    if df.empty:
-        raise RuntimeError(f"Sem candles válidos para {symbol}")
-
-    candles = deque(maxlen=300)
-    for ts, row in df.tail(limit).iterrows():
-        if getattr(ts, "tzinfo", None) is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
-        candles.append({
-            "time": ts.to_pydatetime(),
-            "open": float(row["Open"]),
-            "high": float(row["High"]),
-            "low": float(row["Low"]),
-            "close": float(row["Close"]),
-            "volume": float(row["Volume"]) if pd.notna(row["Volume"]) else 0.0,
-        })
-    return candles
-
-def init_market_data():
-    global CANDLE_CACHE, CANDLE_CACHE_TIME, PRICE_CACHE
-    for asset in ACTIVE_ASSETS:
-        symbol = _symbol_key(asset)
-        try:
-            candles = bootstrap_symbol_history(symbol)
-            CANDLE_CACHE[symbol] = list(candles)
-            CANDLE_CACHE_TIME[symbol] = time.time()
-            if candles:
-                PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
-            log(f"Bootstrap ok: {asset['label']} ({len(candles)} candles)")
-        except Exception as e:
-            log(f"Bootstrap falhou {asset['label']}: {e}")
-            CANDLE_CACHE[symbol] = []
-
-def refresh_symbol_history(asset):
-    symbol = _symbol_key(asset)
-    now = time.time()
-    last_ts = CANDLE_CACHE_TIME.get(symbol, 0.0)
-
-    if now - last_ts < CACHE_SECONDS and symbol in CANDLE_CACHE:
-        return
-
-    try:
-        candles = bootstrap_symbol_history(symbol)
-        CANDLE_CACHE[symbol] = list(candles)
-        CANDLE_CACHE_TIME[symbol] = now
-        if candles:
-            PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
-    except Exception as e:
-        log(f"Refresh falhou {asset['label']}: {e}")
-
-def get_candles(asset, limit=150):
-    symbol = _symbol_key(asset)
-    refresh_symbol_history(asset)
-    data = CANDLE_CACHE.get(symbol, [])
-    if not data:
-        return None
-    return data[-limit:] if len(data) > limit else list(data)
 
 def get_price(asset):
-    symbol = _symbol_key(asset)
-    cached = PRICE_CACHE.get(symbol)
-    if cached and (time.time() - cached[1] < CACHE_SECONDS):
-        return float(cached[0])
+    try:
+        symbol = asset["source"]
 
-    candles = get_candles(asset, limit=2)
-    if candles:
-        price = float(candles[-1]["close"])
-        PRICE_CACHE[symbol] = (price, time.time())
-        return price
-    return None
+        url = "https://api.twelvedata.com/price"
+        params = {
+            "symbol": symbol,
+            "apikey": TWELVE_API_KEY
+        }
+
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+
+        price = data.get("price")
+
+        if price is None:
+            log(f"Preço inválido {asset['id']}: {data}")
+            return None
+
+        return float(price)
+
+    except Exception as e:
+        log(f"Erro preço {asset['id']}: {e}")
+        return None
 
 # ==========================
 # INDICADORES
 # ==========================
+
+def avaliar_por_vela(asset, direcao):
+    candles = get_candles(asset, limit=3)
+    if not candles or len(candles) < 2:
+        return None
+
+    candle = candles[-2]  # última vela FECHADA
+
+    entrada = candle["open"]
+    saida = candle["close"]
+
+    if direcao == "BUY":
+        return saida > entrada
+    else:
+        return saida < entrada
+
 def ema_last(prices, period):
     if len(prices) < period:
         return None
@@ -442,6 +449,7 @@ def ema_last(prices, period):
 def rsi_last(prices, period=14):
     if len(prices) < period + 1:
         return None
+
     gains = 0.0
     losses = 0.0
 
@@ -455,36 +463,35 @@ def rsi_last(prices, period=14):
     avg_gain = gains / period
     avg_loss = losses / period
 
-    for i in range(period + 1, len(prices)):
-        diff = prices[i] - prices[i - 1]
-        gain = max(diff, 0)
-        loss = abs(min(diff, 0))
-        avg_gain = (avg_gain * (period - 1) + gain) / period
-        avg_loss = (avg_loss * (period - 1) + loss) / period
+    if len(prices) > period + 1:
+        for i in range(period + 1, len(prices)):
+            diff = prices[i] - prices[i - 1]
+            gain = max(diff, 0)
+            loss = abs(min(diff, 0))
+            avg_gain = (avg_gain * (period - 1) + gain) / period
+            avg_loss = (avg_loss * (period - 1) + loss) / period
 
     if avg_loss == 0:
         return 100.0
+
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def atr_like(candles, period=14):
-    if len(candles) < period + 1:
+def atr_like(closes, period=14):
+    if len(closes) < period + 1:
         return None
 
-    trs = []
-    for i in range(1, len(candles)):
-        high = candles[i]["high"]
-        low = candles[i]["low"]
-        prev_close = candles[i - 1]["close"]
-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-        trs.append(tr)
+    vals = []
+    start = max(1, len(closes) - period)
+    for i in range(start, len(closes)):
+        vals.append(abs(closes[i] - closes[i - 1]))
 
-    if len(trs) < period:
+    if not vals:
         return None
 
-    return sum(trs[-period:]) / period
+    return sum(vals) / len(vals)
 
-def volume_strength(candles, window=20):
+def average_volume(candles, window=20):
     if len(candles) < window + 1:
         return None
     vols = [c["volume"] for c in candles]
@@ -494,26 +501,28 @@ def volume_strength(candles, window=20):
     return vols[-1] / avg
 
 # ==========================
-# CONTEXTO
+# CONTEXTO / FIBONACCI
 # ==========================
-def market_regime(candles):
-    closes = [c["close"] for c in candles]
+def market_regime(closes):
     if len(closes) < 60:
         return "UNKNOWN"
 
-    e9 = ema_last(closes, 9)
-    e21 = ema_last(closes, 21)
-    e50 = ema_last(closes, 50)
-    if e9 is None or e21 is None or e50 is None:
+    ema9 = ema_last(closes, 9)
+    ema21 = ema_last(closes, 21)
+    ema50 = ema_last(closes, 50)
+
+    if ema9 is None or ema21 is None or ema50 is None:
         return "UNKNOWN"
 
-    trend_strength = abs(e21 - e50) / closes[-1]
-    slope = abs(e9 - ema_last(closes[:-3], 9)) / closes[-1] if len(closes) > 20 else 0.0
+    trend_strength = abs(ema21 - ema50) / closes[-1]
+    slope = abs(ema9 - ema_last(closes[:-3], 9)) / closes[-1] if len(closes) > 20 else 0
 
     if trend_strength < 0.0010:
         return "RANGE"
+
     if slope < 0.00025:
         return "CHOP"
+
     return "TREND"
 
 def liquidity_sweep(candles):
@@ -526,8 +535,10 @@ def liquidity_sweep(candles):
 
     if last["high"] > prev_high and last["close"] < prev_high:
         return True
+
     if last["low"] < prev_low and last["close"] > prev_low:
         return True
+
     return False
 
 def identificar_padrao(meta):
@@ -537,16 +548,21 @@ def identificar_padrao(meta):
     last_move = meta.get("last_move", 0.0)
 
     if last_move > 0.0025 and regime == "TREND":
-        return "breakout"
+        return "breakout_fib_extension"
+
+    if fib_zone in ("0.236", "near_0.236"):
+        return "fib_23_pullback"
+
     if fib_zone in ("0.382", "near_0.382"):
-        return "fib_38"
+        return "fib_38_pullback"
+
     if fib_zone in ("0.500", "near_0.500"):
-        return "fib_50"
-    if fib_zone in ("0.618", "near_0.618"):
-        return "fib_62"
+        return "fib_50_reversal"
+
     if regime == "TREND" and trend_pct > 0.0008:
         return "trend_continuation"
-    return "range_reversal" if regime != "TREND" else "trend_continuation"
+
+    return "trend_continuation" if regime == "TREND" else "fib_50_reversal"
 
 def fib_analysis(candles, direction):
     closes = [c["close"] for c in candles]
@@ -583,6 +599,7 @@ def fib_analysis(candles, direction):
     preferred = ["0.382", "0.500", "0.618"]
     best_zone = None
     best_dist = 999.0
+
     for zone in preferred:
         dist = abs(price - levels[zone]) / price
         if dist < best_dist:
@@ -607,6 +624,19 @@ def fib_analysis(candles, direction):
         "levels": levels,
     }
 
+def asset_multiplier(asset_id):
+    data = performance.get(asset_id, {"win": 1, "loss": 1})
+    total = data["win"] + data["loss"]
+    if total < 10:
+        return 1.0
+
+    winrate = data["win"] / total
+    if winrate > 0.65:
+        return 1.15
+    if winrate < 0.40:
+        return 0.85
+    return 1.0
+
 def em_cooldown(asset_id):
     if asset_id not in ultimo_trade_por_ativo:
         return False
@@ -621,6 +651,7 @@ def update_mode():
         return
 
     idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
+
     if idle_minutes > 90:
         adaptive_mode = "AGRESSIVO"
     elif idle_minutes > 45:
@@ -638,18 +669,25 @@ def score_from_learning(meta):
     asset_id = meta.get("asset_id")
     regime = meta.get("regime")
     fib_zone = meta.get("fib_zone")
+    direction = meta.get("direction")
     pattern = meta.get("pattern")
 
     mult = 1.0
     mult *= learning_multiplier(asset_id)
     mult *= hour_multiplier()
     mult *= regime_multiplier(regime)
+    mult *= fib_multiplier(fib_zone)
+    mult *= direction_multiplier(direction)
     mult *= pattern_multiplier(pattern)
+    mult *= session_multiplier()
     return mult
 
 # ==========================
 # IA / SCORE
 # ==========================
+def vector_from_features(features):
+    return [float(features[k]) for k in FEATURE_ORDER]
+
 def model_probability(features):
     weights = model_state["feature_weights"]
     total_w = 0.0
@@ -667,11 +705,14 @@ def model_probability(features):
     logit = (avg - 0.5) * 8.0 + model_state["bias"]
     return sigmoid(logit)
 
+def atualizar_pesos(features, win):
+    online_update(features, win)
+
 # ==========================
-# ANÁLISE
+# ANÁLISE INTELIGENTE
 # ==========================
 def analisar_ativo(asset, candles):
-    if not candles or len(candles) < 50:
+    if not candles or len(candles) < 60:
         return None
 
     closes = [c["close"] for c in candles]
@@ -679,61 +720,85 @@ def analisar_ativo(asset, candles):
 
     e9 = ema_last(closes, 9)
     e21 = ema_last(closes, 21)
+    e50 = ema_last(closes, 50)
     rsi = rsi_last(closes, 14)
-    atr_val = atr_like(candles, 14)
-    vol_ratio = volume_strength(candles, 20)
+    atr_val = atr_like(closes, 14)
+    vol_ratio = average_volume(candles, 20)
 
-    if e9 is None or e21 is None or rsi is None or atr_val is None:
+    if e9 is None or e21 is None or e50 is None or rsi is None or atr_val is None:
         return None
 
-    regime = market_regime(candles)
+    regime = market_regime(closes)
     direction = "BUY" if e9 > e21 else "SELL"
     fib_ctx = fib_analysis(candles, direction)
 
     trend_pct = abs(e9 - e21) / price
+    ema_slope = abs(e9 - ema_last(closes[:-3], 9)) / price if len(closes) > 20 else 0.0
     last_move = abs(closes[-1] - closes[-2]) / closes[-2]
     atr_norm = atr_val / price
     vol_ratio = vol_ratio if vol_ratio is not None else 1.0
 
-    # pullback simples
     if direction == "BUY":
-        pullback_strength = 1.0 if candles[-2]["close"] < candles[-2]["open"] and candles[-1]["close"] > candles[-1]["open"] else 0.45
         rsi_alignment = clamp((rsi - 45) / 25, 0.0, 1.0)
     else:
-        pullback_strength = 1.0 if candles[-2]["close"] > candles[-2]["open"] and candles[-1]["close"] < candles[-1]["open"] else 0.45
         rsi_alignment = clamp((55 - rsi) / 25, 0.0, 1.0)
 
     trend_strength = clamp(trend_pct / 0.0010, 0.0, 1.0)
     atr_strength = clamp(atr_norm / 0.00060, 0.0, 1.0)
+    slope_strength = clamp(ema_slope / 0.00025, 0.0, 1.0)
+    volume_strength = clamp((vol_ratio - 0.85) / 0.70, 0.0, 1.0)
+    regime_strength = {
+        "TREND": 1.00,
+        "RANGE": 0.65,
+        "CHOP": 0.45,
+        "UNKNOWN": 0.30,
+    }.get(regime, 0.50)
     momentum_strength = clamp(last_move / 0.0015, 0.0, 1.0)
-    wick_strength = 0.35 if liquidity_sweep(candles) else 1.0
     fib_confluence = fib_ctx["fib_score"]
+    liquidity_strength = 0.35 if liquidity_sweep(candles) else 1.0
+
+    pattern = identificar_padrao({
+        "regime": regime,
+        "fib_zone": fib_ctx["fib_zone"],
+        "trend_pct": trend_pct,
+        "last_move": last_move,
+        "direction": direction,
+    })
 
     features = {
         "trend_strength": trend_strength,
         "rsi_alignment": rsi_alignment,
+        "fib_confluence": fib_confluence,
+        "volume_strength": volume_strength,
         "atr_strength": atr_strength,
-        "pullback_strength": pullback_strength,
+        "slope_strength": slope_strength,
+        "regime_strength": regime_strength,
         "momentum_strength": momentum_strength,
-        "wick_strength": wick_strength,
+        "liquidity_strength": liquidity_strength,
     }
 
     rule_score = (
-        0.30 * trend_strength +
-        0.22 * pullback_strength +
-        0.16 * rsi_alignment +
-        0.14 * atr_strength +
-        0.10 * momentum_strength +
-        0.08 * wick_strength
+        0.28 * trend_strength +
+        0.20 * rsi_alignment +
+        0.18 * fib_confluence +
+        0.10 * volume_strength +
+        0.10 * atr_strength +
+        0.08 * slope_strength +
+        0.06 * regime_strength +
+        0.05 * momentum_strength +
+        0.05 * liquidity_strength
     )
 
     model_prob = model_probability(features)
-    combined = (0.72 * rule_score) + (0.28 * model_prob)
+    combined = (0.62 * rule_score) + (0.38 * model_prob)
+
+    combined *= asset_multiplier(asset["id"])
     combined *= score_from_learning({
         "asset_id": asset["id"],
         "regime": regime,
         "fib_zone": fib_ctx["fib_zone"],
-        "pattern": identificar_padrao({"regime": regime, "fib_zone": fib_ctx["fib_zone"], "trend_pct": trend_pct, "last_move": last_move}),
+        "direction": direction,
+        "pattern": pattern,
     })
 
     if liquidity_sweep(candles):
@@ -749,12 +814,14 @@ def analisar_ativo(asset, candles):
         "trend_pct": trend_pct,
         "rsi": rsi,
         "atr_norm": atr_norm,
+        "ema_slope": ema_slope,
+        "volume_ratio": vol_ratio,
         "last_move": last_move,
         "features": features,
         "rule_score": rule_score,
         "model_prob": model_prob,
         "combined": combined,
-        "pattern": identificar_padrao({"regime": regime, "fib_zone": fib_ctx["fib_zone"], "trend_pct": trend_pct, "last_move": last_move}),
+        "pattern": pattern,
     }
 
     return {
@@ -765,7 +832,55 @@ def analisar_ativo(asset, candles):
     }
 
 # ==========================
-# HISTÓRICO / RESULTADOS
+# UNIVERSO DINÂMICO
+# ==========================
+
+def get_candles(asset, limit=150):
+    try:
+        symbol = asset["source"]
+
+        url = "https://api.twelvedata.com/time_series"
+
+        params = {
+            "symbol": symbol,
+            "interval": "1min",
+            "outputsize": limit,
+            "apikey": TWELVE_API_KEY
+        }
+
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+
+        if "values" not in data:
+            log(f"Resposta inválida candles {asset['id']}: {data}")
+            return None
+
+        candles = []
+
+        for row in reversed(data["values"]):
+
+            open_dt = datetime.strptime(
+                row["datetime"],
+                "%Y-%m-%d %H:%M:%S"
+            ).replace(tzinfo=timezone.utc)
+
+            candles.append({
+                "time": open_dt,
+                "open": float(row["open"]),
+                "close": float(row["close"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "volume": float(row.get("volume", 0))
+            })
+
+        return candles
+
+    except Exception as e:
+        log(f"Erro candles {asset['id']}: {e}")
+        return None
+
+# ==========================
+# RESULTADOS / HISTÓRICO
 # ==========================
 def register_trade_history(asset_id, win, stage, meta):
     global total_closed_trades
@@ -824,11 +939,12 @@ def maybe_send_learning_report(force=False):
             lines.append(f"- {key}: {wr:.1f}% ({t})")
         lines.append("")
 
+    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
     add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
     add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
     add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
     add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
-    add_section("Melhores padrões", bucket_rank("pattern_stats", True, limit=5))
+    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
 
     lines.append("Pesos atuais:")
     for k, v in model_state["feature_weights"].items():
@@ -838,15 +954,14 @@ def maybe_send_learning_report(force=False):
     lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
     enviar("\n".join(lines))
+
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
-
-def report_learning_to_telegram(force=False):
-    maybe_send_learning_report(force=force)
 
 def enviar_resultado(asset_label, resultado):
     total = wins + losses
     taxa = (wins / total) * 100 if total > 0 else 0
+
     enviar(
         "🏆 RESULTADO\n\n"
         f"🌎 {asset_label}\n"
@@ -860,17 +975,6 @@ def enviar_resultado(asset_label, resultado):
 # ==========================
 # VERIFICAR RESULTADOS
 # ==========================
-def avaliar_por_vela(asset, direcao):
-    candles = get_candles(asset, limit=3)
-    if not candles or len(candles) < 2:
-        return None
-    candle = candles[-2]  # última vela fechada
-    entrada = candle["open"]
-    saida = candle["close"]
-    if direcao == "BUY":
-        return saida > entrada
-    return saida < entrada
-
 def verificar_resultados():
     global wins, losses
 
@@ -886,16 +990,18 @@ def verificar_resultados():
 
         delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
 
+        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
+
             if win is None:
                 novas_operacoes.append(op)
                 continue
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -911,16 +1017,18 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
+
             if win is None:
                 novas_operacoes.append(op)
                 continue
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -936,16 +1044,18 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
             win = avaliar_por_vela(asset, direcao)
+
             if win is None:
                 novas_operacoes.append(op)
                 continue
-
+                
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -968,7 +1078,7 @@ def verificar_resultados():
     operacoes_ativas.extend(novas_operacoes)
 
 # ==========================
-# SELEÇÃO
+# ESCOLHA INTELIGENTE
 # ==========================
 def escolher_melhor_ativo():
     update_mode()
@@ -986,14 +1096,29 @@ def escolher_melhor_ativo():
     if adaptive_mode == "CONSERVADOR":
         min_trend = 0.0009
         min_atr = 0.00045
-        min_combined = 0.60
+        min_vol = 0.95
+        rsi_buy = 56
+        rsi_sell = 44
+        allow_chop = False
+        max_move = 0.012
+        min_combined = 0.58
     elif adaptive_mode == "NORMAL":
         min_trend = 0.00065
         min_atr = 0.00035
-        min_combined = 0.55
+        min_vol = 0.90
+        rsi_buy = 54
+        rsi_sell = 46
+        allow_chop = False
+        max_move = 0.016
+        min_combined = 0.54
     else:
         min_trend = 0.00045
         min_atr = 0.00025
+        min_vol = 0.85
+        rsi_buy = 52
+        rsi_sell = 48
+        allow_chop = True
+        max_move = 0.022
         min_combined = 0.50
 
     log(f"MODO: {adaptive_mode}")
@@ -1013,7 +1138,7 @@ def escolher_melhor_ativo():
             continue
 
         candles = get_candles(asset)
-        if not candles or len(candles) < 50:
+        if not candles or len(candles) < 60:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT (sem candles)")
             continue
@@ -1030,7 +1155,10 @@ def escolher_melhor_ativo():
 
         trend_pct = meta["trend_pct"]
         atr_norm = meta["atr_norm"]
+        vol_ratio = meta["volume_ratio"]
         regime = meta["regime"]
+        rsi = meta["rsi"]
+        last_move = meta["last_move"]
         fib_zone = meta["fib_zone"]
         model_prob = meta["model_prob"]
         rule_score = meta["rule_score"]
@@ -1042,10 +1170,27 @@ def escolher_melhor_ativo():
             fallback_meta = meta
 
         reasons = []
+
+        if not allow_chop and regime != "TREND":
+            reasons.append(f"REGIME {regime}")
+
         if trend_pct < min_trend:
             reasons.append(f"TREND {trend_pct:.6f}")
+
         if atr_norm < min_atr:
             reasons.append(f"ATR {atr_norm:.6f}")
+
+        if vol_ratio < min_vol:
+            reasons.append(f"VOLUME {vol_ratio:.2f}")
+
+        if last_move > max_move:
+            reasons.append("MOVE SPIKE")
+
+        if not ((direction == "BUY" and rsi >= rsi_buy) or (direction == "SELL" and rsi <= rsi_sell)):
+            reasons.append("DIR/RSI")
+
+        if score < min_combined:
+            reasons.append(f"SCORE {score:.3f}")
 
         if reasons:
             if DEBUG_REJEICOES:
@@ -1055,7 +1200,7 @@ def escolher_melhor_ativo():
         if DEBUG_REJEICOES:
             log(
                 f"{asset_label} -> OK score={score:.3f} "
-                f"regime={regime} fib={fib_zone} "
+                f"regime={regime} fib={fib_zone} rsi={rsi:.2f} "
                 f"p={model_prob:.2f} rule={rule_score:.2f}"
             )
 
@@ -1083,7 +1228,7 @@ def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
     agora_utc = utc_now()
-    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=1)
+    entrada_time = next_timeframe(agora_utc) + timedelta(minutes=2)
 
     setup_pendente = {
         "asset": asset,
@@ -1102,11 +1247,14 @@ def criar_sinal(asset, direcao, score, meta):
         f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
         f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
         f"📈 Força: {score:.3f}\n"
-        f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}\n"
-        f"🧠 Padrão: {setup_pendente['meta'].get('pattern', 'unknown')}"
+        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
+        f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
+# ==========================
+# SETUP
+# ==========================
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1158,22 +1306,97 @@ def processar_setup_pendente():
         setup_pendente = None
 
 # ==========================
-# MAIN
+# REPORT
+# ==========================
+def report_learning_to_telegram(force=False):
+    global last_learning_report_time, last_learning_report_trade_count
+
+    total = wins + losses
+    if total < 5 and not force:
+        return
+
+    now = utc_now()
+    if not force and last_learning_report_time is not None:
+        elapsed = (now - last_learning_report_time).total_seconds()
+        trades_since = total_closed_trades - last_learning_report_trade_count
+        if elapsed < REPORT_INTERVAL_SECONDS and trades_since < REPORT_AFTER_TRADES:
+            return
+
+    def bucket_rank(bucket_name, reverse=True, min_trades=5, limit=5):
+        bucket = learning_data.get(bucket_name, {})
+        rows = []
+        for key, data in bucket.items():
+            t = data["win"] + data["loss"]
+            if t >= min_trades:
+                wr = (data["win"] / t) * 100 if t else 0
+                rows.append((wr, t, key))
+        rows.sort(reverse=reverse)
+        return rows[:limit]
+
+    lines = []
+    lines.append("📊 RELATÓRIO DE APRENDIZADO")
+    lines.append("")
+    lines.append(f"Trades fechados: {total}")
+    lines.append(f"Wins: {wins}")
+    lines.append(f"Losses: {losses}")
+    lines.append(f"Precisão geral: {((wins / total) * 100) if total else 0:.1f}%")
+    lines.append("")
+
+    def add_section(title, rows):
+        lines.append(title + ":")
+        if not rows:
+            lines.append("- sem dados suficientes")
+        for wr, t, key in rows:
+            lines.append(f"- {key}: {wr:.1f}% ({t})")
+        lines.append("")
+
+    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
+    add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
+    add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
+    add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
+    add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
+    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
+
+    lines.append("Pesos atuais:")
+    for k, v in model_state["feature_weights"].items():
+        lines.append(f"- {k}: {v:.2f}")
+    lines.append(f"- bias: {model_state['bias']:.2f}")
+    lines.append("")
+    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
+
+    enviar("\n".join(lines))
+
+    last_learning_report_time = now
+    last_learning_report_trade_count = total_closed_trades
+
+def enviar_resultado(asset_label, resultado):
+    total = wins + losses
+    taxa = (wins / total) * 100 if total > 0 else 0
+
+    enviar(
+        "🏆 RESULTADO\n\n"
+        f"🌎 {asset_label}\n"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Precisão: {round(taxa, 1)}%"
+    )
+    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
+
+# ==========================
+# MAIN LOOP
 # ==========================
 def main():
-    global last_signal_time, last_universe_update
+    global last_signal_time
+    global last_universe_update
 
     if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
         return
 
-    carregar_modelo()
     remover_webhook()
+    carregar_modelo()
     log("BOT INICIANDO...")
-
-    init_market_data()
-    log("Mercado inicial carregado.")
-
     enviar("🤖 BOT INICIADO COM SUCESSO")
 
     while True:
@@ -1182,8 +1405,7 @@ def main():
 
             if BOT_ATIVO:
                 if last_universe_update is None or (utc_now() - last_universe_update).total_seconds() > UNIVERSE_REFRESH:
-                    last_universe_update = utc_now()
-                    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
+                    update_active_symbols()
 
                 processar_setup_pendente()
                 verificar_resultados()
@@ -1198,7 +1420,7 @@ def main():
 
                 maybe_send_learning_report()
 
-            time.sleep(POLL_SECONDS)
+            time.sleep(15)
 
         except Exception as e:
             log(f"Erro geral: {e}")
