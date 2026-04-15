@@ -3,30 +3,31 @@ import os
 import time
 import json
 import math
+import requests
 from collections import deque
 from datetime import datetime, timedelta, timezone
-
-import requests
-
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "d7frnahr01qqb8rhc0lgd7frnahr01qqb8rhc0m0")
-FINNHUB_EXCHANGE = os.getenv("FINNHUB_FOREX_EXCHANGE", "oanda")
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
 
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-CHAT_ID = os.getenv("ID_CHAT", "1056795017")
+CHAT_ID = os.getenv("CHAT_ID", "1056795017")
+
+# API recomendada para este cenário
+FOREXRATEAPI_KEY = os.getenv("FOREXRATEAPI_KEY", "3e28a2e0d178feb3eb5968d4f16a35d0")
+FOREXRATEAPI_URL = "https://api.forexrateapi.com/v1/latest"
 
 TIMEFRAME_MINUTES = 1
-CANDLE_TYPE = "1min"
-
 SIGNAL_INTERVAL = 120
 UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
 
+# Pequeno atraso extra para reduzir leitura antecipada da expiração
 EXTRA_EVAL_DELAY_SECONDS = 2
+
+# Tolerância para latência
 TOLERANCIA = 0.00015
 
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
@@ -34,6 +35,10 @@ REPORT_AFTER_TRADES = 25
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
+
+MARKET_REFRESH_SECONDS = 60
+CANDLE_CACHE_MAXLEN = 300
+MIN_CANDLES_FOR_ANALYSIS = 21
 
 wins = 0
 losses = 0
@@ -57,27 +62,26 @@ total_closed_trades = 0
 trade_history = deque(maxlen=500)
 
 # ==========================
-# UNIVERSO (FOREX FINNHUB)
+# UNIVERSO FOREX
 # ==========================
-
 MARKET_CANDIDATES = [
-    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUD/CAD"},
-    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUD/CHF"},
-    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUD/JPY"},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
-    {"id": "EURAUD", "label": "EUR/AUD", "source": "EUR/AUD"},
-    {"id": "EURCAD", "label": "EUR/CAD", "source": "EUR/CAD"},
-    {"id": "EURGBP", "label": "EUR/GBP", "source": "EUR/GBP"},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EUR/JPY"},
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
-    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBP/AUD"},
-    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBP/CAD"},
-    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBP/CHF"},
-    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBP/JPY"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
-    {"id": "USDCHF", "label": "USD/CHF", "source": "USD/CHF"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD"},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF"},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD"},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD"},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD"},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD"},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD"},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD"},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF"},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY"},
 ]
 
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
@@ -88,21 +92,12 @@ performance = {
 }
 
 # ==========================
-# CACHE LOCAL
+# CACHE LOCAL DE CANDLES
 # ==========================
+CANDLE_CACHE = {asset["id"]: deque(maxlen=CANDLE_CACHE_MAXLEN) for asset in MARKET_CANDIDATES}
+PRICE_CACHE = {}  # asset_id -> (price, ts)
+PAIR_STATE = {}   # asset_id -> {"last_close": float}
 
-FINNHUB_SYMBOL_MAP = {}
-FINNHUB_CACHE = {}
-FINNHUB_PRICE_CACHE = {}
-FINNHUB_CACHE_TIME = {}
-
-CACHE_SECONDS = 45
-CANDLE_CACHE_MAXLEN = 300
-BOOTSTRAP_LIMIT = 150
-
-# ==========================
-# APRENDIZADO
-# ==========================
 # ==========================
 # APRENDIZADO
 # ==========================
@@ -186,17 +181,23 @@ def safe_bucket(bucket_name):
 def comparar_resultado(preco_entrada, preco_saida, direcao):
     if preco_entrada is None or preco_saida is None:
         return None
+
     if direcao == "BUY":
         return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
     return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
+
+def parse_symbol(symbol: str):
+    return symbol[:3].upper(), symbol[3:].upper()
 
 # ==========================
 # MODELO / PERSISTÊNCIA
 # ==========================
 def carregar_modelo():
     global learning_data, model_state
+
     if not os.path.exists(MODEL_FILE):
         return
+
     try:
         with open(MODEL_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -221,6 +222,7 @@ def carregar_modelo():
                     model_state["bias"] = float(ms.get("bias", 0.0))
                 except Exception:
                     pass
+
         log("Aprendizado carregado.")
     except Exception as e:
         log(f"Erro ao carregar aprendizado: {e}")
@@ -263,13 +265,17 @@ def registrar_resultado_aprendizado(asset_id, win, meta=None):
 def bucket_multiplier(bucket_name, key, min_total=5, high=0.65, low=0.40, up=1.15, down=0.85):
     if not key:
         return 1.0
+
     data = learning_data.get(bucket_name, {}).get(key)
     if not data:
         return 1.0
+
     total = data["win"] + data["loss"]
     if total < min_total:
         return 1.0
+
     winrate = data["win"] / total
+
     if winrate > high:
         return up
     if winrate < low:
@@ -307,12 +313,14 @@ def online_update(features, win):
     pred = model_probability(features)
     error = target - pred
     lr = 0.05
+
     for k, v in features.items():
         if k not in model_state["feature_weights"]:
             continue
         old = model_state["feature_weights"][k]
         delta = lr * error * (float(v) - 0.5)
         model_state["feature_weights"][k] = clamp(old + delta, 0.35, 2.50)
+
     model_state["bias"] = clamp(model_state["bias"] + lr * error * 0.25, -2.5, 2.5)
     salvar_modelo()
 
@@ -338,30 +346,40 @@ def remover_webhook():
 
 def verificar_comandos():
     global LAST_UPDATE_ID, BOT_ATIVO
+
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
         params = {}
         if LAST_UPDATE_ID is not None:
             params["offset"] = LAST_UPDATE_ID + 1
+
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
+
         if "result" not in data:
             return
+
         for update in data["result"]:
             LAST_UPDATE_ID = update["update_id"]
+
             if "message" not in update:
                 continue
+
             texto = update["message"].get("text", "").strip()
+
             if texto == "/start":
                 BOT_ATIVO = True
                 enviar("🟢 BOT ATIVADO")
                 log("BOT ATIVADO")
+
             elif texto == "/stop":
                 BOT_ATIVO = False
                 enviar("🔴 BOT PARADO")
                 log("BOT PARADO")
+
             elif texto == "/report":
                 report_learning_to_telegram(force=True)
+
             elif texto == "/status":
                 total = wins + losses
                 wr = (wins / total) * 100 if total else 0
@@ -374,157 +392,137 @@ def verificar_comandos():
                     f"Modo: {adaptive_mode}\n"
                     f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
+
     except Exception as e:
         log(f"Erro comandos: {e}")
 
 # ==========================
-# FINNHUB DATA
+# FOREXRATEAPI
 # ==========================
+FX_BASES = ["AUD", "EUR", "GBP", "USD"]
+FX_QUOTES = sorted({"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "USD"})
 
-FINNHUB_BASE = "https://finnhub.io/api/v1"
+LATEST_MATRIX = {}   # base -> rates dict
+LAST_MARKET_REFRESH = None
 
-def _normalize_symbol_name(name):
-    return (name or "").upper().replace("/", "").replace("-", "").replace("_", "").replace(" ", "")
+def fetch_latest_rates_for_base(base):
+    if not FOREXRATEAPI_KEY:
+        raise RuntimeError("FOREXRATEAPI_KEY não configurada")
 
-def _symbol_key(asset):
-    return asset["source"]
-
-def _build_finnhub_symbol_map():
-    global FINNHUB_SYMBOL_MAP
-    FINNHUB_SYMBOL_MAP = {}
-
-    if not FINNHUB_API_KEY:
-        return
-
-    try:
-        url = f"{FINNHUB_BASE}/forex/symbol"
-        params = {"exchange": FINNHUB_EXCHANGE, "token": FINNHUB_API_KEY}
-        r = requests.get(url, params=params, timeout=20)
-        data = r.json()
-
-        if isinstance(data, list):
-            for item in data:
-                display = item.get("displaySymbol") or item.get("symbol") or ""
-                symbol = item.get("symbol") or item.get("displaySymbol") or ""
-                if not symbol:
-                    continue
-                FINNHUB_SYMBOL_MAP[_normalize_symbol_name(display)] = symbol
-                FINNHUB_SYMBOL_MAP[_normalize_symbol_name(symbol)] = symbol
-        else:
-            log(f"Aviso: resposta inesperada em forex/symbol: {data}")
-    except Exception as e:
-        log(f"Aviso: falha ao carregar símbolos da Finnhub: {e}")
-
-def resolve_finnhub_symbol(asset):
-    source = asset["source"]
-    norm = _normalize_symbol_name(source)
-
-    if norm in FINNHUB_SYMBOL_MAP:
-        return FINNHUB_SYMBOL_MAP[norm]
-
-    pair = source.replace("/", "_").replace("-", "_").replace(" ", "").upper()
-    return f"OANDA:{pair}"
-
-def _finnhub_rates_to_candles(payload):
-    candles = deque(maxlen=CANDLE_CACHE_MAXLEN)
-    t = payload.get("t") or []
-    o = payload.get("o") or []
-    h = payload.get("h") or []
-    l = payload.get("l") or []
-    c = payload.get("c") or []
-    v = payload.get("v") or []
-
-    n = min(len(t), len(o), len(h), len(l), len(c), len(v))
-    for i in range(n):
-        candles.append({
-            "time": datetime.fromtimestamp(int(t[i]), tz=timezone.utc),
-            "open": float(o[i]),
-            "high": float(h[i]),
-            "low": float(l[i]),
-            "close": float(c[i]),
-            "volume": float(v[i]),
-        })
-    return candles
-
-def bootstrap_symbol_history(symbol, limit=BOOTSTRAP_LIMIT):
-    if not FINNHUB_API_KEY:
-        raise RuntimeError("FINNHUB_API_KEY não configurada.")
-
-    to_ts = int(time.time())
-    from_ts = to_ts - (limit + 30) * TIMEFRAME_MINUTES * 60
-    url = f"{FINNHUB_BASE}/forex/candle"
+    currencies = [c for c in FX_QUOTES if c != base]
     params = {
-        "symbol": symbol,
-        "resolution": str(TIMEFRAME_MINUTES),
-        "from": from_ts,
-        "to": to_ts,
-        "token": FINNHUB_API_KEY,
+        "api_key": FOREXRATEAPI_KEY,
+        "base": base,
+        "currencies": ",".join(currencies),
     }
-    r = requests.get(url, params=params, timeout=20)
+
+    r = requests.get(FOREXRATEAPI_URL, params=params, timeout=15)
     data = r.json()
 
-    if data.get("s") != "ok":
+    if not isinstance(data, dict) or not data.get("success"):
         raise RuntimeError(str(data))
 
-    candles = _finnhub_rates_to_candles(data)
-    if len(candles) > limit:
-        candles = deque(list(candles)[-limit:], maxlen=CANDLE_CACHE_MAXLEN)
-    return candles
+    rates = data.get("rates")
+    if not isinstance(rates, dict):
+        raise RuntimeError(str(data))
 
-def init_market_data():
-    global FINNHUB_CACHE, FINNHUB_PRICE_CACHE
+    return rates
 
-    _build_finnhub_symbol_map()
-
-    for asset in ACTIVE_ASSETS:
-        symbol = _symbol_key(asset)
-        api_symbol = resolve_finnhub_symbol(asset)
-        try:
-            candles = bootstrap_symbol_history(api_symbol)
-            FINNHUB_CACHE[symbol] = candles
-            FINNHUB_CACHE_TIME[symbol] = time.time()
-            if candles:
-                FINNHUB_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
-            log(f"Bootstrap ok: {asset['label']} ({len(candles)} candles)")
-        except Exception as e:
-            log(f"Bootstrap falhou {asset['label']}: {e}")
-            FINNHUB_CACHE[symbol] = deque(maxlen=CANDLE_CACHE_MAXLEN)
-
-def refresh_symbol_history(asset):
-    symbol = _symbol_key(asset)
-    now = time.time()
-
-    if symbol in FINNHUB_CACHE and symbol in FINNHUB_CACHE_TIME:
-        if now - FINNHUB_CACHE_TIME[symbol] < CACHE_SECONDS:
-            return
-
-    api_symbol = resolve_finnhub_symbol(asset)
-
-    try:
-        candles = bootstrap_symbol_history(api_symbol)
-    except Exception as e:
-        log(f"Sem dados Finnhub para {asset['label']}: {e}")
-        return
-
-    FINNHUB_CACHE[symbol] = candles
-    FINNHUB_CACHE_TIME[symbol] = now
-    if candles:
-        FINNHUB_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
-
-def get_candles(asset, limit=150):
-    symbol = _symbol_key(asset)
-    refresh_symbol_history(asset)
-
-    data = FINNHUB_CACHE.get(symbol)
-    if not data:
+def get_pair_rate(base, quote, matrix):
+    if base == quote:
         return None
 
+    base = base.upper()
+    quote = quote.upper()
+
+    # Direto
+    if base in matrix and isinstance(matrix[base], dict):
+        if quote in matrix[base]:
+            try:
+                return float(matrix[base][quote])
+            except Exception:
+                pass
+
+    # Inverso
+    if quote in matrix and isinstance(matrix[quote], dict):
+        if base in matrix[quote]:
+            try:
+                inv = float(matrix[quote][base])
+                if inv != 0:
+                    return 1.0 / inv
+            except Exception:
+                pass
+
+    return None
+
+def update_local_candle(asset_id, price, now):
+    cache = CANDLE_CACHE.setdefault(asset_id, deque(maxlen=CANDLE_CACHE_MAXLEN))
+    state = PAIR_STATE.setdefault(asset_id, {})
+
+    prev_close = state.get("last_close")
+    if prev_close is None:
+        prev_close = price
+
+    candle = {
+        "time": now,
+        "open": float(prev_close),
+        "high": float(max(prev_close, price)),
+        "low": float(min(prev_close, price)),
+        "close": float(price),
+        "volume": 0.0,
+    }
+
+    cache.append(candle)
+    state["last_close"] = float(price)
+    PRICE_CACHE[asset_id] = (float(price), time.time())
+
+def refresh_market_data():
+    global LATEST_MATRIX, LAST_MARKET_REFRESH
+
+    if not FOREXRATEAPI_KEY:
+        log("ERRO: defina FOREXRATEAPI_KEY nas variáveis de ambiente.")
+        return False
+
+    matrix = {}
+    any_ok = False
+
+    for base in FX_BASES:
+        try:
+            rates = fetch_latest_rates_for_base(base)
+            matrix[base] = rates
+            any_ok = True
+        except Exception as e:
+            log(f"ForexRateAPI falhou {base}: {e}")
+
+    if not any_ok:
+        return False
+
+    LATEST_MATRIX.update(matrix)
+    now = utc_now()
+
+    for asset in ACTIVE_ASSETS:
+        asset_id = asset["id"]
+        base, quote = parse_symbol(asset["source"])
+        price = get_pair_rate(base, quote, LATEST_MATRIX)
+        if price is None:
+            continue
+        update_local_candle(asset_id, price, now)
+
+    LAST_MARKET_REFRESH = now
+    return True
+
+# ==========================
+# INDICADORES
+# ==========================
+def get_candles(asset, limit=150):
+    data = CANDLE_CACHE.get(asset["id"])
+    if not data:
+        return None
     candles = list(data)[-limit:]
     return candles if candles else None
 
 def get_price(asset):
-    symbol = _symbol_key(asset)
-    cached = FINNHUB_PRICE_CACHE.get(symbol)
+    cached = PRICE_CACHE.get(asset["id"])
     if cached:
         return float(cached[0])
 
@@ -534,19 +532,15 @@ def get_price(asset):
 
     return None
 
-# ==========================
-# INDICADORES
-# ==========================
-# ==========================
-# INDICADORES
-# ==========================
 def avaliar_por_vela(asset, direcao):
     candles = get_candles(asset, limit=3)
     if not candles or len(candles) < 2:
         return None
-    candle = candles[-2]
+
+    candle = candles[-2]  # última vela FECHADA
     entrada = candle["open"]
     saida = candle["close"]
+
     if direcao == "BUY":
         return saida > entrada
     else:
@@ -564,16 +558,20 @@ def ema_last(prices, period):
 def rsi_last(prices, period=14):
     if len(prices) < period + 1:
         return None
+
     gains = 0.0
     losses = 0.0
+
     for i in range(1, period + 1):
         diff = prices[i] - prices[i - 1]
         if diff >= 0:
             gains += diff
         else:
             losses += abs(diff)
+
     avg_gain = gains / period
     avg_loss = losses / period
+
     if len(prices) > period + 1:
         for i in range(period + 1, len(prices)):
             diff = prices[i] - prices[i - 1]
@@ -581,20 +579,25 @@ def rsi_last(prices, period=14):
             loss = abs(min(diff, 0))
             avg_gain = (avg_gain * (period - 1) + gain) / period
             avg_loss = (avg_loss * (period - 1) + loss) / period
+
     if avg_loss == 0:
         return 100.0
+
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 def atr_like(closes, period=14):
     if len(closes) < period + 1:
         return None
+
     vals = []
     start = max(1, len(closes) - period)
     for i in range(start, len(closes)):
         vals.append(abs(closes[i] - closes[i - 1]))
+
     if not vals:
         return None
+
     return sum(vals) / len(vals)
 
 def average_volume(candles, window=20):
@@ -610,31 +613,41 @@ def average_volume(candles, window=20):
 # CONTEXTO / FIBONACCI
 # ==========================
 def market_regime(closes):
-    if len(closes) < 60:
+    if len(closes) < MIN_CANDLES_FOR_ANALYSIS:
         return "UNKNOWN"
-    ema9 = ema_last(closes, 9)
+
+    ema5 = ema_last(closes, 5)
+    ema13 = ema_last(closes, 13)
     ema21 = ema_last(closes, 21)
-    ema50 = ema_last(closes, 50)
-    if ema9 is None or ema21 is None or ema50 is None:
+
+    if ema5 is None or ema13 is None or ema21 is None:
         return "UNKNOWN"
-    trend_strength = abs(ema21 - ema50) / closes[-1]
-    slope = abs(ema9 - ema_last(closes[:-3], 9)) / closes[-1] if len(closes) > 20 else 0
+
+    trend_strength = abs(ema13 - ema21) / closes[-1]
+    slope = abs(ema5 - ema_last(closes[:-3], 5)) / closes[-1] if len(closes) > 8 else 0
+
     if trend_strength < 0.0010:
         return "RANGE"
+
     if slope < 0.00025:
         return "CHOP"
+
     return "TREND"
 
 def liquidity_sweep(candles):
     if len(candles) < 6:
         return False
+
     prev_high = max(c["high"] for c in candles[-6:-1])
     prev_low = min(c["low"] for c in candles[-6:-1])
     last = candles[-1]
+
     if last["high"] > prev_high and last["close"] < prev_high:
         return True
+
     if last["low"] < prev_low and last["close"] > prev_low:
         return True
+
     return False
 
 def identificar_padrao(meta):
@@ -642,29 +655,39 @@ def identificar_padrao(meta):
     fib_zone = meta.get("fib_zone")
     trend_pct = meta.get("trend_pct", 0.0)
     last_move = meta.get("last_move", 0.0)
+
     if last_move > 0.0025 and regime == "TREND":
         return "breakout_fib_extension"
+
     if fib_zone in ("0.236", "near_0.236"):
         return "fib_23_pullback"
+
     if fib_zone in ("0.382", "near_0.382"):
         return "fib_38_pullback"
+
     if fib_zone in ("0.500", "near_0.500"):
         return "fib_50_reversal"
+
     if regime == "TREND" and trend_pct > 0.0008:
         return "trend_continuation"
+
     return "trend_continuation" if regime == "TREND" else "fib_50_reversal"
 
 def fib_analysis(candles, direction):
     closes = [c["close"] for c in candles]
     if len(closes) < 20:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
+
     window = candles[-48:] if len(candles) > 48 else candles[:]
     swing_high = max(c["high"] for c in window)
     swing_low = min(c["low"] for c in window)
+
     if swing_high == swing_low:
         return {"fib_zone": "none", "fib_score": 0.0, "fib_dist": 1.0, "levels": {}}
+
     rng = swing_high - swing_low
     price = closes[-1]
+
     if direction == "BUY":
         levels = {
             "0.236": swing_low + rng * 0.236,
@@ -681,23 +704,28 @@ def fib_analysis(candles, direction):
             "0.618": swing_high - rng * 0.618,
             "0.786": swing_high - rng * 0.786,
         }
+
     preferred = ["0.382", "0.500", "0.618"]
     best_zone = None
     best_dist = 999.0
+
     for zone in preferred:
         dist = abs(price - levels[zone]) / price
         if dist < best_dist:
             best_dist = dist
             best_zone = zone
+
     if best_dist <= 0.0025:
         fib_zone = best_zone
     elif best_dist <= 0.005:
         fib_zone = f"near_{best_zone}"
     else:
         fib_zone = "none"
+
     fib_score = max(0.0, 1.0 - best_dist * 250)
     if fib_zone == "none":
         fib_score *= 0.35
+
     return {
         "fib_zone": fib_zone,
         "fib_score": fib_score,
@@ -710,6 +738,7 @@ def asset_multiplier(asset_id):
     total = data["win"] + data["loss"]
     if total < 10:
         return 1.0
+
     winrate = data["win"] / total
     if winrate > 0.65:
         return 1.15
@@ -725,10 +754,13 @@ def em_cooldown(asset_id):
 
 def update_mode():
     global adaptive_mode, last_trade_time
+
     if last_trade_time is None:
         adaptive_mode = "AGRESSIVO"
         return
+
     idle_minutes = (utc_now() - last_trade_time).total_seconds() / 60
+
     if idle_minutes > 90:
         adaptive_mode = "AGRESSIVO"
     elif idle_minutes > 45:
@@ -748,6 +780,7 @@ def score_from_learning(meta):
     fib_zone = meta.get("fib_zone")
     direction = meta.get("direction")
     pattern = meta.get("pattern")
+
     mult = 1.0
     mult *= learning_multiplier(asset_id)
     mult *= hour_multiplier()
@@ -768,12 +801,15 @@ def model_probability(features):
     weights = model_state["feature_weights"]
     total_w = 0.0
     total = 0.0
+
     for k, v in features.items():
         w = weights.get(k, 1.0)
         total += w * float(v)
         total_w += abs(w)
+
     if total_w <= 0:
         return 0.5
+
     avg = total / total_w
     logit = (avg - 0.5) * 8.0 + model_state["bias"]
     return sigmoid(logit)
@@ -785,28 +821,28 @@ def atualizar_pesos(features, win):
 # ANÁLISE INTELIGENTE
 # ==========================
 def analisar_ativo(asset, candles):
-    if not candles or len(candles) < 60:
+    if not candles or len(candles) < MIN_CANDLES_FOR_ANALYSIS:
         return None
 
     closes = [c["close"] for c in candles]
     price = closes[-1]
 
-    e9 = ema_last(closes, 9)
+    e5 = ema_last(closes, 5)
+    e13 = ema_last(closes, 13)
     e21 = ema_last(closes, 21)
-    e50 = ema_last(closes, 50)
     rsi = rsi_last(closes, 14)
     atr_val = atr_like(closes, 14)
     vol_ratio = average_volume(candles, 20)
 
-    if e9 is None or e21 is None or e50 is None or rsi is None or atr_val is None:
+    if e5 is None or e13 is None or e21 is None or rsi is None or atr_val is None:
         return None
 
     regime = market_regime(closes)
-    direction = "BUY" if e9 > e21 else "SELL"
+    direction = "BUY" if e5 > e13 else "SELL"
     fib_ctx = fib_analysis(candles, direction)
 
-    trend_pct = abs(e9 - e21) / price
-    ema_slope = abs(e9 - ema_last(closes[:-3], 9)) / price if len(closes) > 20 else 0.0
+    trend_pct = abs(e5 - e13) / price
+    ema_slope = abs(e5 - ema_last(closes[:-3], 5)) / price if len(closes) > 8 else 0.0
     last_move = abs(closes[-1] - closes[-2]) / closes[-2]
     atr_norm = atr_val / price
     vol_ratio = vol_ratio if vol_ratio is not None else 1.0
@@ -1000,6 +1036,9 @@ def enviar_resultado(asset_label, resultado):
     )
     log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
+# ==========================
+# VERIFICAR RESULTADOS
+# ==========================
 def verificar_resultados():
     global wins, losses
 
@@ -1102,6 +1141,9 @@ def verificar_resultados():
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
 
+# ==========================
+# ESCOLHA INTELIGENTE
+# ==========================
 def escolher_melhor_ativo():
     update_mode()
 
@@ -1145,7 +1187,7 @@ def escolher_melhor_ativo():
             continue
 
         candles = get_candles(asset)
-        if not candles or len(candles) < 60:
+        if not candles or len(candles) < MIN_CANDLES_FOR_ANALYSIS:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT (sem candles)")
             continue
@@ -1211,6 +1253,9 @@ def escolher_melhor_ativo():
     log("Nenhum ativo disponível no fallback")
     return None, None, None, None
 
+# ==========================
+# SINAL
+# ==========================
 def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
@@ -1239,6 +1284,9 @@ def criar_sinal(asset, direcao, score, meta):
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
+# ==========================
+# SETUP
+# ==========================
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1289,23 +1337,36 @@ def processar_setup_pendente():
         log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao} | preco={preco_entrada}")
         setup_pendente = None
 
-def main():
-    global last_signal_time
+# ==========================
+# UNIVERSO / LOOP DE MERCADO
+# ==========================
+def update_active_symbols():
     global last_universe_update
+    ACTIVE_ASSETS[:] = MARKET_CANDIDATES.copy()
+    last_universe_update = utc_now()
+    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
+
+# ==========================
+# MAIN LOOP
+# ==========================
+def main():
+    global last_signal_time, last_universe_update
 
     if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente.")
         return
 
-    if not FINNHUB_API_KEY:
-        log("ERRO: configure FINNHUB_API_KEY nas variáveis de ambiente.")
+    if not FOREXRATEAPI_KEY:
+        log("ERRO: configure FOREXRATEAPI_KEY nas variáveis de ambiente.")
         return
 
     remover_webhook()
     carregar_modelo()
     log("BOT INICIANDO...")
 
-    init_market_data()
+    # Primeira leitura de mercado
+    refresh_market_data()
+    log("Mercado inicial carregado.")
     enviar("🤖 BOT INICIADO COM SUCESSO")
 
     while True:
@@ -1314,8 +1375,11 @@ def main():
 
             if BOT_ATIVO:
                 if last_universe_update is None or (utc_now() - last_universe_update).total_seconds() > UNIVERSE_REFRESH:
-                    last_universe_update = utc_now()
-                    log(f"Universo atualizado: {len(ACTIVE_ASSETS)} ativos")
+                    update_active_symbols()
+
+                # Atualiza candles 1x por minuto
+                if LAST_MARKET_REFRESH is None or (utc_now() - LAST_MARKET_REFRESH).total_seconds() >= MARKET_REFRESH_SECONDS:
+                    refresh_market_data()
 
                 processar_setup_pendente()
                 verificar_resultados()
