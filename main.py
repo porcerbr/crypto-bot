@@ -17,7 +17,7 @@ except Exception:
 # CONFIGURAÇÕES
 # ==========================
 
-TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
+TOKEN = os.getenv("BOT_TOKEN_ID", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
 TIMEFRAME_MINUTES = 1
@@ -364,27 +364,17 @@ def verificar_comandos():
                 total = wins + losses
                 wr = (wins / total) * 100 if total else 0
                 enviar(
-                    "📌 STATUS
-
-"
-                    f"Ativo: {BOT_ATIVO}
-"
-                    f"Wins: {wins}
-"
-                    f"Losses: {losses}
-"
-                    f"Precisão: {wr:.1f}%
-"
-                    f"Modo: {adaptive_mode}
-"
+                    "📌 STATUS\n\n"
+                    f"Ativo: {BOT_ATIVO}\n"
+                    f"Wins: {wins}\n"
+                    f"Losses: {losses}\n"
+                    f"Precisão: {wr:.1f}%\n"
+                    f"Modo: {adaptive_mode}\n"
                     f"Universo: {', '.join([a['label'] for a in ACTIVE_ASSETS])}"
                 )
     except Exception as e:
         log(f"Erro comandos: {e}")
 
-# ==========================
-# MT5 DATA
-# ==========================
 def mt5_timeframe():
     if TIMEFRAME_MINUTES == 1:
         return mt5.TIMEFRAME_M1
@@ -962,8 +952,7 @@ def maybe_send_learning_report(force=False):
     lines.append("")
     lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
 
-    enviar("
-".join(lines))
+    enviar("\n".join(lines))
 
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
@@ -976,25 +965,15 @@ def enviar_resultado(asset_label, resultado):
     taxa = (wins / total) * 100 if total > 0 else 0
 
     enviar(
-        "🏆 RESULTADO
-
-"
-        f"🌎 {asset_label}
-"
-        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}
-
-"
-        f"Wins: {wins}
-"
-        f"Losses: {losses}
-"
+        "🏆 RESULTADO\n\n"
+        f"🌎 {asset_label}\n"
+        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
         f"Precisão: {round(taxa, 1)}%"
     )
     log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
-# ==========================
-# VERIFICAR RESULTADOS
-# ==========================
 def verificar_resultados():
     global wins, losses
 
@@ -1010,6 +989,7 @@ def verificar_resultados():
 
         delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
 
+        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1036,6 +1016,7 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1062,6 +1043,7 @@ def verificar_resultados():
             novas_operacoes.append(op)
             continue
 
+        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
@@ -1094,9 +1076,6 @@ def verificar_resultados():
     operacoes_ativas.clear()
     operacoes_ativas.extend(novas_operacoes)
 
-# ==========================
-# ESCOLHA INTELIGENTE
-# ==========================
 def escolher_melhor_ativo():
     update_mode()
 
@@ -1206,9 +1185,6 @@ def escolher_melhor_ativo():
     log("Nenhum ativo disponível no fallback")
     return None, None, None, None
 
-# ==========================
-# SINAL
-# ==========================
 def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
@@ -1227,26 +1203,16 @@ def criar_sinal(asset, direcao, score, meta):
     last_signal_time = agora_utc
 
     enviar(
-        "⚠️ PREPARAR ENTRADA ⚠️
-
-"
-        f"🌎 Ativo: {asset['label']}
-"
-        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}
-"
-        f"⏰ Entrada prevista: {fmt_br(entrada_time)}
-"
-        f"📈 Força: {score:.3f}
-"
-        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}
-"
+        "⚠️ PREPARAR ENTRADA ⚠️\n\n"
+        f"🌎 Ativo: {asset['label']}\n"
+        f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
+        f"⏰ Entrada prevista: {fmt_br(entrada_time)}\n"
+        f"📈 Força: {score:.3f}\n"
+        f"🧠 Fibonacci: {setup_pendente['meta'].get('fib_zone', 'none')}\n"
         f"📊 Regime: {setup_pendente['meta'].get('regime', 'unknown')}"
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
-# ==========================
-# SETUP
-# ==========================
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1286,27 +1252,17 @@ def processar_setup_pendente():
         })
 
         enviar(
-            "✅ ENTRADA CONFIRMADA ✅
-
-"
-            f"🌎 Ativo: {asset['label']}
-"
-            f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}
-"
-            f"⏰ Entrada: {fmt_br(entrada_time)}
-
-"
-            f"⚠️ Proteção 1: {fmt_br(p1)}
-"
+            "✅ ENTRADA CONFIRMADA ✅\n\n"
+            f"🌎 Ativo: {asset['label']}\n"
+            f"📊 Estratégia: {'🟢 COMPRA' if direcao == 'BUY' else '🔴 VENDA'}\n"
+            f"⏰ Entrada: {fmt_br(entrada_time)}\n\n"
+            f"⚠️ Proteção 1: {fmt_br(p1)}\n"
             f"⚠️ Proteção 2: {fmt_br(p2)}"
         )
 
         log(f"ENTRADA CONFIRMADA | {asset['label']} | {direcao} | preco={preco_entrada}")
         setup_pendente = None
 
-# ==========================
-# MAIN LOOP
-# ==========================
 def main():
     global last_signal_time
     global last_universe_update
