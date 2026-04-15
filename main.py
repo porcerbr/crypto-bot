@@ -8,17 +8,15 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-try:
-    import MetaTrader5 as mt5
-except Exception:
-    mt5 = None
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "d7frnahr01qqb8rhc0lgd7frnahr01qqb8rhc0m0")
+FINNHUB_EXCHANGE = os.getenv("FINNHUB_FOREX_EXCHANGE", "oanda")
 
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
 
-TOKEN = os.getenv("BOT_TOKEN_ID", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-CHAT_ID = os.getenv("CHAT_ID", "1056795017")
+TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
+CHAT_ID = os.getenv("ID_CHAT", "1056795017")
 
 TIMEFRAME_MINUTES = 1
 CANDLE_TYPE = "1min"
@@ -59,27 +57,27 @@ total_closed_trades = 0
 trade_history = deque(maxlen=500)
 
 # ==========================
-# UNIVERSO (FOREX MT5)
+# UNIVERSO (FOREX FINNHUB)
 # ==========================
 
 MARKET_CANDIDATES = [
-    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUDCAD"},
-    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUDCHF"},
-    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUDJPY"},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUDUSD"},
-    {"id": "EURAUD", "label": "EUR/AUD", "source": "EURAUD"},
-    {"id": "EURCAD", "label": "EUR/CAD", "source": "EURCAD"},
-    {"id": "EURGBP", "label": "EUR/GBP", "source": "EURGBP"},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EURJPY"},
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EURUSD"},
-    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBPAUD"},
-    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBPCAD"},
-    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBPCHF"},
-    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBPJPY"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBPUSD"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USDCAD"},
-    {"id": "USDCHF", "label": "USD/CHF", "source": "USDCHF"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USDJPY"},
+    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUD/CAD"},
+    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUD/CHF"},
+    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUD/JPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
+    {"id": "EURAUD", "label": "EUR/AUD", "source": "EUR/AUD"},
+    {"id": "EURCAD", "label": "EUR/CAD", "source": "EUR/CAD"},
+    {"id": "EURGBP", "label": "EUR/GBP", "source": "EUR/GBP"},
+    {"id": "EURJPY", "label": "EUR/JPY", "source": "EUR/JPY"},
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
+    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBP/AUD"},
+    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBP/CAD"},
+    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBP/CHF"},
+    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBP/JPY"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
+    {"id": "USDCHF", "label": "USD/CHF", "source": "USD/CHF"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
 ]
 
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
@@ -93,14 +91,18 @@ performance = {
 # CACHE LOCAL
 # ==========================
 
-MT5_CACHE = {}
-MT5_PRICE_CACHE = {}
-MT5_CACHE_TIME = {}
+FINNHUB_SYMBOL_MAP = {}
+FINNHUB_CACHE = {}
+FINNHUB_PRICE_CACHE = {}
+FINNHUB_CACHE_TIME = {}
 
-CACHE_SECONDS = 15
+CACHE_SECONDS = 45
 CANDLE_CACHE_MAXLEN = 300
 BOOTSTRAP_LIMIT = 150
 
+# ==========================
+# APRENDIZADO
+# ==========================
 # ==========================
 # APRENDIZADO
 # ==========================
@@ -375,142 +377,166 @@ def verificar_comandos():
     except Exception as e:
         log(f"Erro comandos: {e}")
 
-def mt5_timeframe():
-    if TIMEFRAME_MINUTES == 1:
-        return mt5.TIMEFRAME_M1
-    if TIMEFRAME_MINUTES == 5:
-        return mt5.TIMEFRAME_M5
-    if TIMEFRAME_MINUTES == 15:
-        return mt5.TIMEFRAME_M15
-    if TIMEFRAME_MINUTES == 30:
-        return mt5.TIMEFRAME_M30
-    if TIMEFRAME_MINUTES == 60:
-        return mt5.TIMEFRAME_H1
-    return mt5.TIMEFRAME_M1
+# ==========================
+# FINNHUB DATA
+# ==========================
 
-def mt5_initialize():
-    if mt5 is None:
-        raise RuntimeError("Biblioteca MetaTrader5 não instalada.")
-    if not mt5.initialize():
-        raise RuntimeError(f"MT5 initialize() falhou: {mt5.last_error()}")
+FINNHUB_BASE = "https://finnhub.io/api/v1"
 
-def find_mt5_symbol(symbol):
-    mt5_symbols = mt5.symbols_get()
-    if mt5_symbols is None:
-        return symbol
-    names = [s.name for s in mt5_symbols]
-    if symbol in names:
-        return symbol
-    for name in names:
-        if name.upper().startswith(symbol.upper()):
-            return name
-    return symbol
+def _normalize_symbol_name(name):
+    return (name or "").upper().replace("/", "").replace("-", "").replace("_", "").replace(" ", "")
 
 def _symbol_key(asset):
     return asset["source"]
 
-def _mt5_rates_to_candles(rates):
+def _build_finnhub_symbol_map():
+    global FINNHUB_SYMBOL_MAP
+    FINNHUB_SYMBOL_MAP = {}
+
+    if not FINNHUB_API_KEY:
+        return
+
+    try:
+        url = f"{FINNHUB_BASE}/forex/symbol"
+        params = {"exchange": FINNHUB_EXCHANGE, "token": FINNHUB_API_KEY}
+        r = requests.get(url, params=params, timeout=20)
+        data = r.json()
+
+        if isinstance(data, list):
+            for item in data:
+                display = item.get("displaySymbol") or item.get("symbol") or ""
+                symbol = item.get("symbol") or item.get("displaySymbol") or ""
+                if not symbol:
+                    continue
+                FINNHUB_SYMBOL_MAP[_normalize_symbol_name(display)] = symbol
+                FINNHUB_SYMBOL_MAP[_normalize_symbol_name(symbol)] = symbol
+        else:
+            log(f"Aviso: resposta inesperada em forex/symbol: {data}")
+    except Exception as e:
+        log(f"Aviso: falha ao carregar símbolos da Finnhub: {e}")
+
+def resolve_finnhub_symbol(asset):
+    source = asset["source"]
+    norm = _normalize_symbol_name(source)
+
+    if norm in FINNHUB_SYMBOL_MAP:
+        return FINNHUB_SYMBOL_MAP[norm]
+
+    pair = source.replace("/", "_").replace("-", "_").replace(" ", "").upper()
+    return f"OANDA:{pair}"
+
+def _finnhub_rates_to_candles(payload):
     candles = deque(maxlen=CANDLE_CACHE_MAXLEN)
-    for r in rates:
+    t = payload.get("t") or []
+    o = payload.get("o") or []
+    h = payload.get("h") or []
+    l = payload.get("l") or []
+    c = payload.get("c") or []
+    v = payload.get("v") or []
+
+    n = min(len(t), len(o), len(h), len(l), len(c), len(v))
+    for i in range(n):
         candles.append({
-            "time": datetime.fromtimestamp(int(r["time"]), tz=timezone.utc),
-            "open": float(r["open"]),
-            "high": float(r["high"]),
-            "low": float(r["low"]),
-            "close": float(r["close"]),
-            "volume": float(r["tick_volume"]),
+            "time": datetime.fromtimestamp(int(t[i]), tz=timezone.utc),
+            "open": float(o[i]),
+            "high": float(h[i]),
+            "low": float(l[i]),
+            "close": float(c[i]),
+            "volume": float(v[i]),
         })
     return candles
 
 def bootstrap_symbol_history(symbol, limit=BOOTSTRAP_LIMIT):
-    tf = mt5_timeframe()
-    symbol_name = find_mt5_symbol(symbol)
+    if not FINNHUB_API_KEY:
+        raise RuntimeError("FINNHUB_API_KEY não configurada.")
 
-    if not mt5.symbol_select(symbol_name, True):
-        raise RuntimeError(f"symbol_select falhou para {symbol_name}: {mt5.last_error()}")
+    to_ts = int(time.time())
+    from_ts = to_ts - (limit + 30) * TIMEFRAME_MINUTES * 60
+    url = f"{FINNHUB_BASE}/forex/candle"
+    params = {
+        "symbol": symbol,
+        "resolution": str(TIMEFRAME_MINUTES),
+        "from": from_ts,
+        "to": to_ts,
+        "token": FINNHUB_API_KEY,
+    }
+    r = requests.get(url, params=params, timeout=20)
+    data = r.json()
 
-    rates = mt5.copy_rates_from_pos(symbol_name, tf, 0, limit)
-    if rates is None or len(rates) == 0:
-        raise RuntimeError(f"Sem dados MT5 para {symbol_name}: {mt5.last_error()}")
+    if data.get("s") != "ok":
+        raise RuntimeError(str(data))
 
-    candles = _mt5_rates_to_candles(rates)
-
-    if len(candles) >= 2:
-        now_utc = utc_now()
-        last_bar = candles[-1]
-        if last_bar["time"] + timedelta(minutes=TIMEFRAME_MINUTES) > now_utc:
-            candles.pop()
-
+    candles = _finnhub_rates_to_candles(data)
+    if len(candles) > limit:
+        candles = deque(list(candles)[-limit:], maxlen=CANDLE_CACHE_MAXLEN)
     return candles
 
 def init_market_data():
-    global MT5_CACHE, MT5_PRICE_CACHE, MT5_CACHE_TIME
-    mt5_initialize()
+    global FINNHUB_CACHE, FINNHUB_PRICE_CACHE
+
+    _build_finnhub_symbol_map()
+
     for asset in ACTIVE_ASSETS:
         symbol = _symbol_key(asset)
+        api_symbol = resolve_finnhub_symbol(asset)
         try:
-            candles = bootstrap_symbol_history(symbol)
-            MT5_CACHE[symbol] = candles
-            MT5_CACHE_TIME[symbol] = time.time()
+            candles = bootstrap_symbol_history(api_symbol)
+            FINNHUB_CACHE[symbol] = candles
+            FINNHUB_CACHE_TIME[symbol] = time.time()
             if candles:
-                MT5_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
+                FINNHUB_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), time.time())
             log(f"Bootstrap ok: {asset['label']} ({len(candles)} candles)")
         except Exception as e:
             log(f"Bootstrap falhou {asset['label']}: {e}")
-            MT5_CACHE[symbol] = deque(maxlen=CANDLE_CACHE_MAXLEN)
+            FINNHUB_CACHE[symbol] = deque(maxlen=CANDLE_CACHE_MAXLEN)
 
 def refresh_symbol_history(asset):
     symbol = _symbol_key(asset)
     now = time.time()
 
-    if symbol in MT5_CACHE and symbol in MT5_CACHE_TIME:
-        if now - MT5_CACHE_TIME[symbol] < CACHE_SECONDS:
+    if symbol in FINNHUB_CACHE and symbol in FINNHUB_CACHE_TIME:
+        if now - FINNHUB_CACHE_TIME[symbol] < CACHE_SECONDS:
             return
 
-    tf = mt5_timeframe()
-    symbol_name = find_mt5_symbol(symbol)
+    api_symbol = resolve_finnhub_symbol(asset)
 
-    if not mt5.symbol_select(symbol_name, True):
-        log(f"symbol_select falhou para {symbol_name}: {mt5.last_error()}")
+    try:
+        candles = bootstrap_symbol_history(api_symbol)
+    except Exception as e:
+        log(f"Sem dados Finnhub para {asset['label']}: {e}")
         return
 
-    rates = mt5.copy_rates_from_pos(symbol_name, tf, 0, BOOTSTRAP_LIMIT)
-    if rates is None or len(rates) == 0:
-        log(f"Sem dados MT5 para {symbol_name}: {mt5.last_error()}")
-        return
-
-    candles = _mt5_rates_to_candles(rates)
-
-    if len(candles) >= 2:
-        now_utc = utc_now()
-        last_bar = candles[-1]
-        if last_bar["time"] + timedelta(minutes=TIMEFRAME_MINUTES) > now_utc:
-            candles.pop()
-
-    MT5_CACHE[symbol] = candles
-    MT5_CACHE_TIME[symbol] = now
+    FINNHUB_CACHE[symbol] = candles
+    FINNHUB_CACHE_TIME[symbol] = now
     if candles:
-        MT5_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
+        FINNHUB_PRICE_CACHE[symbol] = (float(candles[-1]["close"]), now)
 
 def get_candles(asset, limit=150):
     symbol = _symbol_key(asset)
     refresh_symbol_history(asset)
-    data = MT5_CACHE.get(symbol)
+
+    data = FINNHUB_CACHE.get(symbol)
     if not data:
         return None
+
     candles = list(data)[-limit:]
     return candles if candles else None
 
 def get_price(asset):
     symbol = _symbol_key(asset)
-    cached = MT5_PRICE_CACHE.get(symbol)
+    cached = FINNHUB_PRICE_CACHE.get(symbol)
     if cached:
         return float(cached[0])
+
     candles = get_candles(asset, limit=2)
     if candles:
         return float(candles[-1]["close"])
+
     return None
 
+# ==========================
+# INDICADORES
+# ==========================
 # ==========================
 # INDICADORES
 # ==========================
@@ -1271,8 +1297,8 @@ def main():
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente.")
         return
 
-    if mt5 is None:
-        log("ERRO: instale MetaTrader5 para usar esta versão.")
+    if not FINNHUB_API_KEY:
+        log("ERRO: configure FINNHUB_API_KEY nas variáveis de ambiente.")
         return
 
     remover_webhook()
