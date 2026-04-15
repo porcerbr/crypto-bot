@@ -10,6 +10,9 @@ from datetime import datetime, timedelta, timezone
 # ==========================
 # CONFIGURAÇÕES
 # ==========================
+
+TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "SUA_API_KEY_AQUI")
+
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
 
@@ -427,75 +430,30 @@ def verificar_comandos():
 # ==========================
 # KUCOIN HELPERS
 # ==========================
+
 def get_price(asset):
     try:
-        kucoin_symbol = asset["source"].replace("USDT", "-USDT")
-        url = "https://api.kucoin.com/api/v1/market/orderbook/level1"
-        params = {"symbol": kucoin_symbol}
+        symbol = asset["source"]
+
+        url = "https://api.twelvedata.com/price"
+        params = {
+            "symbol": symbol,
+            "apikey": TWELVE_API_KEY
+        }
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        price = data.get("data", {}).get("price")
+        price = data.get("price")
+
         if price is None:
+            log(f"Preço inválido {asset['id']}: {data}")
             return None
 
         return float(price)
+
     except Exception as e:
         log(f"Erro preço {asset['id']}: {e}")
-        return None
-
-def get_candles(asset, limit=150):
-    try:
-        kucoin_symbol = asset["source"].replace("USDT", "-USDT")
-        url = "https://api.kucoin.com/api/v1/market/candles"
-        params = {"type": CANDLE_TYPE, "symbol": kucoin_symbol}
-
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-
-        if "data" not in data or not isinstance(data["data"], list):
-            log(f"Resposta inválida candles {asset['id']}: {data}")
-            return None
-
-        rows = data["data"][:limit]
-        candles = []
-
-        for row in reversed(rows):
-            try:
-                open_ts = int(float(row[0]))
-                open_dt = datetime.fromtimestamp(open_ts, tz=timezone.utc)
-                candles.append({
-                    "time": open_dt,
-                    "open": float(row[1]),
-                    "close": float(row[2]),
-                    "high": float(row[3]),
-                    "low": float(row[4]),
-                    "volume": float(row[5]),
-                })
-            except Exception:
-                continue
-
-        return candles
-
-    except Exception as e:
-        log(f"Erro candles {asset['id']}: {e}")
-        return None
-
-def candle_por_abertura(candles, abertura_utc):
-    alvo = floor_timeframe(abertura_utc)
-    for candle in candles:
-        if floor_timeframe(candle["time"]) == alvo:
-            return candle
-    return None
-
-def obter_preco_abertura(candles, abertura_utc):
-    vela = candle_por_abertura(candles, abertura_utc)
-    if vela is None:
-        return None
-    try:
-        return float(vela["open"])
-    except Exception:
         return None
 
 # ==========================
