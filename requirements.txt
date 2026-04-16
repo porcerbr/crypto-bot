@@ -1,9 +1,2 @@
-requests
-numpy
-scikit-learn
-websocket-client
-pandas
-yfinance
-fastapi
-uvicorn[standard]
-requests
+requests==2.32.4
+python-dotenv==1.2.2
