@@ -8,18 +8,46 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 # ==========================
+# SESSÃO HTTP COM RETRY
+# ==========================
+
+SESSION = requests.Session()
+
+def safe_get(url, params=None, timeout=10, retries=2, backoff=0.6):
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return SESSION.get(url, params=params, timeout=timeout)
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < retries:
+                time.sleep(backoff * (attempt + 1))
+    raise last_exc
+
+def safe_post(url, data=None, timeout=10, retries=2, backoff=0.6):
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return SESSION.post(url, data=data, timeout=timeout)
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < retries:
+                time.sleep(backoff * (attempt + 1))
+    raise last_exc
+
+# ==========================
 # CONFIGURAÇÕES
 # ==========================
 
-FCS_API_KEY = "AbOhtILB9bb6aypPFblwnZ7aP4RZLs8YD"
-
-TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-CHAT_ID = os.getenv("CHAT_ID", "1056795017")
+TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "59f633d02fdf48b4bbd66713cf3d6a81").strip()
+TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ").strip()
+CHAT_ID = os.getenv("CHAT_ID", "1056795017").strip()
 
 TIMEFRAME_MINUTES = 1
 CANDLE_TYPE = "1min"
 
-SIGNAL_INTERVAL = 120
+# Menos frequência de sinais para economizar requisições
+SIGNAL_INTERVAL = 180
 UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
@@ -58,19 +86,27 @@ total_closed_trades = 0
 trade_history = deque(maxlen=500)
 
 # ==========================
-# UNIVERSO OTC / FOREX
+# CACHE INTELIGENTE
 # ==========================
 
+candles_cache = {}
+candles_cache_expires = {}
+PRICE_CACHE_SECONDS = 20
+price_cache = {}
+price_cache_expires = {}
+
+# ==========================
+# UNIVERSO FOREX
+# ==========================
 
 MARKET_CANDIDATES = [
-
-    {"id": "EURUSD", "label": "EUR/USD", "source": "OANDA:EUR_USD"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "OANDA:GBP_USD"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "OANDA:USD_JPY"},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "OANDA:AUD_USD"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "OANDA:USD_CAD"},
-
+    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
 ]
+
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
 
 performance = {
@@ -87,6 +123,7 @@ def update_active_symbols():
 # ==========================
 # APRENDIZADO
 # ==========================
+
 FEATURE_ORDER = [
     "trend_strength",
     "rsi_alignment",
@@ -130,6 +167,7 @@ MODEL_FILE = "hedge_model.json"
 # ==========================
 # TEMPO
 # ==========================
+
 def utc_now():
     return datetime.now(timezone.utc)
 
@@ -145,9 +183,14 @@ def next_timeframe(dt):
 def fmt_br(dt):
     return dt.astimezone(BR_TZ).strftime("%H:%M")
 
+def next_candle_refresh_time():
+    # espera alguns segundos após virar o minuto para garantir candle fechado no provider
+    return floor_timeframe(utc_now()) + timedelta(minutes=1, seconds=5)
+
 # ==========================
 # UTIL
 # ==========================
+
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
@@ -172,9 +215,29 @@ def comparar_resultado(preco_entrada, preco_saida, direcao):
         return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
     return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
 
+def parse_twelvedata_datetime(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+
+    try:
+        if value.endswith("Z"):
+            value = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
 # ==========================
 # MODELO / PERSISTÊNCIA
 # ==========================
+
 def carregar_modelo():
     global learning_data, model_state
 
@@ -310,11 +373,17 @@ def online_update(features, win):
 # ==========================
 # TELEGRAM
 # ==========================
+
 def enviar(msg):
     try:
+        if not TOKEN or not CHAT_ID:
+            log("Telegram não configurado: BOT_TOKEN ou CHAT_ID ausente.")
+            return
+
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {"chat_id": CHAT_ID, "text": msg}
-        r = requests.post(url, data=payload, timeout=10)
+        r = safe_post(url, data=payload, timeout=10)
+
         if r.status_code != 200:
             log(f"Erro Telegram: {r.status_code} | {r.text}")
     except Exception as e:
@@ -322,8 +391,10 @@ def enviar(msg):
 
 def remover_webhook():
     try:
+        if not TOKEN:
+            return
         url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
-        requests.get(url, timeout=10)
+        safe_get(url, timeout=10)
     except Exception:
         pass
 
@@ -331,12 +402,15 @@ def verificar_comandos():
     global LAST_UPDATE_ID, BOT_ATIVO
 
     try:
+        if not TOKEN:
+            return
+
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
         params = {}
         if LAST_UPDATE_ID is not None:
             params["offset"] = LAST_UPDATE_ID + 1
 
-        r = requests.get(url, params=params, timeout=10)
+        r = safe_get(url, params=params, timeout=10)
         data = r.json()
 
         if "result" not in data:
@@ -385,22 +459,43 @@ def verificar_comandos():
 
 def get_price(asset):
     try:
-
+        asset_id = asset["id"]
         symbol = asset["source"]
 
-        url = "https://fcsapi.com/api-v3/forex/latest"
+        agora = utc_now()
+        if asset_id in price_cache:
+            exp = price_cache_expires.get(asset_id)
+            if exp and agora < exp:
+                return price_cache[asset_id]
 
+        url = "https://api.twelvedata.com/price"
         params = {
             "symbol": symbol,
-            "access_key": FCS_API_KEY
+            "apikey": TWELVE_API_KEY
         }
 
-        r = requests.get(url, params=params, timeout=10)
+        r = safe_get(url, params=params, timeout=10)
+
+        if r.status_code != 200:
+            log(f"Erro HTTP preço {asset_id}: {r.status_code}")
+            return None
+
         data = r.json()
 
-        price = data["response"][0]["c"]
+        if isinstance(data, dict) and data.get("status") == "error":
+            log(f"Erro API preço {asset_id}: {data}")
+            return None
 
-        return float(price)
+        price = data.get("price")
+        if price is None:
+            log(f"Erro API preço {asset_id}: {data}")
+            return None
+
+        val = float(price)
+        price_cache[asset_id] = val
+        price_cache_expires[asset_id] = agora + timedelta(seconds=PRICE_CACHE_SECONDS)
+        time.sleep(0.2)
+        return val
 
     except Exception as e:
         log(f"Erro preço {asset['id']}: {e}")
@@ -491,6 +586,7 @@ def average_volume(candles, window=20):
 # ==========================
 # CONTEXTO / FIBONACCI
 # ==========================
+
 def market_regime(closes):
     if len(closes) < 60:
         return "UNKNOWN"
@@ -673,6 +769,7 @@ def score_from_learning(meta):
 # ==========================
 # IA / SCORE
 # ==========================
+
 def vector_from_features(features):
     return [float(features[k]) for k in FEATURE_ORDER]
 
@@ -697,8 +794,84 @@ def atualizar_pesos(features, win):
     online_update(features, win)
 
 # ==========================
+# CANDLES OTIMIZADO
+# ==========================
+
+def get_candles(asset, limit=150):
+    try:
+        asset_id = asset["id"]
+        symbol = asset["source"]
+        agora = utc_now()
+
+        # Usa cache se ainda está válido
+        exp = candles_cache_expires.get(asset_id)
+        if asset_id in candles_cache and exp and agora < exp:
+            return candles_cache[asset_id]
+
+        url = "https://api.twelvedata.com/time_series"
+        params = {
+            "symbol": symbol,
+            "interval": "1min",
+            "outputsize": limit,
+            "apikey": TWELVE_API_KEY
+        }
+
+        r = safe_get(url, params=params, timeout=10)
+
+        if r.status_code != 200:
+            log(f"Erro HTTP candles {asset_id}: {r.status_code}")
+            return None
+
+        data = r.json()
+
+        if isinstance(data, dict) and data.get("status") == "error":
+            log(f"Erro API candles {asset_id}: {data}")
+            return None
+
+        rows = data.get("values")
+        if not rows:
+            log(f"Erro API candles {asset_id}: {data}")
+            return None
+
+        candles = []
+
+        # TwelveData normalmente retorna do mais recente para o mais antigo
+        for row in reversed(rows):
+            dt = parse_twelvedata_datetime(row.get("datetime"))
+            if dt is None:
+                continue
+
+            try:
+                candles.append({
+                    "time": dt,
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row.get("volume", 0) or 0)
+                })
+            except Exception:
+                continue
+
+        if len(candles) < 20:
+            return None
+
+        candles_cache[asset_id] = candles
+        candles_cache_expires[asset_id] = next_candle_refresh_time()
+
+        # pequeno delay para evitar rate limit
+        time.sleep(0.35)
+
+        return candles
+
+    except Exception as e:
+        log(f"Erro candles {asset['id']}: {e}")
+        return None
+
+# ==========================
 # ANÁLISE INTELIGENTE
 # ==========================
+
 def analisar_ativo(asset, candles):
     if not candles or len(candles) < 60:
         return None
@@ -820,56 +993,9 @@ def analisar_ativo(asset, candles):
     }
 
 # ==========================
-# UNIVERSO DINÂMICO
-# ==========================
-
-def get_candles(asset, limit=150):
-    try:
-
-        symbol = asset["source"]
-
-        url = "https://fcsapi.com/api-v3/forex/candle"
-
-        params = {
-            "symbol": symbol,
-            "period": "1m",
-            "access_key": FCS_API_KEY
-        }
-
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-
-        if "response" not in data:
-            log(f"Erro candles {asset['id']}: {data}")
-            return None
-
-        candles = []
-
-        rows = data["response"]
-
-        for row in rows[-limit:]:
-
-            candles.append({
-                "time": datetime.fromtimestamp(
-                    row["t"],
-                    tz=timezone.utc
-                ),
-                "open": float(row["o"]),
-                "high": float(row["h"]),
-                "low": float(row["l"]),
-                "close": float(row["c"]),
-                "volume": float(row.get("v", 0))
-            })
-
-        return candles
-
-    except Exception as e:
-        log(f"Erro candles {asset['id']}: {e}")
-        return None
-
-# ==========================
 # RESULTADOS / HISTÓRICO
 # ==========================
+
 def register_trade_history(asset_id, win, stage, meta):
     global total_closed_trades
     total_closed_trades += 1
@@ -885,7 +1011,7 @@ def register_trade_history(asset_id, win, stage, meta):
         "score": meta.get("combined", meta.get("rule_score", 0.0)),
     })
 
-def maybe_send_learning_report(force=False):
+def report_learning_to_telegram(force=False):
     global last_learning_report_time, last_learning_report_trade_count
 
     total = wins + losses
@@ -946,6 +1072,9 @@ def maybe_send_learning_report(force=False):
     last_learning_report_time = now
     last_learning_report_trade_count = total_closed_trades
 
+def maybe_send_learning_report(force=False):
+    report_learning_to_telegram(force=force)
+
 def enviar_resultado(asset_label, resultado):
     total = wins + losses
     taxa = (wins / total) * 100 if total > 0 else 0
@@ -963,6 +1092,7 @@ def enviar_resultado(asset_label, resultado):
 # ==========================
 # VERIFICAR RESULTADOS
 # ==========================
+
 def verificar_resultados():
     global wins, losses
 
@@ -989,7 +1119,7 @@ def verificar_resultados():
             if win is None:
                 novas_operacoes.append(op)
                 continue
-                
+
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -1016,7 +1146,7 @@ def verificar_resultados():
             if win is None:
                 novas_operacoes.append(op)
                 continue
-                
+
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -1043,7 +1173,7 @@ def verificar_resultados():
             if win is None:
                 novas_operacoes.append(op)
                 continue
-                
+
             if win:
                 wins += 1
                 performance[asset_id]["win"] += 1
@@ -1068,6 +1198,7 @@ def verificar_resultados():
 # ==========================
 # ESCOLHA INTELIGENTE
 # ==========================
+
 def escolher_melhor_ativo():
     update_mode()
 
@@ -1212,6 +1343,7 @@ def escolher_melhor_ativo():
 # ==========================
 # SINAL
 # ==========================
+
 def criar_sinal(asset, direcao, score, meta):
     global setup_pendente, last_signal_time
 
@@ -1243,6 +1375,7 @@ def criar_sinal(asset, direcao, score, meta):
 # ==========================
 # SETUP
 # ==========================
+
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1294,91 +1427,32 @@ def processar_setup_pendente():
         setup_pendente = None
 
 # ==========================
-# REPORT
+# LOOP AUXILIAR
 # ==========================
-def report_learning_to_telegram(force=False):
-    global last_learning_report_time, last_learning_report_trade_count
 
-    total = wins + losses
-    if total < 5 and not force:
-        return
-
-    now = utc_now()
-    if not force and last_learning_report_time is not None:
-        elapsed = (now - last_learning_report_time).total_seconds()
-        trades_since = total_closed_trades - last_learning_report_trade_count
-        if elapsed < REPORT_INTERVAL_SECONDS and trades_since < REPORT_AFTER_TRADES:
-            return
-
-    def bucket_rank(bucket_name, reverse=True, min_trades=5, limit=5):
-        bucket = learning_data.get(bucket_name, {})
-        rows = []
-        for key, data in bucket.items():
-            t = data["win"] + data["loss"]
-            if t >= min_trades:
-                wr = (data["win"] / t) * 100 if t else 0
-                rows.append((wr, t, key))
-        rows.sort(reverse=reverse)
-        return rows[:limit]
-
-    lines = []
-    lines.append("📊 RELATÓRIO DE APRENDIZADO")
-    lines.append("")
-    lines.append(f"Trades fechados: {total}")
-    lines.append(f"Wins: {wins}")
-    lines.append(f"Losses: {losses}")
-    lines.append(f"Precisão geral: {((wins / total) * 100) if total else 0:.1f}%")
-    lines.append("")
-
-    def add_section(title, rows):
-        lines.append(title + ":")
-        if not rows:
-            lines.append("- sem dados suficientes")
-        for wr, t, key in rows:
-            lines.append(f"- {key}: {wr:.1f}% ({t})")
-        lines.append("")
-
-    add_section("Top 5 padrões Fibonacci", bucket_rank("pattern_stats", True, limit=5))
-    add_section("Melhores ativos", bucket_rank("asset_stats", True, limit=5))
-    add_section("Ativos a evitar", bucket_rank("asset_stats", False, limit=5))
-    add_section("Melhores horários", bucket_rank("hour_stats", True, limit=5))
-    add_section("Melhores regimes", bucket_rank("regime_stats", True, limit=5))
-    add_section("Melhores zonas Fibonacci", bucket_rank("fib_stats", True, limit=5))
-
-    lines.append("Pesos atuais:")
-    for k, v in model_state["feature_weights"].items():
-        lines.append(f"- {k}: {v:.2f}")
-    lines.append(f"- bias: {model_state['bias']:.2f}")
-    lines.append("")
-    lines.append(f"Universo atual: {', '.join([a['label'] for a in ACTIVE_ASSETS])}")
-
-    enviar("\n".join(lines))
-
-    last_learning_report_time = now
-    last_learning_report_trade_count = total_closed_trades
-
-def enviar_resultado(asset_label, resultado):
-    total = wins + losses
-    taxa = (wins / total) * 100 if total > 0 else 0
-
-    enviar(
-        "🏆 RESULTADO\n\n"
-        f"🌎 {asset_label}\n"
-        f"{'✅' if 'WIN' in resultado else '❌'} {resultado}\n\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Precisão: {round(taxa, 1)}%"
-    )
-    log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
+def tempo_ate_proxima_checagem():
+    agora = utc_now()
+    seg = agora.second
+    micro = agora.microsecond
+    falta = 5 - (seg % 5)
+    sleep_s = falta - (micro / 1_000_000)
+    if sleep_s < 1:
+        sleep_s = 1
+    return sleep_s
 
 # ==========================
 # MAIN LOOP
 # ==========================
+
 def main():
     global last_signal_time
     global last_universe_update
 
-    if TOKEN == "COLOQUE_SEU_TOKEN_AQUI" or CHAT_ID == "COLOQUE_SEU_CHAT_ID_AQUI":
+    if not TWELVE_API_KEY:
+        log("ERRO: configure TWELVE_API_KEY nas variáveis de ambiente do Railway.")
+        return
+
+    if not TOKEN or not CHAT_ID:
         log("ERRO: configure BOT_TOKEN e CHAT_ID nas variáveis de ambiente do Railway.")
         return
 
@@ -1408,7 +1482,7 @@ def main():
 
                 maybe_send_learning_report()
 
-            time.sleep(15)
+            time.sleep(tempo_ate_proxima_checagem())
 
         except Exception as e:
             log(f"Erro geral: {e}")
