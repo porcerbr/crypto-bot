@@ -8,7 +8,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 # ==========================
-# SESSÃO HTTP COM RETRY
+# HTTP SESSION / RETRY
 # ==========================
 
 SESSION = requests.Session()
@@ -44,18 +44,11 @@ TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017").strip()
 
 TIMEFRAME_MINUTES = 1
-CANDLE_TYPE = "1min"
-
-# Menos frequência de sinais para economizar requisições
-SIGNAL_INTERVAL = 180
+SIGNAL_INTERVAL = 240
 UNIVERSE_REFRESH = 900
 COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
-
-# Pequeno atraso extra para reduzir leitura antecipada da expiração
 EXTRA_EVAL_DELAY_SECONDS = 2
-
-# Tolerância para latência
 TOLERANCIA = 0.00015
 
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
@@ -63,6 +56,9 @@ REPORT_AFTER_TRADES = 25
 
 BR_TZ = timezone(timedelta(hours=-3))
 DEBUG_REJEICOES = True
+
+# Limite conservador por minuto para não estourar o free tier
+MARKET_REQUESTS_BUDGET_PER_MIN = 7
 
 wins = 0
 losses = 0
@@ -86,17 +82,32 @@ total_closed_trades = 0
 trade_history = deque(maxlen=500)
 
 # ==========================
-# CACHE INTELIGENTE
+# CACHE / ORÇAMENTO
 # ==========================
 
 candles_cache = {}
 candles_cache_expires = {}
-PRICE_CACHE_SECONDS = 20
-price_cache = {}
-price_cache_expires = {}
+
+market_budget_minute = None
+market_requests_used = 0
+
+def can_use_market_request():
+    global market_budget_minute, market_requests_used
+
+    minute = utc_now().replace(second=0, microsecond=0)
+
+    if market_budget_minute != minute:
+        market_budget_minute = minute
+        market_requests_used = 0
+
+    if market_requests_used >= MARKET_REQUESTS_BUDGET_PER_MIN:
+        return False
+
+    market_requests_used += 1
+    return True
 
 # ==========================
-# UNIVERSO FOREX
+# UNIVERSO
 # ==========================
 
 MARKET_CANDIDATES = [
@@ -184,7 +195,6 @@ def fmt_br(dt):
     return dt.astimezone(BR_TZ).strftime("%H:%M")
 
 def next_candle_refresh_time():
-    # espera alguns segundos após virar o minuto para garantir candle fechado no provider
     return floor_timeframe(utc_now()) + timedelta(minutes=1, seconds=5)
 
 # ==========================
@@ -206,14 +216,6 @@ def log(msg):
 def safe_bucket(bucket_name):
     if bucket_name not in learning_data:
         learning_data[bucket_name] = {}
-
-def comparar_resultado(preco_entrada, preco_saida, direcao):
-    if preco_entrada is None or preco_saida is None:
-        return None
-
-    if direcao == "BUY":
-        return (float(preco_saida) - float(preco_entrada)) > TOLERANCIA
-    return (float(preco_entrada) - float(preco_saida)) > TOLERANCIA
 
 def parse_twelvedata_datetime(value):
     if not value:
@@ -454,71 +456,81 @@ def verificar_comandos():
         log(f"Erro comandos: {e}")
 
 # ==========================
-# API / HELPERS
+# CANDLES OTIMIZADO
 # ==========================
 
-def get_price(asset):
+def get_candles(asset, limit=150):
     try:
         asset_id = asset["id"]
         symbol = asset["source"]
-
         agora = utc_now()
-        if asset_id in price_cache:
-            exp = price_cache_expires.get(asset_id)
-            if exp and agora < exp:
-                return price_cache[asset_id]
 
-        url = "https://api.twelvedata.com/price"
+        exp = candles_cache_expires.get(asset_id)
+        if asset_id in candles_cache and exp and agora < exp:
+            return candles_cache[asset_id]
+
+        if not can_use_market_request():
+            if asset_id in candles_cache:
+                return candles_cache[asset_id]
+            return None
+
+        url = "https://api.twelvedata.com/time_series"
         params = {
             "symbol": symbol,
+            "interval": "1min",
+            "outputsize": limit,
             "apikey": TWELVE_API_KEY
         }
 
         r = safe_get(url, params=params, timeout=10)
 
         if r.status_code != 200:
-            log(f"Erro HTTP preço {asset_id}: {r.status_code}")
+            log(f"Erro HTTP candles {asset_id}: {r.status_code}")
             return None
 
         data = r.json()
 
         if isinstance(data, dict) and data.get("status") == "error":
-            log(f"Erro API preço {asset_id}: {data}")
+            log(f"Erro API candles {asset_id}: {data}")
             return None
 
-        price = data.get("price")
-        if price is None:
-            log(f"Erro API preço {asset_id}: {data}")
+        rows = data.get("values")
+        if not rows:
+            log(f"Erro API candles {asset_id}: {data}")
             return None
 
-        val = float(price)
-        price_cache[asset_id] = val
-        price_cache_expires[asset_id] = agora + timedelta(seconds=PRICE_CACHE_SECONDS)
-        time.sleep(0.2)
-        return val
+        candles = []
+        for row in reversed(rows):
+            dt = parse_twelvedata_datetime(row.get("datetime"))
+            if dt is None:
+                continue
+
+            try:
+                candles.append({
+                    "time": dt,
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row.get("volume", 0) or 0)
+                })
+            except Exception:
+                continue
+
+        if len(candles) < 20:
+            return None
+
+        candles_cache[asset_id] = candles
+        candles_cache_expires[asset_id] = next_candle_refresh_time()
+        return candles
 
     except Exception as e:
-        log(f"Erro preço {asset['id']}: {e}")
+        log(f"Erro candles {asset['id']}: {e}")
         return None
 
 # ==========================
 # INDICADORES
 # ==========================
-
-def avaliar_por_vela(asset, direcao):
-    candles = get_candles(asset, limit=3)
-    if not candles or len(candles) < 2:
-        return None
-
-    candle = candles[-2]  # última vela FECHADA
-
-    entrada = candle["open"]
-    saida = candle["close"]
-
-    if direcao == "BUY":
-        return saida > entrada
-    else:
-        return saida < entrada
 
 def ema_last(prices, period):
     if len(prices) < period:
@@ -794,82 +806,7 @@ def atualizar_pesos(features, win):
     online_update(features, win)
 
 # ==========================
-# CANDLES OTIMIZADO
-# ==========================
-
-def get_candles(asset, limit=150):
-    try:
-        asset_id = asset["id"]
-        symbol = asset["source"]
-        agora = utc_now()
-
-        # Usa cache se ainda está válido
-        exp = candles_cache_expires.get(asset_id)
-        if asset_id in candles_cache and exp and agora < exp:
-            return candles_cache[asset_id]
-
-        url = "https://api.twelvedata.com/time_series"
-        params = {
-            "symbol": symbol,
-            "interval": "1min",
-            "outputsize": limit,
-            "apikey": TWELVE_API_KEY
-        }
-
-        r = safe_get(url, params=params, timeout=10)
-
-        if r.status_code != 200:
-            log(f"Erro HTTP candles {asset_id}: {r.status_code}")
-            return None
-
-        data = r.json()
-
-        if isinstance(data, dict) and data.get("status") == "error":
-            log(f"Erro API candles {asset_id}: {data}")
-            return None
-
-        rows = data.get("values")
-        if not rows:
-            log(f"Erro API candles {asset_id}: {data}")
-            return None
-
-        candles = []
-
-        # TwelveData normalmente retorna do mais recente para o mais antigo
-        for row in reversed(rows):
-            dt = parse_twelvedata_datetime(row.get("datetime"))
-            if dt is None:
-                continue
-
-            try:
-                candles.append({
-                    "time": dt,
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "volume": float(row.get("volume", 0) or 0)
-                })
-            except Exception:
-                continue
-
-        if len(candles) < 20:
-            return None
-
-        candles_cache[asset_id] = candles
-        candles_cache_expires[asset_id] = next_candle_refresh_time()
-
-        # pequeno delay para evitar rate limit
-        time.sleep(0.35)
-
-        return candles
-
-    except Exception as e:
-        log(f"Erro candles {asset['id']}: {e}")
-        return None
-
-# ==========================
-# ANÁLISE INTELIGENTE
+# ANÁLISE
 # ==========================
 
 def analisar_ativo(asset, candles):
@@ -983,6 +920,7 @@ def analisar_ativo(asset, candles):
         "model_prob": model_prob,
         "combined": combined,
         "pattern": pattern,
+        "current_price": price,
     }
 
     return {
@@ -993,7 +931,7 @@ def analisar_ativo(asset, candles):
     }
 
 # ==========================
-# RESULTADOS / HISTÓRICO
+# HISTÓRICO / RELATÓRIO
 # ==========================
 
 def register_trade_history(asset_id, win, stage, meta):
@@ -1090,8 +1028,24 @@ def enviar_resultado(asset_label, resultado):
     log(f"RESULTADO | {asset_label} | {resultado} | W={wins} L={losses}")
 
 # ==========================
-# VERIFICAR RESULTADOS
+# RESULTADOS
 # ==========================
+
+def avaliar_por_vela(asset, direcao, candles=None):
+    if candles is None:
+        candles = get_candles(asset, limit=3)
+
+    if not candles or len(candles) < 2:
+        return None
+
+    candle = candles[-2]
+    entrada = candle["open"]
+    saida = candle["close"]
+
+    if direcao == "BUY":
+        return saida > entrada
+    else:
+        return saida < entrada
 
 def verificar_resultados():
     global wins, losses
@@ -1108,13 +1062,13 @@ def verificar_resultados():
 
         delay = EVAL_GRACE_SECONDS + EXTRA_EVAL_DELAY_SECONDS
 
-        # ETAPA 0 — ENTRADA
         if op["etapa"] == 0:
             if agora_utc < op["tempo_entrada"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
-            win = avaliar_por_vela(asset, direcao)
+            candles = get_candles(asset, limit=3)
+            win = avaliar_por_vela(asset, direcao, candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1131,17 +1085,17 @@ def verificar_resultados():
                 continue
 
             op["etapa"] = 1
-            op["preco_entrada_stage1"] = get_price(asset)
+            op["preco_entrada_stage1"] = meta.get("current_price")
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 1 — PROTEÇÃO 1
         if op["etapa"] == 1:
             if agora_utc < op["tempo_protecao1"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
-            win = avaliar_por_vela(asset, direcao)
+            candles = get_candles(asset, limit=3)
+            win = avaliar_por_vela(asset, direcao, candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1158,17 +1112,17 @@ def verificar_resultados():
                 continue
 
             op["etapa"] = 2
-            op["preco_entrada_stage2"] = get_price(asset)
+            op["preco_entrada_stage2"] = meta.get("current_price")
             novas_operacoes.append(op)
             continue
 
-        # ETAPA 2 — PROTEÇÃO 2
         if op["etapa"] == 2:
             if agora_utc < op["tempo_protecao2"] + timedelta(minutes=TIMEFRAME_MINUTES, seconds=delay):
                 novas_operacoes.append(op)
                 continue
 
-            win = avaliar_por_vela(asset, direcao)
+            candles = get_candles(asset, limit=3)
+            win = avaliar_por_vela(asset, direcao, candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1341,7 +1295,7 @@ def escolher_melhor_ativo():
     return None, None, None, None
 
 # ==========================
-# SINAL
+# SINAL / SETUP
 # ==========================
 
 def criar_sinal(asset, direcao, score, meta):
@@ -1372,10 +1326,6 @@ def criar_sinal(asset, direcao, score, meta):
     )
     log(f"SINAL | {asset['label']} | {direcao} | {score:.3f}")
 
-# ==========================
-# SETUP
-# ==========================
-
 def processar_setup_pendente():
     global setup_pendente, last_trade_time
 
@@ -1391,7 +1341,7 @@ def processar_setup_pendente():
         p1 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES)
         p2 = entrada_time + timedelta(minutes=TIMEFRAME_MINUTES * 2)
 
-        preco_entrada = get_price(asset)
+        preco_entrada = setup_pendente.get("meta", {}).get("current_price")
         if preco_entrada is None:
             log(f"Preço de entrada indisponível para {asset['label']}, aguardando próximo ciclo.")
             return
@@ -1427,7 +1377,7 @@ def processar_setup_pendente():
         setup_pendente = None
 
 # ==========================
-# LOOP AUXILIAR
+# LOOP
 # ==========================
 
 def tempo_ate_proxima_checagem():
@@ -1439,10 +1389,6 @@ def tempo_ate_proxima_checagem():
     if sleep_s < 1:
         sleep_s = 1
     return sleep_s
-
-# ==========================
-# MAIN LOOP
-# ==========================
 
 def main():
     global last_signal_time
