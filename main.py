@@ -504,9 +504,11 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         ema_short = calculate_ema(closes, Config.EMA_SHORT)
         ema_long = calculate_ema(closes, Config.EMA_LONG)
         rsi = calculate_rsi(closes, Config.RSI_PERIOD)
-        macd, signal = calculate_macd(closes)  # ✅ NOVO
+        macd, signal = calculate_macd(closes)
         
-        log(f"  {symbol} | EMA9: {ema_short:.6f} | EMA21: {ema_long:.6f} | RSI: {rsi:.2f} | MACD: {macd:.6f if macd else 'N/A'}")
+        # ✅ CORRIGIDO: Formatação correta
+        macd_str = f"{macd:.6f}" if macd else "N/A"
+        log(f"  {symbol} | EMA9: {ema_short:.6f} | EMA21: {ema_long:.6f} | RSI: {rsi:.2f} | MACD: {macd_str}")
         
         if any(v is None for v in [ema_short, ema_long, rsi]):
             log(f"  ❌ {symbol} - Indicadores None")
