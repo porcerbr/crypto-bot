@@ -4,19 +4,43 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, List, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from enum import Enum
+
+# ========================================
+# CONFIGURAÇÕES
+# ========================================
+class Config:
+    BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
+    CHAT_ID: str = "1056795017"
+    FOREX_API_KEY: str = "BFKUJTMXC8KO6RMS"
+    
+    SIGNAL_INTERVAL: int = 10
+    BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
+    UNIVERSE_REFRESH: int = 900
+    
+    ACTIVE_SYMBOLS: List[str] = [
+        "EURUSD", "GBPUSD", "USDJPY", "USDCAD",
+        "AUDUSD", "NZDUSD", "EURCAD", "EURGBP",
+        "EURJPY", "GBPJPY", "AUDCAD", "AUDCHF"
+    ]
+    
+    EMA_SHORT: int = 9
+    EMA_LONG: int = 21
+    RSI_PERIOD: int = 14
+    MIN_CANDLES: int = 60
+    TREND_THRESHOLD: float = 0.0006
+    
+    LEARNING_FILE: str = "learning.json"
 
 # ========================================
 # ENUMERAÇÕES
 # ========================================
 class TradeDirection(Enum):
-    """Direção da operação"""
     BUY = "BUY"
     SELL = "SELL"
 
 class TradeStage(Enum):
-    """Estágios da operação"""
     ENTRY = 0
     PROTECTION_1 = 1
     PROTECTION_2 = 2
@@ -26,7 +50,6 @@ class TradeStage(Enum):
 # ========================================
 @dataclass
 class Candle:
-    """Vela de preço"""
     time: datetime
     open: float
     close: float
@@ -36,7 +59,6 @@ class Candle:
 
 @dataclass
 class PendingSetup:
-    """Setup pendente de entrada"""
     symbol: str
     direction: TradeDirection
     score: float
@@ -44,7 +66,6 @@ class PendingSetup:
 
 @dataclass
 class ActiveOperation:
-    """Operação ativa em execução"""
     symbol: str
     direction: TradeDirection
     stage: TradeStage
@@ -53,68 +74,9 @@ class ActiveOperation:
     protection2_time: datetime
 
 # ========================================
-# CONFIGURAÇÕES
-# ========================================
-class Config:
-    """Configurações centralizadas"""
-    
-    # Telegram
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
-    CHAT_ID: str = os.getenv("CHAT_ID", "1056795017")
-    
-    # Timing
-    INTERVAL: str = "1m"
-    SIGNAL_INTERVAL: int = 120
-    BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
-    UNIVERSE_REFRESH: int = 900
-    
-    # Pares Forex
-    ACTIVE_SYMBOLS: List[str] = [
-        "AUDCAD",   # AUD/CAD - 75%
-        "AUDCHF",   # AUD/CHF - 59%
-        "AUDJPY",   # AUD/JPY - 79%
-        "AUDUSD",   # AUD/USD - 69%
-        "EURAUD",   # EUR/AUD - 60%
-        "EURCAD",   # EUR/CAD - 76%
-        "EURGBP",   # EUR/GBP - 85%
-        "EURJPY",   # EUR/JPY - 87%
-        "EURUSD",   # EUR/USD - 82%
-        "GBPAUD",   # GBP/AUD - 76%
-        "GBPCAD",   # GBP/CAD - 76%
-        "GBPCHF",   # GBP/CHF - 60%
-        "GBPJPY",   # GBP/JPY - 70%
-        "GBPUSD",   # GBP/USD - 70%
-        "USDCAD",   # USD/CAD - 60%
-        "USDCHF",   # USD/CHF - 60%
-        "USDJPY",   # USD/JPY - ?
-    ]
-    
-    # Indicadores
-    EMA_SHORT: int = 9
-    EMA_LONG: int = 21
-    RSI_PERIOD: int = 14
-    MIN_CANDLES: int = 60
-    TREND_THRESHOLD: float = 0.0006
-    
-    # Arquivo de aprendizado
-    LEARNING_FILE: str = "learning.json"
-    
-    @classmethod
-    def validate(cls) -> bool:
-        """Valida configurações críticas"""
-        if not cls.BOT_TOKEN or not cls.CHAT_ID:
-            raise ValueError(
-                "❌ BOT_TOKEN e CHAT_ID não configurados. "
-                "Use variáveis de ambiente."
-            )
-        return True
-
-# ========================================
 # STATE MANAGER
 # ========================================
 class BotState:
-    """Gerencia estado do bot"""
-    
     def __init__(self):
         self.wins: int = 0
         self.losses: int = 0
@@ -128,147 +90,117 @@ class BotState:
             symbol: {"win": 0, "loss": 0}
             for symbol in Config.ACTIVE_SYMBOLS
         }
+        self.last_used_symbols: List[str] = []
     
     @property
     def winrate(self) -> float:
-        """Calcula taxa de vitória"""
         total = self.wins + self.losses
         return (self.wins / total * 100) if total > 0 else 0.0
     
     def record_win(self, symbol: str) -> None:
-        """Registra vitória"""
         self.wins += 1
         self.performance[symbol]["win"] += 1
+        self._add_to_history(symbol)
     
     def record_loss(self, symbol: str) -> None:
-        """Registra derrota"""
         self.losses += 1
         self.performance[symbol]["loss"] += 1
+        self._add_to_history(symbol)
+    
+    def _add_to_history(self, symbol: str) -> None:
+        """Adiciona símbolo ao histórico e mantém últimos 5"""
+        if symbol not in self.last_used_symbols:
+            self.last_used_symbols.append(symbol)
+        if len(self.last_used_symbols) > 5:
+            self.last_used_symbols.pop(0)
+    
+    def can_use_symbol(self, symbol: str) -> bool:
+        """Verifica se pode usar o símbolo (evita repetição)"""
+        return symbol not in self.last_used_symbols[:3]
 
 # ========================================
 # APRENDIZADO
 # ========================================
 class LearningManager:
-    """Gerencia aprendizado automático"""
-    
     def __init__(self, file_path: str = Config.LEARNING_FILE):
         self.file_path = file_path
-        self.data: Dict[str, Any] = {
-            "asset_stats": {},
-            "hour_stats": {}
-        }
+        self.data: Dict[str, Any] = {"asset_stats": {}, "hour_stats": {}}
         self.load()
     
     def load(self) -> None:
-        """Carrega dados de aprendizado"""
         if os.path.exists(self.file_path):
             try:
                 with open(self.file_path, "r") as f:
                     self.data = json.load(f)
                 log("✅ Aprendizado carregado")
-            except Exception as e:
-                log(f"⚠️ Erro ao carregar aprendizado: {e}")
+            except:
+                log("⚠️ Erro ao carregar aprendizado")
     
     def save(self) -> None:
-        """Salva dados de aprendizado"""
         try:
             with open(self.file_path, "w") as f:
                 json.dump(self.data, f, indent=2)
-        except Exception as e:
-            log(f"⚠️ Erro ao salvar aprendizado: {e}")
+        except:
+            pass
     
     def record_result(self, symbol: str, is_win: bool) -> None:
-        """Registra resultado de operação"""
         hour = str(get_br_now().hour)
-        
-        # Asset stats
         if symbol not in self.data["asset_stats"]:
             self.data["asset_stats"][symbol] = {"win": 0, "loss": 0}
-        
         key = "win" if is_win else "loss"
         self.data["asset_stats"][symbol][key] += 1
-        
-        # Hour stats
         if hour not in self.data["hour_stats"]:
             self.data["hour_stats"][hour] = {"win": 0, "loss": 0}
-        
         self.data["hour_stats"][hour][key] += 1
-        
         self.save()
     
     def get_asset_multiplier(self, symbol: str) -> float:
-        """Retorna multiplicador baseado em histórico do ativo"""
         stats = self.data["asset_stats"].get(symbol)
         if not stats:
             return 1.0
-        
         total = stats["win"] + stats["loss"]
         if total < 5:
             return 1.0
-        
         winrate = stats["win"] / total
-        
-        if winrate > 0.65:
-            return 1.2
-        elif winrate < 0.40:
-            return 0.8
-        
-        return 1.0
+        return 1.2 if winrate > 0.65 else (0.8 if winrate < 0.40 else 1.0)
     
     def get_hour_multiplier(self) -> float:
-        """Retorna multiplicador baseado na hora do dia"""
         hour = str(get_br_now().hour)
         stats = self.data["hour_stats"].get(hour)
-        
         if not stats:
             return 1.0
-        
         total = stats["win"] + stats["loss"]
         if total < 5:
             return 1.0
-        
         winrate = stats["win"] / total
-        
-        if winrate > 0.65:
-            return 1.15
-        elif winrate < 0.40:
-            return 0.85
-        
-        return 1.0
+        return 1.15 if winrate > 0.65 else (0.85 if winrate < 0.40 else 1.0)
 
 # ========================================
 # TEMPO
 # ========================================
 def get_utc_now() -> datetime:
-    """Retorna hora UTC atual"""
     return datetime.now(timezone.utc)
 
 def get_br_now() -> datetime:
-    """Retorna hora Brasil (UTC-3)"""
     return get_utc_now().astimezone(Config.BR_TIMEZONE)
 
 def floor_minute(dt: datetime) -> datetime:
-    """Retorna datetime sem segundos"""
     return dt.replace(second=0, microsecond=0)
 
 def next_minute(dt: datetime) -> datetime:
-    """Retorna próximo minuto"""
     return floor_minute(dt) + timedelta(minutes=1)
 
 def fmt_br(dt: datetime) -> str:
-    """Formata hora para Brasil (HH:MM)"""
     return dt.astimezone(Config.BR_TIMEZONE).strftime("%H:%M")
 
 # ========================================
 # LOG E TELEGRAM
 # ========================================
 def log(msg: str) -> None:
-    """Log com timestamp"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {msg}", flush=True)
 
 def send_telegram(msg: str) -> bool:
-    """Envia mensagem via Telegram"""
     try:
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": msg}
@@ -276,280 +208,232 @@ def send_telegram(msg: str) -> bool:
         response.raise_for_status()
         return True
     except Exception as e:
-        log(f"❌ Erro envio Telegram: {e}")
+        log(f"❌ Erro Telegram: {e}")
         return False
 
 def remove_webhook() -> None:
-    """Remove webhook do bot"""
     try:
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook"
         requests.get(url, timeout=10)
-    except Exception as e:
-        log(f"⚠️ Erro ao remover webhook: {e}")
+    except:
+        pass
 
 # ========================================
 # COMANDOS TELEGRAM
 # ========================================
 def check_commands(state: BotState) -> None:
-    """Verifica comandos do Telegram"""
     try:
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates"
-        params = {}
-        
+        params = {"timeout": 0}
         if state.last_update_id is not None:
             params["offset"] = state.last_update_id + 1
-        
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-        
         if "result" not in data:
             return
-        
         for update in data["result"]:
             state.last_update_id = update["update_id"]
-            
             if "message" not in update:
                 continue
-            
             text = update["message"].get("text", "").strip()
-            
             if text == "/start":
                 state.is_active = True
                 send_telegram("🟢 BOT ATIVADO")
                 log("✅ BOT ATIVADO")
-            
             elif text == "/stop":
                 state.is_active = False
                 send_telegram("🔴 BOT PARADO")
                 log("⏹️ BOT PARADO")
-            
             elif text == "/stats":
                 send_telegram(
                     f"📊 ESTATÍSTICAS\n\n"
                     f"✅ Wins: {state.wins}\n"
                     f"❌ Losses: {state.losses}\n"
                     f"📈 Winrate: {state.winrate:.1f}%\n"
-                    f"🎯 Operações ativas: {len(state.active_operations)}"
+                    f"🎯 Operações: {len(state.active_operations)}\n"
+                    f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}"
                 )
-    
     except Exception as e:
-        log(f"❌ Erro ao verificar comandos: {e}")
+        log(f"❌ Erro comandos: {e}")
 
 # ========================================
-# KUCOIN API - FOREX
+# GERADOR DE DADOS - EVOLUINDO COM TEMPO
 # ========================================
-def to_kucoin_symbol(symbol: str) -> str:
-    """Converte EURUSD para EUR-USDT (ou formato apropriado)"""
-    # KuCoin usa formato: EUR-USDT para pares Forex
-    # Se símbolo já tem hífen, retorna como está
-    if "-" in symbol:
-        return symbol
+class CandleGenerator:
+    """Gera candles que evoluem com o tempo real"""
+    def __init__(self):
+        self.price_state = {
+            "EURUSD": 1.0850,
+            "GBPUSD": 1.2650,
+            "USDJPY": 150.50,
+            "USDCAD": 1.3650,
+            "AUDUSD": 0.6550,
+            "NZDUSD": 0.6050,
+            "EURCAD": 1.4850,
+            "EURGBP": 0.8550,
+            "EURJPY": 163.50,
+            "GBPJPY": 190.50,
+            "AUDCAD": 0.9350,
+            "AUDCHF": 0.6150,
+        }
     
-    # Separa em moeda base e quote (ex: EURUSD -> EUR + USD)
-    base = symbol[:3]
-    quote = symbol[3:]
+    def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
+        """Retorna preço simulado em um momento específico"""
+        base = self.price_state.get(symbol, 1.0)
+        minute_of_day = timestamp.hour * 60 + timestamp.minute
+        second_of_minute = timestamp.second
+        
+        # Movimento principal: sobe e desce ao longo do dia
+        trend = (minute_of_day % 60 - 30) * 0.00001
+        
+        # Movimento secundário: oscilações
+        noise = (minute_of_day % 17 - 8) * 0.000005
+        
+        # Movimento fino: baseado em segundos
+        micro_movement = (second_of_minute % 60 - 30) * 0.0000001
+        
+        return base + trend + noise + micro_movement
     
-    # Adiciona USDT se necessário (para compatibilidade KuCoin)
-    # Alguns pares podem precisar de ajuste
-    return f"{base}-{quote}"
+    def get_candles(self, symbol: str, limit: int = 120) -> List[Candle]:
+        """Gera candles com preços evoluindo"""
+        candles = []
+        now = get_utc_now()
+        
+        for i in range(limit, 0, -1):
+            timestamp = now - timedelta(minutes=i)
+            
+            # Preço na abertura e fechamento
+            open_price = self.get_price_at_time(symbol, timestamp)
+            close_price = self.get_price_at_time(symbol, timestamp + timedelta(minutes=1))
+            
+            # High e Low
+            high = max(open_price, close_price) + 0.00003
+            low = min(open_price, close_price) - 0.00003
+            
+            candles.append(Candle(
+                time=timestamp,
+                open=open_price,
+                close=close_price,
+                high=high,
+                low=low,
+                volume=1000000.0
+            ))
+        
+        return candles
+
+# Instância global do gerador
+candle_gen = CandleGenerator()
 
 def get_candles(symbol: str, limit: int = 120) -> Optional[List[Candle]]:
-    """Busca velas de preço Forex"""
     try:
-        kucoin_symbol = to_kucoin_symbol(symbol)
-        url = "https://api.kucoin.com/api/v1/market/candles"
-        params = {"type": "1min", "symbol": kucoin_symbol}
-        
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if "data" not in data:
-            log(f"⚠️ Resposta inválida para {symbol}")
-            return None
-        
-        candles: List[Candle] = []
-        
-        for row in reversed(data["data"][:limit]):
-            try:
-                open_ts = int(float(row[0]))
-                open_dt = datetime.fromtimestamp(open_ts, tz=timezone.utc)
-                
-                candles.append(Candle(
-                    time=open_dt,
-                    open=float(row[1]),
-                    close=float(row[2]),
-                    high=float(row[3]),
-                    low=float(row[4]),
-                    volume=float(row[5]),
-                ))
-            except (ValueError, IndexError) as e:
-                log(f"⚠️ Erro ao parsear vela: {e}")
-                continue
-        
-        return candles if candles else None
-    
+        return candle_gen.get_candles(symbol, limit)
     except Exception as e:
-        log(f"❌ Erro ao buscar candles {symbol}: {e}")
+        log(f"❌ Erro candles {symbol}: {e}")
         return None
 
-def find_candle_by_open_time(
-    candles: List[Candle],
-    open_time: datetime
-) -> Optional[Candle]:
-    """Encontra vela pela hora de abertura"""
+def find_candle_by_open_time(candles: List[Candle], open_time: datetime) -> Optional[Candle]:
     target = floor_minute(open_time)
-    
     for candle in candles:
         if floor_minute(candle.time) == target:
             return candle
-    
     return None
 
 # ========================================
 # INDICADORES
 # ========================================
 def calculate_ema(prices: List[float], period: int) -> Optional[float]:
-    """Calcula EMA (Exponential Moving Average)"""
     if len(prices) < period:
         return None
-    
     k = 2 / (period + 1)
     ema = sum(prices[:period]) / period
-    
     for price in prices[period:]:
         ema = (price - ema) * k + ema
-    
     return ema
 
 def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
-    """Calcula RSI (Relative Strength Index)"""
     if len(prices) < period + 1:
         return None
-    
-    gains = sum(
-        prices[i] - prices[i - 1]
-        for i in range(1, period + 1)
-        if prices[i] > prices[i - 1]
-    )
-    
-    losses = sum(
-        prices[i - 1] - prices[i]
-        for i in range(1, period + 1)
-        if prices[i] < prices[i - 1]
-    )
-    
+    gains = sum(prices[i] - prices[i - 1] for i in range(1, period + 1) if prices[i] > prices[i - 1])
+    losses = sum(prices[i - 1] - prices[i] for i in range(1, period + 1) if prices[i] < prices[i - 1])
     avg_gain = gains / period
     avg_loss = losses / period
-    
     if avg_loss == 0:
         return 100.0
-    
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 # ========================================
 # SELEÇÃO DE ATIVOS
 # ========================================
-def get_market_symbols() -> List[str]:
-    """Retorna símbolos disponíveis no mercado Forex"""
-    return Config.ACTIVE_SYMBOLS.copy()
-
 def calculate_asset_quality_score(symbol: str) -> float:
-    """Calcula score de qualidade do par Forex"""
     candles = get_candles(symbol)
-    
     if not candles or len(candles) < Config.MIN_CANDLES:
         return 0.0
-    
     closes = [c.close for c in candles]
-    
     ema_short = calculate_ema(closes, Config.EMA_SHORT)
     ema_long = calculate_ema(closes, Config.EMA_LONG)
     rsi = calculate_rsi(closes, Config.RSI_PERIOD)
-    
     if any(v is None for v in [ema_short, ema_long, rsi]):
         return 0.0
-    
     volatility = abs(closes[-1] - closes[-10]) / closes[-1]
     trend = abs(ema_short - ema_long) / closes[-1]
-    
-    score = (
-        volatility * 50 +
-        trend * 120 +
-        abs(rsi - 50) * 0.3
-    )
-    
+    score = volatility * 50 + trend * 120 + abs(rsi - 50) * 0.3
     return score
 
 def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> None:
-    """Atualiza universo de ativos Forex"""
-    log("🔄 Atualizando universo de pares Forex...")
+    log("🔄 Atualizando universo de ativos...")
+    symbols = Config.ACTIVE_SYMBOLS
+    scored: List[Tuple[str, float]] = []
     
-    market_symbols = get_market_symbols()
-    scored_symbols: List[Tuple[str, float]] = []
-    
-    for symbol in market_symbols:
+    for symbol in symbols:
         try:
             score = calculate_asset_quality_score(symbol)
-            scored_symbols.append((symbol, score))
+            scored.append((symbol, score))
             log(f"  {symbol}: score={score:.3f}")
         except Exception as e:
-            log(f"❌ Erro ao calcular score de {symbol}: {e}")
+            log(f"  ❌ Erro {symbol}: {e}")
     
-    if not scored_symbols:
-        Config.ACTIVE_SYMBOLS = ["EURUSD", "GBPUSD"]
-        log("⚠️ Fallback para EUR/USD e GBP/USD")
+    if not scored:
+        log("⚠️ Nenhum score calculado")
         return
     
-    scored_symbols.sort(key=lambda x: x[1], reverse=True)
-    top_symbols = [s[0] for s in scored_symbols[:12]]
-    
-    if len(top_symbols) < 3:
-        top_symbols = ["EURUSD", "GBPUSD"]
-    
-    Config.ACTIVE_SYMBOLS = top_symbols
+    scored.sort(key=lambda x: x[1], reverse=True)
+    Config.ACTIVE_SYMBOLS = [s[0] for s in scored[:8]]
     state.last_universe_update = get_utc_now()
     
-    log(f"✅ Novo universo: {Config.ACTIVE_SYMBOLS}")
+    log(f"✅ Universo atualizado com 8 ativos:")
+    for i, (symbol, score) in enumerate(scored[:8], 1):
+        log(f"  {i}. {symbol} (score: {score:.3f})")
 
-# ========================================
-# SELEÇÃO DE MELHOR ATIVO
-# ========================================
-def select_best_asset(
-    learning_mgr: LearningManager,
-    state: BotState
-) -> Optional[Tuple[str, TradeDirection, float]]:
-    """Seleciona melhor par Forex para operar"""
-    best_symbol: Optional[str] = None
-    best_score: float = -1
-    best_direction: Optional[TradeDirection] = None
+def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
+    log("🔍 Analisando candles...")
+    candidates: List[Tuple[str, TradeDirection, float]] = []
     
     for symbol in Config.ACTIVE_SYMBOLS:
-        candles = get_candles(symbol)
+        if not state.can_use_symbol(symbol):
+            log(f"  ⏭️ {symbol} (cooldown)")
+            continue
         
+        candles = get_candles(symbol)
         if not candles or len(candles) < Config.MIN_CANDLES:
+            log(f"  ❌ {symbol} - Sem candles suficientes ({len(candles) if candles else 0})")
             continue
         
         closes = [c.close for c in candles]
-        
         ema_short = calculate_ema(closes, Config.EMA_SHORT)
         ema_long = calculate_ema(closes, Config.EMA_LONG)
         rsi = calculate_rsi(closes, Config.RSI_PERIOD)
         
+        log(f"  {symbol} | EMA9: {ema_short:.6f} | EMA21: {ema_long:.6f} | RSI: {rsi:.2f}")
+        
         if any(v is None for v in [ema_short, ema_long, rsi]):
+            log(f"  ❌ {symbol} - Indicadores None")
             continue
         
         trend_pct = abs(ema_short - ema_long) / closes[-1]
+        score = trend_pct * 1000 + abs(rsi - 50) * 2
         
-        if trend_pct < Config.TREND_THRESHOLD:
-            continue
-        
-        # Score base
-        score = trend_pct + abs(rsi - 50) * 0.05
-        
-        # Aplicar multiplicadores
         perf_data = state.performance.get(symbol, {"win": 0, "loss": 0})
         total = perf_data["win"] + perf_data["loss"]
         
@@ -563,60 +447,53 @@ def select_best_asset(
         score *= learning_mgr.get_asset_multiplier(symbol)
         score *= learning_mgr.get_hour_multiplier()
         
-        # Determinar direção
-        if ema_short > ema_long and rsi >= 50:
-            direction = TradeDirection.BUY
-        elif ema_short < ema_long and rsi <= 50:
-            direction = TradeDirection.SELL
-        else:
-            continue
+        log(f"    Trend: {trend_pct:.6f} | Score: {score:.3f}")
         
-        if score > best_score:
-            best_score = score
-            best_symbol = symbol
-            best_direction = direction
+        # ✅ RELAXADO: Critério menos restritivo
+        if ema_short > ema_long:
+            direction = TradeDirection.BUY
+            log(f"    ✅ BUY candidato (EMA9 > EMA21)")
+            candidates.append((symbol, direction, score))
+        elif ema_short < ema_long:
+            direction = TradeDirection.SELL
+            log(f"    ✅ SELL candidato (EMA9 < EMA21)")
+            candidates.append((symbol, direction, score))
+        else:
+            log(f"    ❌ Sem direção clara")
     
-    if best_symbol and best_direction:
+    if candidates:
+        candidates.sort(key=lambda x: x[2], reverse=True)
+        best_symbol, best_direction, best_score = candidates[0]
+        log(f"\n🎯 MELHOR SINAL: {best_symbol} - {best_direction.value} - Score: {best_score:.3f}")
+        log(f"📋 Histórico: {state.last_used_symbols}\n")
         return (best_symbol, best_direction, best_score)
     
+    log("⚠️ Nenhum candidato encontrado\n")
     return None
 
 # ========================================
-# GESTÃO DE SINAIS E OPERAÇÕES
+# GESTÃO DE SINAIS
 # ========================================
-def create_signal(
-    setup: PendingSetup,
-    state: BotState
-) -> None:
-    """Cria e envia sinal de entrada"""
+def create_signal(setup: PendingSetup, state: BotState) -> None:
     state.pending_setup = setup
     state.last_signal_time = get_utc_now()
-    
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    
     msg = (
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
         f"💱 Par: {setup.symbol}\n"
         f"📊 Estratégia: {direction_emoji}\n"
-        f"⏰ Entrada prevista: {fmt_br(setup.entry_time)}\n"
+        f"⏰ Entrada: {fmt_br(setup.entry_time)}\n"
         f"📈 Força: {setup.score:.3f}"
     )
-    
     send_telegram(msg)
-    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value} | {setup.score:.3f}")
+    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value}")
 
 def process_pending_setup(state: BotState) -> None:
-    """Processa setup pendente quando chega hora da entrada"""
-    if state.pending_setup is None:
+    if state.pending_setup is None or get_utc_now() < state.pending_setup.entry_time:
         return
-    
-    if get_utc_now() < state.pending_setup.entry_time:
-        return
-    
     setup = state.pending_setup
     p1_time = setup.entry_time + timedelta(minutes=1)
     p2_time = setup.entry_time + timedelta(minutes=2)
-    
     operation = ActiveOperation(
         symbol=setup.symbol,
         direction=setup.direction,
@@ -625,203 +502,111 @@ def process_pending_setup(state: BotState) -> None:
         protection1_time=p1_time,
         protection2_time=p2_time,
     )
-    
     state.active_operations.append(operation)
     state.pending_setup = None
-    
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    
-    msg = (
-        "✅ ENTRADA CONFIRMADA ✅\n\n"
-        f"💱 Par: {setup.symbol}\n"
-        f"📊 Estratégia: {direction_emoji}\n"
-        f"⏰ Entrada: {fmt_br(setup.entry_time)}\n\n"
-        f"⚠️ Proteção 1: {fmt_br(p1_time)}\n"
-        f"⚠️ Proteção 2: {fmt_br(p2_time)}"
-    )
-    
+    msg = f"✅ ENTRADA\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
     send_telegram(msg)
 
 # ========================================
 # VERIFICAÇÃO DE RESULTADOS
 # ========================================
-def check_operation_result(
-    operation: ActiveOperation,
-    candles: Optional[List[Candle]],
-    learning_mgr: LearningManager,
-    state: BotState
-) -> Optional[ActiveOperation]:
-    """
-    Verifica resultado de operação.
-    Retorna None se operação finalizada, senão retorna operação atualizada.
-    """
+def check_operation_result(operation: ActiveOperation, learning_mgr: LearningManager, state: BotState) -> Optional[ActiveOperation]:
+    """Verifica resultado da operação baseado em tempo real M1"""
     
-    if candles is None:
-        return operation
+    now = get_utc_now()
     
-    # Mapear estágio para tempo
     if operation.stage == TradeStage.ENTRY:
-        check_time = operation.entry_time
+        check_time = operation.entry_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_1
         stage_name = "Entrada"
     elif operation.stage == TradeStage.PROTECTION_1:
-        check_time = operation.protection1_time
+        check_time = operation.protection1_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_2
         stage_name = "Proteção 1"
-    else:  # PROTECTION_2
-        check_time = operation.protection2_time
+    else:
+        check_time = operation.protection2_time + timedelta(minutes=1)
         next_stage = None
         stage_name = "Proteção 2"
     
-    # Aguardar tempo + margem de segurança
-    wait_until = check_time + timedelta(minutes=1, seconds=5)
-    if get_utc_now() < wait_until:
+    if now < check_time + timedelta(seconds=5):
         return operation
     
-    # Buscar velas
-    current_candle = find_candle_by_open_time(candles, check_time)
-    previous_candle = find_candle_by_open_time(
-        candles,
-        check_time - timedelta(minutes=1)
-    )
+    entry_price = candle_gen.get_price_at_time(operation.symbol, operation.entry_time)
+    result_price = candle_gen.get_price_at_time(operation.symbol, check_time)
     
-    if current_candle is None or previous_candle is None:
-        return operation
+    log(f"  📊 {operation.symbol} M1 | Entrada: {entry_price:.6f} | {stage_name}: {result_price:.6f}")
     
-    # Determinar resultado
-    is_win = (
-        current_candle.close > previous_candle.close
-        if operation.direction == TradeDirection.BUY
-        else current_candle.close < previous_candle.close
-    )
+    if operation.direction == TradeDirection.BUY:
+        is_win = result_price > entry_price
+        direction_text = "COMPRA"
+    else:
+        is_win = result_price < entry_price
+        direction_text = "VENDA"
+    
+    diff = result_price - entry_price
+    result_text = "✅ WIN" if is_win else "❌ LOSS"
+    log(f"  {result_text} | {direction_text} | {stage_name} | Diferença: {diff:.6f} pips")
     
     if is_win:
         state.record_win(operation.symbol)
         learning_mgr.record_result(operation.symbol, True)
-        
-        msg = (
-            "🏆 RESULTADO\n\n"
-            f"💱 {operation.symbol}\n"
-            f"✅ WIN em {stage_name}\n\n"
-            f"Wins: {state.wins}\n"
-            f"Losses: {state.losses}\n"
-            f"Precisão: {state.winrate:.1f}%"
-        )
-        
+        msg = f"🏆 WIN\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
         send_telegram(msg)
-        log(f"✅ WIN | {operation.symbol} | {stage_name}")
+        log(f"✅ WIN REGISTRADO | {operation.symbol}")
         return None
     
-    # Se não ganhou e ainda há proteções, avançar
     if next_stage is not None:
         operation.stage = next_stage
+        log(f"  ⚠️ Avançando para {next_stage.name}")
         return operation
     
-    # Se chegou na proteção 2 e perdeu
     state.record_loss(operation.symbol)
     learning_mgr.record_result(operation.symbol, False)
-    
-    msg = (
-        "🏆 RESULTADO\n\n"
-        f"💱 {operation.symbol}\n"
-        f"❌ LOSS após {stage_name}\n\n"
-        f"Wins: {state.wins}\n"
-        f"Losses: {state.losses}\n"
-        f"Precisão: {state.winrate:.1f}%"
-    )
-    
+    msg = f"🏆 LOSS\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
     send_telegram(msg)
-    log(f"❌ LOSS | {operation.symbol} | {stage_name}")
+    log(f"❌ LOSS REGISTRADO | {operation.symbol}")
     return None
 
 def check_results(learning_mgr: LearningManager, state: BotState) -> None:
-    """Verifica resultados de todas as operações ativas"""
     new_operations: List[ActiveOperation] = []
-    
     for operation in state.active_operations:
-        candles = get_candles(operation.symbol)
-        result = check_operation_result(operation, candles, learning_mgr, state)
-        
+        result = check_operation_result(operation, learning_mgr, state)
         if result is not None:
             new_operations.append(result)
-    
     state.active_operations = new_operations
 
 # ========================================
-# LOOP PRINCIPAL
+# MAIN
 # ========================================
 def main() -> None:
-    """Loop principal do bot"""
-    
-    # Validar configurações
-    try:
-        Config.validate()
-    except ValueError as e:
-        log(f"❌ Erro de configuração: {e}")
-        return
-    
-    # Inicializar
     remove_webhook()
     learning_mgr = LearningManager()
     state = BotState()
-    
-    log("🤖 BOT INICIANDO - FOREX...")
-    send_telegram("🤖 BOT INICIADO COM SUCESSO - MODO FOREX 💱")
+    log("🤖 BOT FOREX INICIANDO...")
+    send_telegram("🤖 BOT FOREX ATIVADO 💱")
     
     while True:
         try:
-            # Verificar comandos
             check_commands(state)
-            
             if not state.is_active:
-                time.sleep(5)
+                time.sleep(10)
                 continue
-            
-            # Atualizar universo de ativos periodicamente
-            if (
-                state.last_universe_update is None
-                or (get_utc_now() - state.last_universe_update).total_seconds()
-                > Config.UNIVERSE_REFRESH
-            ):
+            if state.last_universe_update is None or (get_utc_now() - state.last_universe_update).total_seconds() > Config.UNIVERSE_REFRESH:
                 update_active_symbols(learning_mgr, state)
-            
-            # Processar setup pendente
             process_pending_setup(state)
-            
-            # Verificar resultados de operações ativas
             check_results(learning_mgr, state)
-            
-            # Procurar novo sinal se não há operações ativas
-            if (
-                state.pending_setup is None
-                and not state.active_operations
-            ):
-                if (
-                    state.last_signal_time is None
-                    or (get_utc_now() - state.last_signal_time).total_seconds()
-                    >= Config.SIGNAL_INTERVAL
-                ):
+            if state.pending_setup is None and not state.active_operations:
+                if state.last_signal_time is None or (get_utc_now() - state.last_signal_time).total_seconds() >= Config.SIGNAL_INTERVAL:
                     result = select_best_asset(learning_mgr, state)
-                    
                     if result:
                         symbol, direction, score = result
                         entry_time = next_minute(get_utc_now()) + timedelta(minutes=1)
-                        
-                        setup = PendingSetup(
-                            symbol=symbol,
-                            direction=direction,
-                            score=score,
-                            entry_time=entry_time
-                        )
-                        
+                        setup = PendingSetup(symbol=symbol, direction=direction, score=score, entry_time=entry_time)
                         create_signal(setup, state)
-            
-            # Esperar antes de próxima iteração
             time.sleep(10)
-        
         except Exception as e:
-            log(f"❌ Erro geral: {e}")
+            log(f"❌ Erro: {e}")
             time.sleep(10)
 
-if __name__ == "__main__":
-    main()
+main()
