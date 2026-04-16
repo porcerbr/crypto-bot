@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ==========================
 
-TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "59f633d02fdf48b4bbd66713cf3d6a81")
+FINNHUB_API_KEY = "d7frnahr01qqb8rhc0lgd7frnahr01qqb8rhc0m0"
 
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
@@ -61,26 +61,16 @@ trade_history = deque(maxlen=500)
 # UNIVERSO OTC / FOREX
 # ==========================
 
-MARKET_CANDIDATES = [
-    {"id": "AUDCAD", "label": "AUD/CAD", "source": "AUD/CAD"},
-    {"id": "AUDCHF", "label": "AUD/CHF", "source": "AUD/CHF"},
-    {"id": "AUDJPY", "label": "AUD/JPY", "source": "AUD/JPY"},
-    {"id": "AUDUSD", "label": "AUD/USD", "source": "AUD/USD"},
-    {"id": "EURAUD", "label": "EUR/AUD", "source": "EUR/AUD"},
-    {"id": "EURCAD", "label": "EUR/CAD", "source": "EUR/CAD"},
-    {"id": "EURGBP", "label": "EUR/GBP", "source": "EUR/GBP"},
-    {"id": "EURJPY", "label": "EUR/JPY", "source": "EUR/JPY"},
-    {"id": "EURUSD", "label": "EUR/USD", "source": "EUR/USD"},
-    {"id": "GBPAUD", "label": "GBP/AUD", "source": "GBP/AUD"},
-    {"id": "GBPCAD", "label": "GBP/CAD", "source": "GBP/CAD"},
-    {"id": "GBPCHF", "label": "GBP/CHF", "source": "GBP/CHF"},
-    {"id": "GBPJPY", "label": "GBP/JPY", "source": "GBP/JPY"},
-    {"id": "GBPUSD", "label": "GBP/USD", "source": "GBP/USD"},
-    {"id": "USDCAD", "label": "USD/CAD", "source": "USD/CAD"},
-    {"id": "USDCHF", "label": "USD/CHF", "source": "USD/CHF"},
-    {"id": "USDJPY", "label": "USD/JPY", "source": "USD/JPY"},
-]
 
+MARKET_CANDIDATES = [
+
+    {"id": "EURUSD", "label": "EUR/USD", "source": "OANDA:EUR_USD"},
+    {"id": "GBPUSD", "label": "GBP/USD", "source": "OANDA:GBP_USD"},
+    {"id": "USDJPY", "label": "USD/JPY", "source": "OANDA:USD_JPY"},
+    {"id": "AUDUSD", "label": "AUD/USD", "source": "OANDA:AUD_USD"},
+    {"id": "USDCAD", "label": "USD/CAD", "source": "OANDA:USD_CAD"},
+
+]
 ACTIVE_ASSETS = MARKET_CANDIDATES.copy()
 
 performance = {
@@ -395,24 +385,20 @@ def verificar_comandos():
 
 def get_price(asset):
     try:
+
         symbol = asset["source"]
 
-        url = "https://api.twelvedata.com/price"
+        url = "https://finnhub.io/api/v1/quote"
+
         params = {
             "symbol": symbol,
-            "apikey": TWELVE_API_KEY
+            "token": FINNHUB_API_KEY
         }
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        price = data.get("price")
-
-        if price is None:
-            log(f"Preço inválido {asset['id']}: {data}")
-            return None
-
-        return float(price)
+        return float(data["c"])
 
     except Exception as e:
         log(f"Erro preço {asset['id']}: {e}")
@@ -837,40 +823,39 @@ def analisar_ativo(asset, candles):
 
 def get_candles(asset, limit=150):
     try:
+
         symbol = asset["source"]
 
-        url = "https://api.twelvedata.com/time_series"
+        url = "https://finnhub.io/api/v1/forex/candle"
 
         params = {
             "symbol": symbol,
-            "interval": "1min",
-            "outputsize": limit,
-            "apikey": TWELVE_API_KEY
+            "resolution": "1",
+            "count": limit,
+            "token": FINNHUB_API_KEY
         }
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        if "values" not in data:
-            log(f"Resposta inválida candles {asset['id']}: {data}")
+        if data.get("s") != "ok":
+            log(f"Erro candles {asset['id']}: {data}")
             return None
 
         candles = []
 
-        for row in reversed(data["values"]):
-
-            open_dt = datetime.strptime(
-                row["datetime"],
-                "%Y-%m-%d %H:%M:%S"
-            ).replace(tzinfo=timezone.utc)
+        for i in range(len(data["t"])):
 
             candles.append({
-                "time": open_dt,
-                "open": float(row["open"]),
-                "close": float(row["close"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "volume": float(row.get("volume", 0))
+                "time": datetime.fromtimestamp(
+                    data["t"][i],
+                    tz=timezone.utc
+                ),
+                "open": float(data["o"][i]),
+                "high": float(data["h"][i]),
+                "low": float(data["l"][i]),
+                "close": float(data["c"][i]),
+                "volume": float(data["v"][i])
             })
 
         return candles
