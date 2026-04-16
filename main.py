@@ -50,6 +50,7 @@ COOLDOWN_MINUTES = 5
 EVAL_GRACE_SECONDS = 20
 EXTRA_EVAL_DELAY_SECONDS = 2
 TOLERANCIA = 0.00015
+MAX_REQUESTS_FOR_SCAN = 7  # deixa 1 crédito de folga
 
 REPORT_INTERVAL_SECONDS = 6 * 60 * 60
 REPORT_AFTER_TRADES = 25
@@ -1166,6 +1167,10 @@ def escolher_melhor_ativo():
     fallback_direcao = None
     fallback_meta = None
 
+    # 🔧 LIMITE DE REQUISIÇÕES (TwelveData free = 8/min)
+    MAX_REQUESTS_FOR_SCAN = 7
+    market_requests_used = 0
+
     if adaptive_mode == "CONSERVADOR":
         min_trend = 0.0009
         min_atr = 0.00045
@@ -1175,6 +1180,7 @@ def escolher_melhor_ativo():
         allow_chop = False
         max_move = 0.012
         min_combined = 0.58
+
     elif adaptive_mode == "NORMAL":
         min_trend = 0.00065
         min_atr = 0.00035
@@ -1184,6 +1190,7 @@ def escolher_melhor_ativo():
         allow_chop = False
         max_move = 0.016
         min_combined = 0.54
+
     else:
         min_trend = 0.00045
         min_atr = 0.00025
@@ -1197,6 +1204,12 @@ def escolher_melhor_ativo():
     log(f"MODO: {adaptive_mode}")
 
     for asset in ACTIVE_ASSETS:
+
+        # 🔧 NÃO ESTOURA LIMITE DA API
+        if market_requests_used >= MAX_REQUESTS_FOR_SCAN:
+            log("Limite do minuto atingido. Pulando restante dos ativos.")
+            break
+
         asset_id = asset["id"]
         asset_label = asset["label"]
 
@@ -1211,12 +1224,18 @@ def escolher_melhor_ativo():
             continue
 
         candles = get_candles(asset)
+
+        # 🔧 CONTA REQUISIÇÃO
+        if candles:
+            market_requests_used += 1
+
         if not candles or len(candles) < 60:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT (sem candles)")
             continue
 
         analysis = analisar_ativo(asset, candles)
+
         if not analysis:
             if DEBUG_REJEICOES:
                 log(f"{asset_label} -> REJECT (análise None)")
@@ -1259,7 +1278,8 @@ def escolher_melhor_ativo():
         if last_move > max_move:
             reasons.append("MOVE SPIKE")
 
-        if not ((direction == "BUY" and rsi >= rsi_buy) or (direction == "SELL" and rsi <= rsi_sell)):
+        if not ((direction == "BUY" and rsi >= rsi_buy) or
+                (direction == "SELL" and rsi <= rsi_sell)):
             reasons.append("DIR/RSI")
 
         if score < min_combined:
@@ -1267,7 +1287,10 @@ def escolher_melhor_ativo():
 
         if reasons:
             if DEBUG_REJEICOES:
-                log(f"{asset_label} -> REJECT ({', '.join(reasons)}) | score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}")
+                log(
+                    f"{asset_label} -> REJECT ({', '.join(reasons)}) "
+                    f"| score={score:.3f} | fib={fib_zone} | p={model_prob:.2f}"
+                )
             continue
 
         if DEBUG_REJEICOES:
@@ -1284,11 +1307,17 @@ def escolher_melhor_ativo():
             melhor_meta = meta
 
     if melhor_asset is not None:
-        log(f"ESCOLHIDO: {melhor_asset['label']} | {melhor_direcao} | {melhor_score:.3f}")
+        log(
+            f"ESCOLHIDO: {melhor_asset['label']} | "
+            f"{melhor_direcao} | {melhor_score:.3f}"
+        )
         return melhor_asset, melhor_direcao, melhor_score, melhor_meta
 
     if fallback_asset is not None:
-        log(f"FALLBACK: {fallback_asset['label']} | {fallback_direcao} | {fallback_score:.3f}")
+        log(
+            f"FALLBACK: {fallback_asset['label']} | "
+            f"{fallback_direcao} | {fallback_score:.3f}"
+        )
         return fallback_asset, fallback_direcao, fallback_score, fallback_meta
 
     log("Nenhum ativo disponível no fallback")
