@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ==========================
 
-FINNHUB_API_KEY = "d7frnahr01qqb8rhc0lgd7frnahr01qqb8rhc0m0"
+FCS_API_KEY = "AbOhtILB9bb6aypPFblwnZ7aP4RZLs8YD"
 
 TOKEN = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
 CHAT_ID = os.getenv("CHAT_ID", "1056795017")
@@ -388,17 +388,19 @@ def get_price(asset):
 
         symbol = asset["source"]
 
-        url = "https://finnhub.io/api/v1/quote"
+        url = "https://fcsapi.com/api-v3/forex/latest"
 
         params = {
             "symbol": symbol,
-            "token": FINNHUB_API_KEY
+            "access_key": FCS_API_KEY
         }
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        return float(data["c"])
+        price = data["response"][0]["c"]
+
+        return float(price)
 
     except Exception as e:
         log(f"Erro preço {asset['id']}: {e}")
@@ -826,36 +828,37 @@ def get_candles(asset, limit=150):
 
         symbol = asset["source"]
 
-        url = "https://finnhub.io/api/v1/forex/candle"
+        url = "https://fcsapi.com/api-v3/forex/candle"
 
         params = {
             "symbol": symbol,
-            "resolution": "1",
-            "count": limit,
-            "token": FINNHUB_API_KEY
+            "period": "1m",
+            "access_key": FCS_API_KEY
         }
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        if data.get("s") != "ok":
+        if "response" not in data:
             log(f"Erro candles {asset['id']}: {data}")
             return None
 
         candles = []
 
-        for i in range(len(data["t"])):
+        rows = data["response"]
+
+        for row in rows[-limit:]:
 
             candles.append({
                 "time": datetime.fromtimestamp(
-                    data["t"][i],
+                    row["t"],
                     tz=timezone.utc
                 ),
-                "open": float(data["o"][i]),
-                "high": float(data["h"][i]),
-                "low": float(data["l"][i]),
-                "close": float(data["c"][i]),
-                "volume": float(data["v"][i])
+                "open": float(row["o"]),
+                "high": float(row["h"]),
+                "low": float(row["l"]),
+                "close": float(row["c"]),
+                "volume": float(row.get("v", 0))
             })
 
         return candles
