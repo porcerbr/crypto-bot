@@ -1032,21 +1032,39 @@ def enviar_resultado(asset_label, resultado):
 # RESULTADOS
 # ==========================
 
-def avaliar_por_vela(asset, direcao, candles=None):
+def candle_no_tempo(candles, alvo_dt):
+    if not candles or alvo_dt is None:
+        return None
+
+    alvo_dt = alvo_dt.replace(second=0, microsecond=0)
+
+    for c in candles:
+        ct = c["time"].replace(second=0, microsecond=0)
+        if ct == alvo_dt:
+            return c
+
+    return None
+
+def avaliar_por_vela(asset, direcao, alvo_dt=None, candles=None):
     if candles is None:
-        candles = get_candles(asset, limit=3)
+        candles = get_candles(asset, limit=150)
 
     if not candles or len(candles) < 2:
         return None
 
-    candle = candles[-2]
+    if alvo_dt is not None:
+        candle = candle_no_tempo(candles, alvo_dt)
+        if candle is None:
+            return None
+    else:
+        candle = candles[-2]
+
     entrada = candle["open"]
     saida = candle["close"]
 
     if direcao == "BUY":
         return saida > entrada
-    else:
-        return saida < entrada
+    return saida < entrada
 
 def verificar_resultados():
     global wins, losses
@@ -1068,8 +1086,8 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            candles = get_candles(asset, limit=3)
-            win = avaliar_por_vela(asset, direcao, candles=candles)
+            candles = get_candles(asset, limit=150)
+            win = avaliar_por_vela(asset, direcao, alvo_dt=op["tempo_entrada"], candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1095,8 +1113,8 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            candles = get_candles(asset, limit=3)
-            win = avaliar_por_vela(asset, direcao, candles=candles)
+            candles = get_candles(asset, limit=150)
+            win = avaliar_por_vela(asset, direcao, alvo_dt=op["tempo_protecao1"], candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1122,8 +1140,8 @@ def verificar_resultados():
                 novas_operacoes.append(op)
                 continue
 
-            candles = get_candles(asset, limit=3)
-            win = avaliar_por_vela(asset, direcao, candles=candles)
+            candles = get_candles(asset, limit=150)
+            win = avaliar_por_vela(asset, direcao, alvo_dt=op["tempo_protecao2"], candles=candles)
 
             if win is None:
                 novas_operacoes.append(op)
@@ -1167,10 +1185,9 @@ def escolher_melhor_ativo():
     fallback_direcao = None
     fallback_meta = None
 
-    # 🔧 LIMITE DE REQUISIÇÕES (TwelveData free = 8/min)
-    MAX_REQUESTS_FOR_SCAN = 7
-    market_requests_used = 0
+    log(f"MODO: {adaptive_mode}")
 
+    # parâmetros por modo
     if adaptive_mode == "CONSERVADOR":
         min_trend = 0.0009
         min_atr = 0.00045
@@ -1201,14 +1218,7 @@ def escolher_melhor_ativo():
         max_move = 0.022
         min_combined = 0.50
 
-    log(f"MODO: {adaptive_mode}")
-
     for asset in ACTIVE_ASSETS:
-
-        # 🔧 NÃO ESTOURA LIMITE DA API
-        if market_requests_used >= MAX_REQUESTS_FOR_SCAN:
-            log("Limite do minuto atingido. Pulando restante dos ativos.")
-            break
 
         asset_id = asset["id"]
         asset_label = asset["label"]
@@ -1223,11 +1233,8 @@ def escolher_melhor_ativo():
                 log(f"{asset_label} -> IGNORADO (cooldown)")
             continue
 
+        # não contar request aqui; get_candles já faz isso com budget interno
         candles = get_candles(asset)
-
-        # 🔧 CONTA REQUISIÇÃO
-        if candles:
-            market_requests_used += 1
 
         if not candles or len(candles) < 60:
             if DEBUG_REJEICOES:
@@ -1306,21 +1313,15 @@ def escolher_melhor_ativo():
             melhor_direcao = direction
             melhor_meta = meta
 
-    if melhor_asset is not None:
-        log(
-            f"ESCOLHIDO: {melhor_asset['label']} | "
-            f"{melhor_direcao} | {melhor_score:.3f}"
-        )
+    if melhor_asset:
+        log(f"ESCOLHIDO: {melhor_asset['label']} | {melhor_direcao} | {melhor_score:.3f}")
         return melhor_asset, melhor_direcao, melhor_score, melhor_meta
 
-    if fallback_asset is not None:
-        log(
-            f"FALLBACK: {fallback_asset['label']} | "
-            f"{fallback_direcao} | {fallback_score:.3f}"
-        )
+    if fallback_asset:
+        log(f"FALLBACK: {fallback_asset['label']} | {fallback_direcao} | {fallback_score:.3f}")
         return fallback_asset, fallback_direcao, fallback_score, fallback_meta
 
-    log("Nenhum ativo disponível no fallback")
+    log("Nenhum ativo disponível")
     return None, None, None, None
 
 # ==========================
