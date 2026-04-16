@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, List, Any
 from dataclasses import dataclass
@@ -11,9 +12,9 @@ from enum import Enum
 # CONFIGURAÇÕES
 # ========================================
 class Config:
-    BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
-    CHAT_ID: str = "1056795017"
-    FOREX_API_KEY: str = "BFKUJTMXC8KO6RMS"
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ")
+    CHAT_ID: str = os.getenv("CHAT_ID", "1056795017")
+    FOREX_API_KEY: str = os.getenv("FOREX_API_KEY", "BFKUJTMXC8KO6RMS")
     
     SIGNAL_INTERVAL: int = 10
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
@@ -28,10 +29,23 @@ class Config:
     EMA_SHORT: int = 9
     EMA_LONG: int = 21
     RSI_PERIOD: int = 14
+    MACD_FAST: int = 12
+    MACD_SLOW: int = 26
+    MACD_SIGNAL: int = 9
     MIN_CANDLES: int = 60
     TREND_THRESHOLD: float = 0.0006
+    MIN_SIGNAL_STRENGTH: float = 5.0  # ✅ NOVO
     
     LEARNING_FILE: str = "learning.json"
+    OPERATIONS_LOG: str = "operations_log.csv"
+    
+    @classmethod
+    def validate(cls) -> None:
+        if not cls.BOT_TOKEN or not cls.CHAT_ID:
+            raise ValueError("❌ BOT_TOKEN ou CHAT_ID vazios!")
+        log(f"✅ Config validada:")
+        log(f"   BOT_TOKEN: {cls.BOT_TOKEN[:30]}...")
+        log(f"   CHAT_ID: {cls.CHAT_ID}")
 
 # ========================================
 # ENUMERAÇÕES
@@ -70,8 +84,11 @@ class ActiveOperation:
     direction: TradeDirection
     stage: TradeStage
     entry_time: datetime
+    entry_price: float  # ✅ NOVO
     protection1_time: datetime
     protection2_time: datetime
+    stop_loss: float = 0.0050  # 50 pips ✅ NOVO
+    take_profit: float = 0.0100  # 100 pips ✅ NOVO
 
 # ========================================
 # STATE MANAGER
@@ -91,6 +108,16 @@ class BotState:
             for symbol in Config.ACTIVE_SYMBOLS
         }
         self.last_used_symbols: List[str] = []
+        self._init_log_file()
+    
+    def _init_log_file(self) -> None:
+        """✅ NOVO: Inicializa arquivo de log"""
+        try:
+            if not os.path.exists(Config.OPERATIONS_LOG):
+                with open(Config.OPERATIONS_LOG, "w") as f:
+                    f.write("TIMESTAMP,SYMBOL,DIRECTION,STAGE,IS_WIN,PRICE_ENTRY,PRICE_RESULT,DIFFERENCE\n")
+        except:
+            pass
     
     @property
     def winrate(self) -> float:
@@ -108,14 +135,12 @@ class BotState:
         self._add_to_history(symbol)
     
     def _add_to_history(self, symbol: str) -> None:
-        """Adiciona símbolo ao histórico e mantém últimos 5"""
         if symbol not in self.last_used_symbols:
             self.last_used_symbols.append(symbol)
         if len(self.last_used_symbols) > 5:
             self.last_used_symbols.pop(0)
     
     def can_use_symbol(self, symbol: str) -> bool:
-        """Verifica se pode usar o símbolo (evita repetição)"""
         return symbol not in self.last_used_symbols[:3]
 
 # ========================================
@@ -193,6 +218,15 @@ def next_minute(dt: datetime) -> datetime:
 def fmt_br(dt: datetime) -> str:
     return dt.astimezone(Config.BR_TIMEZONE).strftime("%H:%M")
 
+# ✅ NOVO: Verificar horário de negociação
+def should_trade_now() -> bool:
+    """Verifica se é bom momento para tradar"""
+    hour = get_br_now().hour
+    # Parar de 22:00 às 00:00 (baixa liquidez)
+    if hour >= 22 or hour < 0:
+        return False
+    return True
+
 # ========================================
 # LOG E TELEGRAM
 # ========================================
@@ -258,10 +292,38 @@ def check_commands(state: BotState) -> None:
         log(f"❌ Erro comandos: {e}")
 
 # ========================================
-# GERADOR DE DADOS - EVOLUINDO COM TEMPO
+# CACHE DE CANDLES - ✅ NOVO
+# ========================================
+class CandleCache:
+    """Cacheia candles para evitar chamadas repetidas"""
+    def __init__(self):
+        self.cache: Dict[str, List[Candle]] = {}
+        self.timestamps: Dict[str, datetime] = {}
+    
+    def get(self, symbol: str, force_refresh: bool = False) -> Optional[List[Candle]]:
+        now = get_utc_now()
+        
+        if symbol in self.cache and not force_refresh:
+            if (now - self.timestamps[symbol]).total_seconds() < 5:
+                return self.cache[symbol]
+        
+        candles = candle_gen.get_candles(symbol)
+        if candles:
+            self.cache[symbol] = candles
+            self.timestamps[symbol] = now
+        return candles
+    
+    def clear_all(self) -> None:
+        """Limpa cache forçando atualização"""
+        self.cache.clear()
+        self.timestamps.clear()
+
+candle_cache = CandleCache()
+
+# ========================================
+# GERADOR DE DADOS
 # ========================================
 class CandleGenerator:
-    """Gera candles que evoluem com o tempo real"""
     def __init__(self):
         self.price_state = {
             "EURUSD": 1.0850,
@@ -279,35 +341,26 @@ class CandleGenerator:
         }
     
     def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
-        """Retorna preço simulado em um momento específico"""
         base = self.price_state.get(symbol, 1.0)
         minute_of_day = timestamp.hour * 60 + timestamp.minute
         second_of_minute = timestamp.second
         
-        # Movimento principal: sobe e desce ao longo do dia
         trend = (minute_of_day % 60 - 30) * 0.00001
-        
-        # Movimento secundário: oscilações
         noise = (minute_of_day % 17 - 8) * 0.000005
-        
-        # Movimento fino: baseado em segundos
         micro_movement = (second_of_minute % 60 - 30) * 0.0000001
         
         return base + trend + noise + micro_movement
     
     def get_candles(self, symbol: str, limit: int = 120) -> List[Candle]:
-        """Gera candles com preços evoluindo"""
         candles = []
         now = get_utc_now()
         
         for i in range(limit, 0, -1):
             timestamp = now - timedelta(minutes=i)
             
-            # Preço na abertura e fechamento
             open_price = self.get_price_at_time(symbol, timestamp)
             close_price = self.get_price_at_time(symbol, timestamp + timedelta(minutes=1))
             
-            # High e Low
             high = max(open_price, close_price) + 0.00003
             low = min(open_price, close_price) - 0.00003
             
@@ -322,12 +375,11 @@ class CandleGenerator:
         
         return candles
 
-# Instância global do gerador
 candle_gen = CandleGenerator()
 
 def get_candles(symbol: str, limit: int = 120) -> Optional[List[Candle]]:
     try:
-        return candle_gen.get_candles(symbol, limit)
+        return candle_cache.get(symbol)  # ✅ Usa cache
     except Exception as e:
         log(f"❌ Erro candles {symbol}: {e}")
         return None
@@ -363,11 +415,34 @@ def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
+# ✅ NOVO: MACD
+def calculate_macd(prices: List[float]) -> Tuple[Optional[float], Optional[float]]:
+    """Calcula MACD e Signal"""
+    ema12 = calculate_ema(prices, Config.MACD_FAST)
+    ema26 = calculate_ema(prices, Config.MACD_SLOW)
+    
+    if ema12 is None or ema26 is None:
+        return None, None
+    
+    macd = ema12 - ema26
+    
+    # Calcular EMA do MACD para signal
+    macd_values = []
+    for i in range(Config.MACD_SLOW, len(prices)):
+        ema12_temp = calculate_ema(prices[:i+1], Config.MACD_FAST)
+        ema26_temp = calculate_ema(prices[:i+1], Config.MACD_SLOW)
+        if ema12_temp and ema26_temp:
+            macd_values.append(ema12_temp - ema26_temp)
+    
+    signal = calculate_ema(macd_values, Config.MACD_SIGNAL) if macd_values else None
+    
+    return macd, signal
+
 # ========================================
 # SELEÇÃO DE ATIVOS
 # ========================================
 def calculate_asset_quality_score(symbol: str) -> float:
-    candles = get_candles(symbol)
+    candles = candle_cache.get(symbol, force_refresh=True)
     if not candles or len(candles) < Config.MIN_CANDLES:
         return 0.0
     closes = [c.close for c in candles]
@@ -407,6 +482,11 @@ def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> Non
         log(f"  {i}. {symbol} (score: {score:.3f})")
 
 def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
+    # ✅ Verificar horário
+    if not should_trade_now():
+        log("⏸️ Fora do horário de negociação (22:00-00:00)")
+        return None
+    
     log("🔍 Analisando candles...")
     candidates: List[Tuple[str, TradeDirection, float]] = []
     
@@ -415,7 +495,7 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
             log(f"  ⏭️ {symbol} (cooldown)")
             continue
         
-        candles = get_candles(symbol)
+        candles = candle_cache.get(symbol)
         if not candles or len(candles) < Config.MIN_CANDLES:
             log(f"  ❌ {symbol} - Sem candles suficientes ({len(candles) if candles else 0})")
             continue
@@ -424,8 +504,9 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         ema_short = calculate_ema(closes, Config.EMA_SHORT)
         ema_long = calculate_ema(closes, Config.EMA_LONG)
         rsi = calculate_rsi(closes, Config.RSI_PERIOD)
+        macd, signal = calculate_macd(closes)  # ✅ NOVO
         
-        log(f"  {symbol} | EMA9: {ema_short:.6f} | EMA21: {ema_long:.6f} | RSI: {rsi:.2f}")
+        log(f"  {symbol} | EMA9: {ema_short:.6f} | EMA21: {ema_long:.6f} | RSI: {rsi:.2f} | MACD: {macd:.6f if macd else 'N/A'}")
         
         if any(v is None for v in [ema_short, ema_long, rsi]):
             log(f"  ❌ {symbol} - Indicadores None")
@@ -433,6 +514,11 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         
         trend_pct = abs(ema_short - ema_long) / closes[-1]
         score = trend_pct * 1000 + abs(rsi - 50) * 2
+        
+        # ✅ Bonus MACD
+        if macd and signal and macd > signal:
+            score *= 1.3
+            log(f"    📈 MACD confirmado (boost +30%)")
         
         perf_data = state.performance.get(symbol, {"win": 0, "loss": 0})
         total = perf_data["win"] + perf_data["loss"]
@@ -449,7 +535,7 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         
         log(f"    Trend: {trend_pct:.6f} | Score: {score:.3f}")
         
-        # ✅ RELAXADO: Critério menos restritivo
+        # ✅ Critério com filtro de força
         if ema_short > ema_long:
             direction = TradeDirection.BUY
             log(f"    ✅ BUY candidato (EMA9 > EMA21)")
@@ -462,8 +548,15 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
             log(f"    ❌ Sem direção clara")
     
     if candidates:
-        candidates.sort(key=lambda x: x[2], reverse=True)
-        best_symbol, best_direction, best_score = candidates[0]
+        # ✅ Filtrar por força mínima
+        strong_candidates = [(s, d, sc) for s, d, sc in candidates if sc > Config.MIN_SIGNAL_STRENGTH]
+        
+        if not strong_candidates:
+            log(f"⚠️ Candidatos encontrados mas nenhum com força ≥ {Config.MIN_SIGNAL_STRENGTH}\n")
+            return None
+        
+        strong_candidates.sort(key=lambda x: x[2], reverse=True)
+        best_symbol, best_direction, best_score = strong_candidates[0]
         log(f"\n🎯 MELHOR SINAL: {best_symbol} - {best_direction.value} - Score: {best_score:.3f}")
         log(f"📋 Histórico: {state.last_used_symbols}\n")
         return (best_symbol, best_direction, best_score)
@@ -494,11 +587,16 @@ def process_pending_setup(state: BotState) -> None:
     setup = state.pending_setup
     p1_time = setup.entry_time + timedelta(minutes=1)
     p2_time = setup.entry_time + timedelta(minutes=2)
+    
+    # ✅ Pegar preço de entrada
+    entry_price = candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
+    
     operation = ActiveOperation(
         symbol=setup.symbol,
         direction=setup.direction,
         stage=TradeStage.ENTRY,
         entry_time=setup.entry_time,
+        entry_price=entry_price,  # ✅ NOVO
         protection1_time=p1_time,
         protection2_time=p2_time,
     )
@@ -509,11 +607,21 @@ def process_pending_setup(state: BotState) -> None:
     send_telegram(msg)
 
 # ========================================
+# ✅ NOVO: LOG DE OPERAÇÕES
+# ========================================
+def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, entry_price: float, result_price: float) -> None:
+    """Registra operação em arquivo CSV"""
+    try:
+        diff = result_price - entry_price
+        with open(Config.OPERATIONS_LOG, "a") as f:
+            f.write(f"{get_br_now()},{operation.symbol},{operation.direction.value},{stage_name},{is_win},{entry_price:.6f},{result_price:.6f},{diff:.6f}\n")
+    except:
+        pass
+
+# ========================================
 # VERIFICAÇÃO DE RESULTADOS
 # ========================================
 def check_operation_result(operation: ActiveOperation, learning_mgr: LearningManager, state: BotState) -> Optional[ActiveOperation]:
-    """Verifica resultado da operação baseado em tempo real M1"""
-    
     now = get_utc_now()
     
     if operation.stage == TradeStage.ENTRY:
@@ -532,21 +640,38 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     if now < check_time + timedelta(seconds=5):
         return operation
     
-    entry_price = candle_gen.get_price_at_time(operation.symbol, operation.entry_time)
     result_price = candle_gen.get_price_at_time(operation.symbol, check_time)
     
-    log(f"  📊 {operation.symbol} M1 | Entrada: {entry_price:.6f} | {stage_name}: {result_price:.6f}")
+    log(f"  📊 {operation.symbol} M1 | Entrada: {operation.entry_price:.6f} | {stage_name}: {result_price:.6f}")
     
+    # ✅ Verificar stop loss e take profit
     if operation.direction == TradeDirection.BUY:
-        is_win = result_price > entry_price
+        if result_price <= operation.entry_price - operation.stop_loss:
+            is_win = False
+            log(f"  🛑 STOP LOSS | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+        elif result_price >= operation.entry_price + operation.take_profit:
+            is_win = True
+            log(f"  🎯 TAKE PROFIT | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+        else:
+            is_win = result_price > operation.entry_price
         direction_text = "COMPRA"
     else:
-        is_win = result_price < entry_price
+        if result_price >= operation.entry_price + operation.stop_loss:
+            is_win = False
+            log(f"  🛑 STOP LOSS | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+        elif result_price <= operation.entry_price - operation.take_profit:
+            is_win = True
+            log(f"  🎯 TAKE PROFIT | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+        else:
+            is_win = result_price < operation.entry_price
         direction_text = "VENDA"
     
-    diff = result_price - entry_price
+    diff = result_price - operation.entry_price
     result_text = "✅ WIN" if is_win else "❌ LOSS"
     log(f"  {result_text} | {direction_text} | {stage_name} | Diferença: {diff:.6f} pips")
+    
+    # ✅ Log em arquivo
+    log_operation(operation, stage_name, is_win, operation.entry_price, result_price)
     
     if is_win:
         state.record_win(operation.symbol)
@@ -580,6 +705,12 @@ def check_results(learning_mgr: LearningManager, state: BotState) -> None:
 # MAIN
 # ========================================
 def main() -> None:
+    try:
+        Config.validate()
+    except ValueError as e:
+        log(f"❌ {e}")
+        return
+    
     remove_webhook()
     learning_mgr = LearningManager()
     state = BotState()
