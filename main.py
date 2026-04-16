@@ -10,6 +10,10 @@ from enum import Enum
 # ========================================
 # CONFIGURAÇÕES
 # ========================================
+
+# ========================================
+# CONFIGURAÇÕES
+# ========================================
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
@@ -19,10 +23,11 @@ class Config:
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
     UNIVERSE_REFRESH: int = 900
     
+    # ✅ REDUZIDO: Apenas os melhores pares
     ACTIVE_SYMBOLS: List[str] = [
-        "EURUSD", "GBPUSD", "USDJPY", "USDCAD",
-        "AUDUSD", "NZDUSD", "EURCAD", "EURGBP",
-        "EURJPY", "GBPJPY", "AUDCAD", "AUDCHF"
+        "EURUSD",   # Mais liquido, tendências claras
+        "GBPUSD",   # Volatilidade boa
+        "USDJPY",   # Correlação inversa (diversificação)
     ]
     
     EMA_SHORT: int = 9
@@ -32,13 +37,13 @@ class Config:
     TREND_THRESHOLD: float = 0.0006
     
     LEARNING_FILE: str = "learning.json"
-    OPERATIONS_LOG: str = "operations_log.csv"  # ✅ NOVO
+    OPERATIONS_LOG: str = "operations_log.csv"
     
-    MIN_SIGNAL_STRENGTH: float = 5.0  # ✅ NOVO
-    STOP_LOSS_PIPS: float = 0.0050  # 50 pips ✅ NOVO
-    TAKE_PROFIT_PIPS: float = 0.0100  # 100 pips ✅ NOVO
+    MIN_SIGNAL_STRENGTH: float = 5.0
+    STOP_LOSS_PIPS: float = 0.0050
+    TAKE_PROFIT_PIPS: float = 0.0100
     
-    DEBUG_MODE: bool = False  # ✅ NOVO
+    DEBUG_MODE: bool = False
 
 # ========================================
 # ENUMERAÇÕES
@@ -77,7 +82,7 @@ class ActiveOperation:
     direction: TradeDirection
     stage: TradeStage
     entry_time: datetime
-    entry_price: float  # ✅ NOVO
+    entry_price: float
     protection1_time: datetime
     protection2_time: datetime
 
@@ -99,13 +104,12 @@ class BotState:
             for symbol in Config.ACTIVE_SYMBOLS
         }
         self.last_used_symbols: List[str] = []
-        self.loss_streak: int = 0  # ✅ NOVO
-        self.paused: bool = False  # ✅ NOVO
-        self.pause_until: Optional[datetime] = None  # ✅ NOVO
-        self._init_log_file()  # ✅ NOVO
+        self.loss_streak: int = 0
+        self.paused: bool = False
+        self.pause_until: Optional[datetime] = None
+        self._init_log_file()
     
     def _init_log_file(self) -> None:
-        """✅ NOVO: Inicializa arquivo de log"""
         try:
             if not os.path.exists(Config.OPERATIONS_LOG):
                 with open(Config.OPERATIONS_LOG, "w") as f:
@@ -121,13 +125,13 @@ class BotState:
     def record_win(self, symbol: str) -> None:
         self.wins += 1
         self.performance[symbol]["win"] += 1
-        self.loss_streak = 0  # ✅ NOVO: Reset loss streak
+        self.loss_streak = 0
         self._add_to_history(symbol)
     
     def record_loss(self, symbol: str) -> None:
         self.losses += 1
         self.performance[symbol]["loss"] += 1
-        self.loss_streak += 1  # ✅ NOVO: Incrementa loss streak
+        self.loss_streak += 1
         self._add_to_history(symbol)
     
     def _add_to_history(self, symbol: str) -> None:
@@ -140,13 +144,28 @@ class BotState:
         return symbol not in self.last_used_symbols[:3]
 
 # ========================================
-# APRENDIZADO
+# ✅ APRENDIZADO INTELIGENTE AVANÇADO
 # ========================================
 class LearningManager:
     def __init__(self, file_path: str = Config.LEARNING_FILE):
         self.file_path = file_path
-        self.data: Dict[str, Any] = {"asset_stats": {}, "hour_stats": {}}
+        self.data: Dict[str, Any] = {
+            "asset_stats": {},
+            "hour_stats": {},
+            "pattern_stats": {},
+            "correlation_matrix": {},
+            "ml_model": {},
+        }
         self.load()
+        self.initialize_ml_data()
+    
+    def initialize_ml_data(self) -> None:
+        if "ml_model" not in self.data or not self.data["ml_model"]:
+            self.data["ml_model"] = {
+                "signal_features": [],
+                "outcomes": [],
+                "feature_importance": {},
+            }
     
     def load(self) -> None:
         if os.path.exists(self.file_path):
@@ -164,37 +183,210 @@ class LearningManager:
         except:
             pass
     
-    def record_result(self, symbol: str, is_win: bool) -> None:
-        hour = str(get_br_now().hour)
+    def record_result(self, symbol: str, is_win: bool, score: float = 0.0, hour: str = "") -> None:
+        hour = hour or str(get_br_now().hour)
+        
         if symbol not in self.data["asset_stats"]:
-            self.data["asset_stats"][symbol] = {"win": 0, "loss": 0}
+            self.data["asset_stats"][symbol] = {"win": 0, "loss": 0, "total": 0}
         key = "win" if is_win else "loss"
         self.data["asset_stats"][symbol][key] += 1
+        self.data["asset_stats"][symbol]["total"] += 1
+        
         if hour not in self.data["hour_stats"]:
-            self.data["hour_stats"][hour] = {"win": 0, "loss": 0}
+            self.data["hour_stats"][hour] = {"win": 0, "loss": 0, "total": 0}
         self.data["hour_stats"][hour][key] += 1
+        self.data["hour_stats"][hour]["total"] += 1
+        
+        pattern_key = f"{symbol}_{hour}"
+        if pattern_key not in self.data["pattern_stats"]:
+            self.data["pattern_stats"][pattern_key] = {"win": 0, "loss": 0, "total": 0}
+        self.data["pattern_stats"][pattern_key][key] += 1
+        self.data["pattern_stats"][pattern_key]["total"] += 1
+        
+        self.data["ml_model"]["signal_features"].append({
+            "symbol": symbol,
+            "hour": hour,
+            "signal_strength": score,
+            "outcome": 1 if is_win else 0
+        })
+        
         self.save()
     
     def get_asset_multiplier(self, symbol: str) -> float:
         stats = self.data["asset_stats"].get(symbol)
-        if not stats:
+        if not stats or stats["total"] < 5:
             return 1.0
-        total = stats["win"] + stats["loss"]
-        if total < 5:
-            return 1.0
-        winrate = stats["win"] / total
-        return 1.2 if winrate > 0.65 else (0.8 if winrate < 0.40 else 1.0)
+        
+        winrate = stats["win"] / stats["total"]
+        
+        if winrate > 0.70:
+            return 1.35
+        elif winrate > 0.65:
+            return 1.25
+        elif winrate > 0.55:
+            return 1.10
+        elif winrate > 0.45:
+            return 0.90
+        else:
+            return 0.70
     
     def get_hour_multiplier(self) -> float:
         hour = str(get_br_now().hour)
         stats = self.data["hour_stats"].get(hour)
-        if not stats:
+        if not stats or stats["total"] < 5:
             return 1.0
-        total = stats["win"] + stats["loss"]
-        if total < 5:
+        
+        winrate = stats["win"] / stats["total"]
+        
+        if winrate > 0.70:
+            return 1.40
+        elif winrate > 0.60:
+            return 1.25
+        elif winrate > 0.55:
+            return 1.10
+        else:
+            return 0.85
+    
+    def get_pattern_multiplier(self, symbol: str, hour: str = "") -> float:
+        hour = hour or str(get_br_now().hour)
+        pattern_key = f"{symbol}_{hour}"
+        stats = self.data["pattern_stats"].get(pattern_key)
+        
+        if not stats or stats["total"] < 3:
             return 1.0
-        winrate = stats["win"] / total
-        return 1.15 if winrate > 0.65 else (0.85 if winrate < 0.40 else 1.0)
+        
+        winrate = stats["win"] / stats["total"]
+        
+        if winrate > 0.75:
+            return 1.50
+        elif winrate > 0.65:
+            return 1.30
+        elif winrate > 0.55:
+            return 1.15
+        else:
+            return 0.85
+    
+    def get_correlation_multiplier(self, symbol: str) -> float:
+        correlations = {
+            "EURUSD": {"GBPUSD": 0.8, "USDJPY": -0.6},
+            "GBPUSD": {"EURUSD": 0.8, "AUDCAD": -0.5},
+            "USDJPY": {"EURUSD": -0.6},
+        }
+        
+        if symbol not in correlations:
+            return 1.0
+        
+        boost = 1.0
+        for corr_symbol, strength in correlations[symbol].items():
+            if corr_symbol in self.data["asset_stats"]:
+                stats = self.data["asset_stats"][corr_symbol]
+                if stats["total"] > 0:
+                    wr = stats["win"] / stats["total"]
+                    if strength > 0 and wr > 0.60:
+                        boost *= 1.10
+        
+        return boost
+    
+    def get_ml_recommendation(self, symbol: str, score: float) -> float:
+        ml_data = self.data["ml_model"]
+        
+        if len(ml_data["signal_features"]) < 10:
+            return 1.0
+        
+        winners = [f for f in ml_data["signal_features"] if f["outcome"] == 1]
+        losers = [f for f in ml_data["signal_features"] if f["outcome"] == 0]
+        
+        if not winners or not losers:
+            return 1.0
+        
+        avg_winner_score = sum(f["signal_strength"] for f in winners) / len(winners)
+        avg_loser_score = sum(f["signal_strength"] for f in losers) / len(losers)
+        
+        if avg_loser_score == 0:
+            return 1.0
+        
+        ratio = score / (avg_loser_score if score > avg_loser_score else avg_winner_score)
+        
+        if ratio > 1.5:
+            return 1.25
+        elif ratio > 1.2:
+            return 1.10
+        else:
+            return 1.0
+    
+    def get_total_multiplier(self, symbol: str, score: float) -> float:
+        asset_mult = self.get_asset_multiplier(symbol)
+        hour_mult = self.get_hour_multiplier()
+        pattern_mult = self.get_pattern_multiplier(symbol)
+        corr_mult = self.get_correlation_multiplier(symbol)
+        ml_mult = self.get_ml_recommendation(symbol, score)
+        
+        total = (
+            asset_mult * 0.30 +
+            hour_mult * 0.25 +
+            pattern_mult * 0.25 +
+            corr_mult * 0.10 +
+            ml_mult * 0.10
+        )
+        
+        if Config.DEBUG_MODE:
+            log(f"🧠 IA Multipliers | Asset: {asset_mult:.2f} | Hour: {hour_mult:.2f} | Pattern: {pattern_mult:.2f} | Total: {total:.2f}")
+        
+        return total
+    
+    def get_recommendations(self) -> Dict[str, Any]:
+        recommendations = {
+            "best_assets": [],
+            "best_hours": [],
+            "best_patterns": [],
+            "avoid_assets": [],
+            "avoid_hours": [],
+        }
+        
+        asset_wrs = {}
+        for symbol, stats in self.data["asset_stats"].items():
+            if stats["total"] >= 5:
+                wr = stats["win"] / stats["total"]
+                asset_wrs[symbol] = wr
+        
+        if asset_wrs:
+            sorted_assets = sorted(asset_wrs.items(), key=lambda x: x[1], reverse=True)
+            recommendations["best_assets"] = [s[0] for s in sorted_assets[:3]]
+            recommendations["avoid_assets"] = [s[0] for s in sorted_assets[-3:]]
+        
+        hour_wrs = {}
+        for hour, stats in self.data["hour_stats"].items():
+            if stats["total"] >= 5:
+                wr = stats["win"] / stats["total"]
+                hour_wrs[hour] = wr
+        
+        if hour_wrs:
+            sorted_hours = sorted(hour_wrs.items(), key=lambda x: x[1], reverse=True)
+            recommendations["best_hours"] = [s[0] for s in sorted_hours[:3]]
+            recommendations["avoid_hours"] = [s[0] for s in sorted_hours[-3:]]
+        
+        pattern_wrs = {}
+        for pattern, stats in self.data["pattern_stats"].items():
+            if stats["total"] >= 3:
+                wr = stats["win"] / stats["total"]
+                pattern_wrs[pattern] = wr
+        
+        if pattern_wrs:
+            sorted_patterns = sorted(pattern_wrs.items(), key=lambda x: x[1], reverse=True)
+            recommendations["best_patterns"] = [s[0] for s in sorted_patterns[:3]]
+        
+        return recommendations
+    
+    def generate_report(self) -> str:
+        recs = self.get_recommendations()
+        
+        report = "🧠 RELATÓRIO IA:\n━━━━━━━━━━━━━━━\n"
+        report += f"✅ Melhores Ativos: {', '.join(recs['best_assets']) if recs['best_assets'] else 'N/A'}\n"
+        report += f"❌ Piores Ativos: {', '.join(recs['avoid_assets']) if recs['avoid_assets'] else 'N/A'}\n"
+        report += f"⏰ Melhores Horas: {', '.join(recs['best_hours']) if recs['best_hours'] else 'N/A'}h\n"
+        report += f"❌ Piores Horas: {', '.join(recs['avoid_hours']) if recs['avoid_hours'] else 'N/A'}h\n"
+        
+        return report
 
 # ========================================
 # TEMPO
@@ -214,9 +406,7 @@ def next_minute(dt: datetime) -> datetime:
 def fmt_br(dt: datetime) -> str:
     return dt.astimezone(Config.BR_TIMEZONE).strftime("%H:%M")
 
-# ✅ NOVO: Verificar horário de negociação
 def should_trade_now() -> bool:
-    """Verifica se é bom momento para tradar"""
     hour = get_br_now().hour
     if hour >= 22 or hour < 0:
         return False
@@ -248,10 +438,9 @@ def remove_webhook() -> None:
         pass
 
 # ========================================
-# ✅ NOVO: VALIDAÇÃO DE CREDENCIAIS
+# VALIDAÇÃO DE CREDENCIAIS
 # ========================================
 def validate_credentials() -> bool:
-    """Valida credenciais antes de iniciar"""
     try:
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getMe"
         response = requests.get(url, timeout=5)
@@ -267,7 +456,7 @@ def validate_credentials() -> bool:
 # ========================================
 # COMANDOS TELEGRAM
 # ========================================
-def check_commands(state: BotState) -> None:
+def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
     try:
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates"
         params = {"timeout": 0}
@@ -285,7 +474,7 @@ def check_commands(state: BotState) -> None:
             text = update["message"].get("text", "").strip()
             if text == "/start":
                 state.is_active = True
-                state.paused = False  # ✅ NOVO
+                state.paused = False
                 send_telegram("🟢 BOT ATIVADO")
                 log("✅ BOT ATIVADO")
             elif text == "/stop":
@@ -293,18 +482,19 @@ def check_commands(state: BotState) -> None:
                 send_telegram("🔴 BOT PARADO")
                 log("⏹️ BOT PARADO")
             elif text == "/stats":
-                stats_msg = generate_stats_message(state)  # ✅ NOVO
+                stats_msg = generate_stats_message(state)
                 send_telegram(stats_msg)
-            elif text == "/health":  # ✅ NOVO
+            elif text == "/health":
                 health_check(state)
+            elif text == "/ai":
+                send_telegram(learning_mgr.generate_report())
     except Exception as e:
         log(f"❌ Erro comandos: {e}")
 
 # ========================================
-# ✅ NOVO: ESTATÍSTICAS AVANÇADAS
+# ESTATÍSTICAS AVANÇADAS
 # ========================================
 def generate_stats_message(state: BotState) -> str:
-    """Gera mensagem de estatísticas avançada"""
     total_ops = state.wins + state.losses
     best_symbol = max(state.performance.items(), key=lambda x: x[1]["win"] - x[1]["loss"]) if state.performance else ("N/A", {})
     
@@ -327,10 +517,9 @@ def generate_stats_message(state: BotState) -> str:
     return msg
 
 # ========================================
-# ✅ NOVO: HEALTH CHECK
+# HEALTH CHECK
 # ========================================
 def health_check(state: BotState) -> None:
-    """Verifica saúde do bot"""
     checks = {
         "Telegram API": validate_credentials(),
         "Learning File": os.path.exists(Config.LEARNING_FILE),
@@ -352,10 +541,9 @@ def health_check(state: BotState) -> None:
     log(msg.replace("\n", " | "))
 
 # ========================================
-# ✅ NOVO: LOG DE OPERAÇÕES
+# LOG DE OPERAÇÕES
 # ========================================
 def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, entry_price: float, result_price: float) -> None:
-    """Registra operação em arquivo CSV"""
     try:
         diff = result_price - entry_price
         with open(Config.OPERATIONS_LOG, "a") as f:
@@ -364,10 +552,9 @@ def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, ent
         pass
 
 # ========================================
-# GERADOR DE DADOS - EVOLUINDO COM TEMPO
+# GERADOR DE DADOS
 # ========================================
 class CandleGenerator:
-    """Gera candles que evoluem com o tempo real"""
     def __init__(self):
         self.price_state = {
             "EURUSD": 1.0850,
@@ -385,7 +572,6 @@ class CandleGenerator:
         }
     
     def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
-        """Retorna preço simulado em um momento específico"""
         base = self.price_state.get(symbol, 1.0)
         minute_of_day = timestamp.hour * 60 + timestamp.minute
         second_of_minute = timestamp.second
@@ -397,7 +583,6 @@ class CandleGenerator:
         return base + trend + noise + micro_movement
     
     def get_candles(self, symbol: str, limit: int = 120) -> List[Candle]:
-        """Gera candles com preços evoluindo"""
         candles = []
         now = get_utc_now()
         
@@ -505,13 +690,11 @@ def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> Non
         log(f"  {i}. {symbol} (score: {score:.3f})")
 
 def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
-    # ✅ Verificar se deve tradar agora
     if not should_trade_now():
         if Config.DEBUG_MODE:
             log("⏸️ Fora do horário de negociação (22:00-00:00)")
         return None
     
-    # ✅ Verificar se está em pausa por loss streak
     if state.paused and get_utc_now() < state.pause_until:
         log(f"⏸️ BOT EM PAUSA: {state.loss_streak} losses. Retoma em {state.pause_until.strftime('%H:%M')}")
         return None
@@ -548,20 +731,11 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         trend_pct = abs(ema_short - ema_long) / closes[-1]
         score = trend_pct * 1000 + abs(rsi - 50) * 2
         
-        perf_data = state.performance.get(symbol, {"win": 0, "loss": 0})
-        total = perf_data["win"] + perf_data["loss"]
+        # ✅ Aplicar IA de multiplicadores
+        ai_multiplier = learning_mgr.get_total_multiplier(symbol, score)
+        score *= ai_multiplier
         
-        if total >= 10:
-            winrate = perf_data["win"] / total
-            if winrate > 0.65:
-                score *= 1.15
-            elif winrate < 0.40:
-                score *= 0.85
-        
-        score *= learning_mgr.get_asset_multiplier(symbol)
-        score *= learning_mgr.get_hour_multiplier()
-        
-        log(f"    Trend: {trend_pct:.6f} | Score: {score:.3f}")
+        log(f"    Trend: {trend_pct:.6f} | Score (com IA): {score:.3f}")
         
         if ema_short > ema_long:
             direction = TradeDirection.BUY
@@ -575,7 +749,6 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
             log(f"    ❌ Sem direção clara")
     
     if candidates:
-        # ✅ Filtrar por força mínima
         strong_candidates = [(s, d, sc) for s, d, sc in candidates if sc > Config.MIN_SIGNAL_STRENGTH]
         
         if not strong_candidates:
@@ -615,7 +788,6 @@ def process_pending_setup(state: BotState) -> None:
     p1_time = setup.entry_time + timedelta(minutes=1)
     p2_time = setup.entry_time + timedelta(minutes=2)
     
-    # ✅ Pegar preço de entrada
     entry_price = candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
     
     operation = ActiveOperation(
@@ -623,7 +795,7 @@ def process_pending_setup(state: BotState) -> None:
         direction=setup.direction,
         stage=TradeStage.ENTRY,
         entry_time=setup.entry_time,
-        entry_price=entry_price,  # ✅ NOVO
+        entry_price=entry_price,
         protection1_time=p1_time,
         protection2_time=p2_time,
     )
@@ -637,8 +809,6 @@ def process_pending_setup(state: BotState) -> None:
 # VERIFICAÇÃO DE RESULTADOS
 # ========================================
 def check_operation_result(operation: ActiveOperation, learning_mgr: LearningManager, state: BotState) -> Optional[ActiveOperation]:
-    """Verifica resultado da operação baseado em tempo real M1"""
-    
     now = get_utc_now()
     
     if operation.stage == TradeStage.ENTRY:
@@ -661,7 +831,6 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     
     log(f"  📊 {operation.symbol} M1 | Entrada: {operation.entry_price:.6f} | {stage_name}: {result_price:.6f}")
     
-    # ✅ Verificar stop loss e take profit
     if operation.direction == TradeDirection.BUY:
         if result_price <= operation.entry_price - Config.STOP_LOSS_PIPS:
             is_win = False
@@ -687,12 +856,11 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     result_text = "✅ WIN" if is_win else "❌ LOSS"
     log(f"  {result_text} | {direction_text} | {stage_name} | Diferença: {diff:.6f} pips")
     
-    # ✅ Log em arquivo
     log_operation(operation, stage_name, is_win, operation.entry_price, result_price)
     
     if is_win:
         state.record_win(operation.symbol)
-        learning_mgr.record_result(operation.symbol, True)
+        learning_mgr.record_result(operation.symbol, True, 0.0, str(get_br_now().hour))
         msg = f"🏆 WIN\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
         send_telegram(msg)
         log(f"✅ WIN REGISTRADO | {operation.symbol}")
@@ -704,12 +872,11 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         return operation
     
     state.record_loss(operation.symbol)
-    learning_mgr.record_result(operation.symbol, False)
+    learning_mgr.record_result(operation.symbol, False, 0.0, str(get_br_now().hour))
     msg = f"🏆 LOSS\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
     send_telegram(msg)
     log(f"❌ LOSS REGISTRADO | {operation.symbol}")
     
-    # ✅ NOVO: Verificar loss streak
     if state.loss_streak >= 5 and not state.paused:
         state.paused = True
         state.pause_until = get_utc_now() + timedelta(hours=1)
@@ -731,7 +898,6 @@ def check_results(learning_mgr: LearningManager, state: BotState) -> None:
 # MAIN
 # ========================================
 def main() -> None:
-    # ✅ Validar credenciais
     if not validate_credentials():
         log("❌ Bot não iniciado: credenciais inválidas")
         send_telegram("❌ BOT NÃO INICIADO: Credenciais inválidas")
@@ -741,11 +907,11 @@ def main() -> None:
     learning_mgr = LearningManager()
     state = BotState()
     log("🤖 BOT FOREX INICIANDO...")
-    send_telegram("🤖 BOT FOREX ATIVADO 💱\n\nComandos: /start /stop /stats /health")
+    send_telegram("🤖 BOT FOREX ATIVADO 💱\n\nComandos: /start /stop /stats /health /ai")
     
     while True:
         try:
-            check_commands(state)
+            check_commands(state, learning_mgr)
             if not state.is_active:
                 time.sleep(10)
                 continue
