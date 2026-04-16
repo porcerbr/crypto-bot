@@ -4,3 +4,6 @@ scikit-learn
 websocket-client
 pandas
 yfinance
+fastapi
+uvicorn[standard]
+requests
