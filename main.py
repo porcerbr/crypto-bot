@@ -10,10 +10,6 @@ from enum import Enum
 # ========================================
 # CONFIGURAÇÕES
 # ========================================
-
-# ========================================
-# CONFIGURAÇÕES
-# ========================================
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
@@ -23,11 +19,11 @@ class Config:
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
     UNIVERSE_REFRESH: int = 900
     
-    # ✅ REDUZIDO: Apenas os melhores pares
+    # ✅ Apenas os melhores pares
     ACTIVE_SYMBOLS: List[str] = [
-        "EURUSD",   # Mais liquido, tendências claras
-        "GBPUSD",   # Volatilidade boa
-        "USDJPY",   # Correlação inversa (diversificação)
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
     ]
     
     EMA_SHORT: int = 9
@@ -38,12 +34,20 @@ class Config:
     
     LEARNING_FILE: str = "learning.json"
     OPERATIONS_LOG: str = "operations_log.csv"
+    BACKTEST_FILE: str = "backtest_results.json"  # ✅ NOVO
     
     MIN_SIGNAL_STRENGTH: float = 5.0
     STOP_LOSS_PIPS: float = 0.0050
     TAKE_PROFIT_PIPS: float = 0.0100
     
     DEBUG_MODE: bool = False
+    PAPER_TRADING: bool = True  # ✅ NOVO: Modo paper trading
+    
+    # ✅ NOVO: Limites de segurança
+    MAX_LOSS_STREAK: int = 5  # Pausa após 5 losses
+    MAX_DAILY_LOSS: float = 3.0  # Máximo 3% de loss por dia
+    MAX_OPERATIONS_PER_HOUR: int = 3  # Máximo 3 ops por hora
+    MIN_WINRATE_TO_TRADE: float = 0.50  # Mínimo 50% winrate para continuar
 
 # ========================================
 # ENUMERAÇÕES
@@ -107,6 +111,10 @@ class BotState:
         self.loss_streak: int = 0
         self.paused: bool = False
         self.pause_until: Optional[datetime] = None
+        self.operations_today: List[Dict[str, Any]] = []  # ✅ NOVO
+        self.daily_loss_percent: float = 0.0  # ✅ NOVO
+        self.operations_this_hour: int = 0  # ✅ NOVO
+        self.last_hour_reset: datetime = get_utc_now()  # ✅ NOVO
         self._init_log_file()
     
     def _init_log_file(self) -> None:
@@ -142,9 +150,36 @@ class BotState:
     
     def can_use_symbol(self, symbol: str) -> bool:
         return symbol not in self.last_used_symbols[:3]
+    
+    # ✅ NOVO: Verificar limites de segurança
+    def check_safety_limits(self) -> Tuple[bool, str]:
+        """Verifica se pode abrir nova operação"""
+        
+        # Resetar contador de hora se necessário
+        if (get_utc_now() - self.last_hour_reset).total_seconds() > 3600:
+            self.operations_this_hour = 0
+            self.last_hour_reset = get_utc_now()
+        
+        # Limite de operações por hora
+        if self.operations_this_hour >= Config.MAX_OPERATIONS_PER_HOUR:
+            return False, f"⏸️ Máximo de {Config.MAX_OPERATIONS_PER_HOUR} ops por hora atingido"
+        
+        # Limite de loss streak
+        if self.loss_streak >= Config.MAX_LOSS_STREAK:
+            return False, f"🛑 Loss streak de {self.loss_streak} atingido"
+        
+        # Limite de winrate mínimo
+        if self.winrate < Config.MIN_WINRATE_TO_TRADE and (self.wins + self.losses) >= 10:
+            return False, f"🛑 Winrate {self.winrate:.1f}% abaixo de {Config.MIN_WINRATE_TO_TRADE*100:.0f}%"
+        
+        # Limite de loss diário
+        if self.daily_loss_percent > Config.MAX_DAILY_LOSS:
+            return False, f"🛑 Loss diário {self.daily_loss_percent:.1f}% atingido"
+        
+        return True, "✅ OK"
 
 # ========================================
-# ✅ APRENDIZADO INTELIGENTE AVANÇADO
+# APRENDIZADO INTELIGENTE AVANÇADO
 # ========================================
 class LearningManager:
     def __init__(self, file_path: str = Config.LEARNING_FILE):
@@ -155,6 +190,7 @@ class LearningManager:
             "pattern_stats": {},
             "correlation_matrix": {},
             "ml_model": {},
+            "backtest_history": {},  # ✅ NOVO
         }
         self.load()
         self.initialize_ml_data()
@@ -269,8 +305,8 @@ class LearningManager:
     def get_correlation_multiplier(self, symbol: str) -> float:
         correlations = {
             "EURUSD": {"GBPUSD": 0.8, "USDJPY": -0.6},
-            "GBPUSD": {"EURUSD": 0.8, "AUDCAD": -0.5},
-            "USDJPY": {"EURUSD": -0.6},
+            "GBPUSD": {"EURUSD": 0.8, "USDJPY": -0.5},
+            "USDJPY": {"EURUSD": -0.6, "GBPUSD": -0.5},
         }
         
         if symbol not in correlations:
@@ -475,7 +511,8 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
             if text == "/start":
                 state.is_active = True
                 state.paused = False
-                send_telegram("🟢 BOT ATIVADO")
+                mode = "📄 PAPER TRADING" if Config.PAPER_TRADING else "💰 REAL TRADING"
+                send_telegram(f"🟢 BOT ATIVADO\n{mode}")
                 log("✅ BOT ATIVADO")
             elif text == "/stop":
                 state.is_active = False
@@ -488,8 +525,26 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
                 health_check(state)
             elif text == "/ai":
                 send_telegram(learning_mgr.generate_report())
+            elif text == "/limits":  # ✅ NOVO
+                limits_msg = generate_limits_message(state)
+                send_telegram(limits_msg)
     except Exception as e:
         log(f"❌ Erro comandos: {e}")
+
+# ========================================
+# ✅ NOVO: MENSAGEM DE LIMITES
+# ========================================
+def generate_limits_message(state: BotState) -> str:
+    can_trade, reason = state.check_safety_limits()
+    
+    msg = "🛡️ LIMITES DE SEGURANÇA:\n━━━━━━━━━━━━━━━\n"
+    msg += f"📊 Status: {'✅ LIBERADO' if can_trade else f'❌ {reason}'}\n"
+    msg += f"🔥 Loss Streak: {state.loss_streak}/{Config.MAX_LOSS_STREAK}\n"
+    msg += f"⏰ Ops/Hora: {state.operations_this_hour}/{Config.MAX_OPERATIONS_PER_HOUR}\n"
+    msg += f"📉 Loss Diário: {state.daily_loss_percent:.1f}%/{Config.MAX_DAILY_LOSS}%\n"
+    msg += f"📈 Winrate: {state.winrate:.1f}%/{Config.MIN_WINRATE_TO_TRADE*100:.0f}%\n"
+    
+    return msg
 
 # ========================================
 # ESTATÍSTICAS AVANÇADAS
@@ -508,7 +563,8 @@ def generate_stats_message(state: BotState) -> str:
         f"🔥 Loss Streak: {state.loss_streak}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"🏆 Melhor: {best_symbol[0]}\n"
-        f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}"
+        f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}\n"
+        f"📄 Modo: {'📄 PAPER' if Config.PAPER_TRADING else '💰 REAL'}"
     )
     
     if state.paused:
@@ -524,6 +580,7 @@ def health_check(state: BotState) -> None:
         "Telegram API": validate_credentials(),
         "Learning File": os.path.exists(Config.LEARNING_FILE),
         "Operations Log": os.path.exists(Config.OPERATIONS_LOG),
+        "Safety Limits": state.check_safety_limits()[0],
     }
     
     msg = "🏥 HEALTH CHECK:\n━━━━━━━━━━━━━━━\n"
@@ -560,15 +617,6 @@ class CandleGenerator:
             "EURUSD": 1.0850,
             "GBPUSD": 1.2650,
             "USDJPY": 150.50,
-            "USDCAD": 1.3650,
-            "AUDUSD": 0.6550,
-            "NZDUSD": 0.6050,
-            "EURCAD": 1.4850,
-            "EURGBP": 0.8550,
-            "EURJPY": 163.50,
-            "GBPJPY": 190.50,
-            "AUDCAD": 0.9350,
-            "AUDCHF": 0.6150,
         }
     
     def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
@@ -682,14 +730,19 @@ def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> Non
         return
     
     scored.sort(key=lambda x: x[1], reverse=True)
-    Config.ACTIVE_SYMBOLS = [s[0] for s in scored[:8]]
     state.last_universe_update = get_utc_now()
     
-    log(f"✅ Universo atualizado com 8 ativos:")
-    for i, (symbol, score) in enumerate(scored[:8], 1):
+    log(f"✅ Universo atualizado:")
+    for i, (symbol, score) in enumerate(scored, 1):
         log(f"  {i}. {symbol} (score: {score:.3f})")
 
 def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
+    # ✅ Verificar limites de segurança
+    can_trade, reason = state.check_safety_limits()
+    if not can_trade:
+        log(reason)
+        return None
+    
     if not should_trade_now():
         if Config.DEBUG_MODE:
             log("⏸️ Fora do horário de negociação (22:00-00:00)")
@@ -731,7 +784,6 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         trend_pct = abs(ema_short - ema_long) / closes[-1]
         score = trend_pct * 1000 + abs(rsi - 50) * 2
         
-        # ✅ Aplicar IA de multiplicadores
         ai_multiplier = learning_mgr.get_total_multiplier(symbol, score)
         score *= ai_multiplier
         
@@ -801,6 +853,7 @@ def process_pending_setup(state: BotState) -> None:
     )
     state.active_operations.append(operation)
     state.pending_setup = None
+    state.operations_this_hour += 1  # ✅ NOVO
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
     msg = f"✅ ENTRADA\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
     send_telegram(msg)
@@ -877,7 +930,7 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     send_telegram(msg)
     log(f"❌ LOSS REGISTRADO | {operation.symbol}")
     
-    if state.loss_streak >= 5 and not state.paused:
+    if state.loss_streak >= Config.MAX_LOSS_STREAK and not state.paused:
         state.paused = True
         state.pause_until = get_utc_now() + timedelta(hours=1)
         msg = f"⏸️ PAUSA AUTOMÁTICA\n\n{state.loss_streak} losses consecutivos!\nBot pausado por 1 hora."
@@ -906,8 +959,10 @@ def main() -> None:
     remove_webhook()
     learning_mgr = LearningManager()
     state = BotState()
-    log("🤖 BOT FOREX INICIANDO...")
-    send_telegram("🤖 BOT FOREX ATIVADO 💱\n\nComandos: /start /stop /stats /health /ai")
+    
+    mode_msg = "📄 PAPER TRADING (Simulado)" if Config.PAPER_TRADING else "💰 REAL TRADING (Dinheiro Real)"
+    log(f"🤖 BOT FOREX INICIANDO... ({mode_msg})")
+    send_telegram(f"🤖 BOT FOREX ATIVADO 💱\n{mode_msg}\n\nComandos: /start /stop /stats /health /ai /limits")
     
     while True:
         try:
