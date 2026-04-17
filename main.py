@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 # CONFIGURAÇÕES DE TRADING
 # ========================================
 class Config:
-    BOT_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
+    BOT_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID: str = "1056795017"
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
     
@@ -19,7 +19,7 @@ class Config:
     CRYPTO_ASSETS: List[str] = ["BTC-USD", "ETH-USD", "SOL-USD"]
 
     # Estratégia
-    SIGNAL_STRENGTH_THRESHOLD: float = 2.5  # Sensibilidade (Menor = Mais sinais)
+    SIGNAL_STRENGTH_THRESHOLD: float = 1.5  # Sensibilidade (Menor = Mais sinais)
     CHECK_RESULT_MINUTES: int = 5           # Tempo para validar o Win/Loss
 
 # ========================================
