@@ -14,7 +14,7 @@ from enum import Enum
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
-    FOREX_API_KEY: str = os.getenv("FOREX_API_KEY", "").strip()
+    POLYGON_API_KEY: str = os.getenv("YvOIfg3ERjYpMIJs4FnPk87Bg06TSWqB", os.getenv("FOREX_API_KEY", ""))
 
     SIGNAL_INTERVAL: int = 10
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
@@ -450,34 +450,28 @@ def next_minute(dt: datetime) -> datetime:
 def fmt_br(dt: datetime) -> str:
     return dt.astimezone(Config.BR_TIMEZONE).strftime("%H:%M")
 
+def should_trade_now() -> bool:
+    hour = get_br_now().hour
+    if hour >= 22 or hour < 0:
+        return False
+    return True
+
 def fmt_price(symbol: str, price: float) -> str:
-    if symbol == "USDJPY":
-        return f"{price:.3f}"
-    return f"{price:.5f}"
+    return f"{price:.3f}" if symbol == "USDJPY" else f"{price:.5f}"
 
 def normalize_forex_symbol(symbol: str) -> str:
-    symbol = symbol.strip().upper()
+    symbol = symbol.strip().upper().replace(" ", "")
     if "/" in symbol:
         return symbol
     if len(symbol) == 6 and symbol.isalpha():
         return f"{symbol[:3]}/{symbol[3:]}"
     return symbol
 
-def yahoo_forex_symbol(symbol: str) -> str:
-    symbol = symbol.strip().upper().replace("/", "")
-    if symbol == "USDJPY":
-        return "USDJPY=X"
-    if symbol == "EURUSD":
-        return "EURUSD=X"
-    if symbol == "GBPUSD":
-        return "GBPUSD=X"
-    return f"{symbol}=X"
+def polygon_forex_ticker(symbol: str) -> str:
+    return f"C:{normalize_forex_symbol(symbol).replace('/', '')}"
 
-def should_trade_now() -> bool:
-    hour = get_br_now().hour
-    if hour >= 22 or hour < 0:
-        return False
-    return True
+def ms_to_dt(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
 
 # ========================================
 # LOG E TELEGRAM
@@ -642,156 +636,108 @@ def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, ent
 # ========================================
 # GERADOR DE DADOS
 # ========================================
-
 class CandleGenerator:
     def __init__(self):
-        self.price_state = {
-            "EURUSD": 1.0850,
-            "GBPUSD": 1.2650,
-            "USDJPY": 150.50,
-        }
         self.cache: Dict[str, Tuple[datetime, List[Candle]]] = {}
         self.cache_ttl_seconds: int = 45
-        self.headers = {
+        self.session = requests.Session()
+        self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-        }
+        })
 
-    def _parse_dt(self, value: Any) -> datetime:
-        if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value, tz=timezone.utc)
-        value = str(value).replace("Z", "+00:00")
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+    def _api_key(self) -> str:
+        return str(Config.POLYGON_API_KEY or "").strip()
 
-    def _fetch_yahoo_chart(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
-        ticker = yahoo_forex_symbol(symbol)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        params = {
-            "interval": "1m",
-            "range": "1d",
-            "includePrePost": "false",
-            "events": "div,splits",
-        }
-
-        try:
-            response = requests.get(url, params=params, headers=self.headers, timeout=12)
-            response.raise_for_status()
-            data = response.json()
-
-            chart = data.get("chart", {})
-            error = chart.get("error")
-            result = chart.get("result") or []
-            if error or not result:
-                log(f"⚠️ Yahoo sem candles para {symbol}: {error.get('description') if error else 'resposta vazia'}")
-                return None
-
-            r0 = result[0]
-            timestamps = r0.get("timestamp") or []
-            quote = (((r0.get("indicators") or {}).get("quote") or [{}])[0])
-            opens = quote.get("open") or []
-            highs = quote.get("high") or []
-            lows = quote.get("low") or []
-            closes = quote.get("close") or []
-            volumes = quote.get("volume") or []
-
-            candles: List[Candle] = []
-            for i in range(len(timestamps)):
-                o = opens[i] if i < len(opens) and opens[i] is not None else None
-                h = highs[i] if i < len(highs) and highs[i] is not None else None
-                l = lows[i] if i < len(lows) and lows[i] is not None else None
-                c = closes[i] if i < len(closes) and closes[i] is not None else None
-                if None in (o, h, l, c):
-                    continue
-                candles.append(Candle(
-                    time=self._parse_dt(timestamps[i]),
-                    open=float(o),
-                    high=float(h),
-                    low=float(l),
-                    close=float(c),
-                    volume=float(volumes[i]) if i < len(volumes) and volumes[i] is not None else 0.0,
-                ))
-
-            if candles:
-                self.price_state[symbol] = candles[-1].close
-                return candles[-limit:]
-            return None
-        except Exception as e:
-            log(f"⚠️ Falha Yahoo {symbol}: {e}")
-            return None
-
-    def _fetch_twelvedata(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
-        api_key = (Config.FOREX_API_KEY or "").strip()
+    def _fetch_polygon_bars(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
+        api_key = self._api_key()
         if not api_key:
+            log("⚠️ POLYGON_API_KEY não configurada")
             return None
 
-        api_symbol = normalize_forex_symbol(symbol)
-        url = "https://api.twelvedata.com/time_series"
+        ticker = polygon_forex_ticker(symbol)
+        now = get_utc_now()
+        start = now - timedelta(minutes=max(limit * 3, 240))
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/{int(start.timestamp() * 1000)}/{int(now.timestamp() * 1000)}"
         params = {
-            "symbol": api_symbol,
-            "interval": "1min",
-            "outputsize": max(limit, 120),
-            "apikey": api_key,
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": 50000,
+            "apiKey": api_key,
         }
 
         try:
-            response = requests.get(url, params=params, timeout=12)
+            response = self.session.get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
 
-            if "values" not in data or not data["values"]:
-                msg = data.get("message") or data.get("status") or "resposta vazia"
-                log(f"⚠️ TwelveData sem candles para {symbol}: {msg}")
+            results = data.get("results") or []
+            if not results:
+                msg = data.get("error") or data.get("message") or "resposta vazia"
+                log(f"⚠️ Polygon sem candles para {symbol}: {msg}")
                 return None
 
-            candles: List[Candle] = []
-            for item in reversed(data["values"][:limit]):
-                t = self._parse_dt(item["datetime"])
-                candles.append(Candle(
-                    time=t,
-                    open=float(item["open"]),
-                    high=float(item["high"]),
-                    low=float(item["low"]),
-                    close=float(item["close"]),
-                    volume=float(item.get("volume", 0) or 0),
+            raw: List[Candle] = []
+            for item in results:
+                ts = ms_to_dt(int(item["t"]))
+                raw.append(Candle(
+                    time=ts,
+                    open=float(item["o"]),
+                    close=float(item["c"]),
+                    high=float(item["h"]),
+                    low=float(item["l"]),
+                    volume=float(item.get("v", 0) or 0),
                 ))
 
-            if candles:
-                self.price_state[symbol] = candles[-1].close
-                return candles
+            raw.sort(key=lambda c: c.time)
+            filled: List[Candle] = []
+            expected_time = floor_minute(raw[0].time)
+            last_close = raw[0].open
+
+            for candle in raw:
+                candle_time = floor_minute(candle.time)
+                while expected_time < candle_time:
+                    filled.append(Candle(
+                        time=expected_time,
+                        open=last_close,
+                        close=last_close,
+                        high=last_close,
+                        low=last_close,
+                        volume=0.0,
+                    ))
+                    expected_time += timedelta(minutes=1)
+
+                filled.append(Candle(
+                    time=candle_time,
+                    open=candle.open,
+                    close=candle.close,
+                    high=candle.high,
+                    low=candle.low,
+                    volume=candle.volume,
+                ))
+                last_close = candle.close
+                expected_time = candle_time + timedelta(minutes=1)
+
+            while len(filled) < limit and expected_time <= floor_minute(now):
+                filled.append(Candle(
+                    time=expected_time,
+                    open=last_close,
+                    close=last_close,
+                    high=last_close,
+                    low=last_close,
+                    volume=0.0,
+                ))
+                expected_time += timedelta(minutes=1)
+
+            if filled:
+                self.cache[symbol] = (now, filled)
+                return filled[-limit:]
+
             return None
         except Exception as e:
-            log(f"⚠️ Falha TwelveData {symbol}: {e}")
+            log(f"⚠️ Falha ao buscar candles da Polygon para {symbol}: {e}")
             return None
 
-    def _fallback_from_cache(self, symbol: str) -> Optional[List[Candle]]:
-        cached = self.cache.get(symbol)
-        if cached:
-            return cached[1]
-        return None
-
-    def get_candle_at_time(self, symbol: str, timestamp: datetime) -> Optional[Candle]:
-        candles = self.get_candles(symbol, limit=120)
-        if not candles:
-            return None
-        target = floor_minute(timestamp)
-        for candle in candles:
-            if floor_minute(candle.time) == target:
-                return candle
-        # fallback: pega a vela mais próxima anterior
-        older = [c for c in candles if c.time <= target]
-        if older:
-            return older[-1]
-        return candles[-1]
-
-    def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
-        candle = self.get_candle_at_time(symbol, timestamp)
-        if candle is not None:
-            return candle.open if timestamp.second == 0 else candle.close
-        return self.price_state.get(symbol, 1.0)
-
-    def get_candles(self, symbol: str, limit: int = 120) -> List[Candle]:
+    def get_candles(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
         now = get_utc_now()
         cached = self.cache.get(symbol)
         if cached is not None:
@@ -799,19 +745,32 @@ class CandleGenerator:
             if (now - cached_at).total_seconds() < self.cache_ttl_seconds and len(cached_candles) >= limit:
                 return cached_candles[-limit:]
 
-        candles = self._fetch_yahoo_chart(symbol, limit=limit)
-        if candles is None:
-            candles = self._fetch_twelvedata(symbol, limit=limit)
+        candles = self._fetch_polygon_bars(symbol, limit=limit)
+        if candles is not None:
+            return candles
+        return None
 
+    def get_candle_at_time(self, symbol: str, timestamp: datetime) -> Optional[Candle]:
+        candles = self.get_candles(symbol, limit=200)
+        if not candles:
+            return None
+        target = floor_minute(timestamp)
+        for candle in candles:
+            if floor_minute(candle.time) == target:
+                return candle
+        return None
+
+    def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
+        candle = self.get_candle_at_time(symbol, timestamp)
+        if candle is not None:
+            return candle.open if timestamp.second == 0 else candle.close
+
+        candles = self.get_candles(symbol, limit=1)
         if candles:
-            self.cache[symbol] = (now, candles)
-            return candles[-limit:]
+            return candles[-1].close
 
-        fallback = self._fallback_from_cache(symbol)
-        if fallback:
-            return fallback[-limit:]
+        raise RuntimeError(f"Sem candles disponíveis para {symbol}")
 
-        return []
 candle_gen = CandleGenerator()
 
 def get_candles(symbol: str, limit: int = 120) -> Optional[List[Candle]]:
@@ -983,19 +942,23 @@ def create_signal(setup: PendingSetup, state: BotState) -> None:
     state.pending_setup = setup
     state.last_signal_time = get_utc_now()
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    candle = candle_gen.get_candle_at_time(setup.symbol, setup.entry_time)
-    entry_open = candle.open if candle else candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
-    entry_close = candle.close if candle else entry_open
+
+    ref_candle = candle_gen.get_candle_at_time(setup.symbol, setup.entry_time - timedelta(minutes=1))
+    ref_open = ref_candle.open if ref_candle else None
+    ref_close = ref_candle.close if ref_candle else None
+
     msg = (
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
         f"💱 Par: {setup.symbol}\n"
         f"📊 Estratégia: {direction_emoji}\n"
         f"⏰ Entrada: {fmt_br(setup.entry_time)}\n"
-        f"🕯️ Vela de entrada O/C: {fmt_price(setup.symbol, entry_open)} / {fmt_price(setup.symbol, entry_close)}\n"
-        f"📈 Força: {setup.score:.3f}"
     )
+    if ref_open is not None and ref_close is not None:
+        msg += f"🕯️ Vela anterior O/C: {fmt_price(setup.symbol, ref_open)} / {fmt_price(setup.symbol, ref_close)}\n"
+    msg += f"📈 Força: {setup.score:.3f}"
+
     send_telegram(msg)
-    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value} | O={fmt_price(setup.symbol, entry_open)} C={fmt_price(setup.symbol, entry_close)}")
+    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value}")
 
 def process_pending_setup(state: BotState) -> None:
     if state.pending_setup is None or get_utc_now() < state.pending_setup.entry_time:
@@ -1005,7 +968,7 @@ def process_pending_setup(state: BotState) -> None:
     p2_time = setup.entry_time + timedelta(minutes=2)
 
     entry_candle = candle_gen.get_candle_at_time(setup.symbol, setup.entry_time)
-    entry_price = entry_candle.open if entry_candle else candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
+    entry_price = entry_candle.open if entry_candle is not None else candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
 
     operation = ActiveOperation(
         symbol=setup.symbol,
@@ -1020,14 +983,7 @@ def process_pending_setup(state: BotState) -> None:
     state.pending_setup = None
     state.operations_this_hour += 1  # ✅ NOVO
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    entry_close = entry_candle.close if entry_candle else entry_price
-    msg = (
-        f"✅ ENTRADA\n\n"
-        f"💱 {setup.symbol}\n"
-        f"{direction_emoji}\n"
-        f"⏰ {fmt_br(setup.entry_time)}\n"
-        f"🕯️ O/C: {fmt_price(setup.symbol, entry_price)} / {fmt_price(setup.symbol, entry_close)}"
-    )
+    msg = f"✅ ENTRADA\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
     send_telegram(msg)
 
 # ========================================
@@ -1037,56 +993,63 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     now = get_utc_now()
 
     if operation.stage == TradeStage.ENTRY:
+        candle_time = operation.entry_time
         check_time = operation.entry_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_1
         stage_name = "Entrada"
-        candle_open_time = operation.entry_time
     elif operation.stage == TradeStage.PROTECTION_1:
+        candle_time = operation.protection1_time
         check_time = operation.protection1_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_2
         stage_name = "Proteção 1"
-        candle_open_time = operation.protection1_time
     else:
+        candle_time = operation.protection2_time
         check_time = operation.protection2_time + timedelta(minutes=1)
         next_stage = None
         stage_name = "Proteção 2"
-        candle_open_time = operation.protection2_time
 
     if now < check_time + timedelta(seconds=5):
         return operation
 
-    candle = candle_gen.get_candle_at_time(operation.symbol, candle_open_time)
-    candle_open_price = candle.open if candle else operation.entry_price
-    result_price = candle.close if candle else candle_gen.get_price_at_time(operation.symbol, check_time)
+    candle = candle_gen.get_candle_at_time(operation.symbol, candle_time)
+    if candle is None:
+        candles = get_candles(operation.symbol, limit=5)
+        if not candles:
+            log(f"  ❌ Sem candles para {operation.symbol}")
+            return operation
+        candle = candles[-1]
 
-    log(f"  📊 {operation.symbol} M1 | Abertura: {fmt_price(operation.symbol, candle_open_price)} | Fechamento: {fmt_price(operation.symbol, result_price)} | {stage_name}")
+    entry_price = candle.open
+    result_price = candle.close
+
+    log(f"  📊 {operation.symbol} M1 | Abertura: {fmt_price(operation.symbol, entry_price)} | Fechamento: {fmt_price(operation.symbol, result_price)} | {stage_name}")
 
     if operation.direction == TradeDirection.BUY:
-        if result_price <= operation.entry_price - Config.STOP_LOSS_PIPS:
+        if result_price <= entry_price - Config.STOP_LOSS_PIPS:
             is_win = False
-            log(f"  🛑 STOP LOSS | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
-        elif result_price >= operation.entry_price + Config.TAKE_PROFIT_PIPS:
+            log(f"  🛑 STOP LOSS | Entrada: {entry_price:.6f} vs Resultado: {result_price:.6f}")
+        elif result_price >= entry_price + Config.TAKE_PROFIT_PIPS:
             is_win = True
-            log(f"  🎯 TAKE PROFIT | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+            log(f"  🎯 TAKE PROFIT | Entrada: {entry_price:.6f} vs Resultado: {result_price:.6f}")
         else:
-            is_win = result_price > operation.entry_price
+            is_win = result_price > entry_price
         direction_text = "COMPRA"
     else:
-        if result_price >= operation.entry_price + Config.STOP_LOSS_PIPS:
+        if result_price >= entry_price + Config.STOP_LOSS_PIPS:
             is_win = False
-            log(f"  🛑 STOP LOSS | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
-        elif result_price <= operation.entry_price - Config.TAKE_PROFIT_PIPS:
+            log(f"  🛑 STOP LOSS | Entrada: {entry_price:.6f} vs Resultado: {result_price:.6f}")
+        elif result_price <= entry_price - Config.TAKE_PROFIT_PIPS:
             is_win = True
-            log(f"  🎯 TAKE PROFIT | Entrada: {operation.entry_price:.6f} vs Resultado: {result_price:.6f}")
+            log(f"  🎯 TAKE PROFIT | Entrada: {entry_price:.6f} vs Resultado: {result_price:.6f}")
         else:
-            is_win = result_price < operation.entry_price
+            is_win = result_price < entry_price
         direction_text = "VENDA"
 
-    diff = result_price - operation.entry_price
+    diff = result_price - entry_price
     result_text = "✅ WIN" if is_win else "❌ LOSS"
     log(f"  {result_text} | {direction_text} | {stage_name} | Diferença: {diff:.6f} pips")
 
-    log_operation(operation, stage_name, is_win, operation.entry_price, result_price)
+    log_operation(operation, stage_name, is_win, entry_price, result_price)
 
     if is_win:
         state.record_win(operation.symbol)
@@ -1096,7 +1059,7 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
             f"💱 {operation.symbol}\n"
             f"✅ {stage_name}\n"
             f"{direction_text}\n"
-            f"🕯️ Abertura: {fmt_price(operation.symbol, candle_open_price)}\n"
+            f"🕯️ Abertura: {fmt_price(operation.symbol, entry_price)}\n"
             f"🕯️ Fechamento: {fmt_price(operation.symbol, result_price)}\n\n"
             f"Wins: {state.wins} | Losses: {state.losses}\n"
             f"📈 {state.winrate:.1f}%"
@@ -1117,7 +1080,7 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         f"💱 {operation.symbol}\n"
         f"❌ {stage_name}\n"
         f"{direction_text}\n"
-        f"🕯️ Abertura: {fmt_price(operation.symbol, candle_open_price)}\n"
+        f"🕯️ Abertura: {fmt_price(operation.symbol, entry_price)}\n"
         f"🕯️ Fechamento: {fmt_price(operation.symbol, result_price)}\n\n"
         f"Wins: {state.wins} | Losses: {state.losses}\n"
         f"📈 {state.winrate:.1f}%"
