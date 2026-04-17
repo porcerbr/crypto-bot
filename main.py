@@ -450,6 +450,11 @@ def next_minute(dt: datetime) -> datetime:
 def fmt_br(dt: datetime) -> str:
     return dt.astimezone(Config.BR_TIMEZONE).strftime("%H:%M")
 
+def fmt_price(symbol: str, price: float) -> str:
+    if symbol == "USDJPY":
+        return f"{price:.3f}"
+    return f"{price:.5f}"
+
 def should_trade_now() -> bool:
     hour = get_br_now().hour
     if hour >= 22 or hour < 0:
@@ -833,15 +838,17 @@ def create_signal(setup: PendingSetup, state: BotState) -> None:
     state.pending_setup = setup
     state.last_signal_time = get_utc_now()
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
+    entry_price = candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
     msg = (
         "⚠️ PREPARAR ENTRADA ⚠️\n\n"
         f"💱 Par: {setup.symbol}\n"
         f"📊 Estratégia: {direction_emoji}\n"
         f"⏰ Entrada: {fmt_br(setup.entry_time)}\n"
+        f"💰 Preço de entrada da vela: {fmt_price(setup.symbol, entry_price)}\n"
         f"📈 Força: {setup.score:.3f}"
     )
     send_telegram(msg)
-    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value}")
+    log(f"📊 SINAL | {setup.symbol} | {setup.direction.value} | Entrada vela: {fmt_price(setup.symbol, entry_price)}")
 
 def process_pending_setup(state: BotState) -> None:
     if state.pending_setup is None or get_utc_now() < state.pending_setup.entry_time:
@@ -878,21 +885,25 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         check_time = operation.entry_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_1
         stage_name = "Entrada"
+        candle_open_time = operation.entry_time
     elif operation.stage == TradeStage.PROTECTION_1:
         check_time = operation.protection1_time + timedelta(minutes=1)
         next_stage = TradeStage.PROTECTION_2
         stage_name = "Proteção 1"
+        candle_open_time = operation.protection1_time
     else:
         check_time = operation.protection2_time + timedelta(minutes=1)
         next_stage = None
         stage_name = "Proteção 2"
+        candle_open_time = operation.protection2_time
 
     if now < check_time + timedelta(seconds=5):
         return operation
 
+    candle_open_price = candle_gen.get_price_at_time(operation.symbol, candle_open_time)
     result_price = candle_gen.get_price_at_time(operation.symbol, check_time)
 
-    log(f"  📊 {operation.symbol} M1 | Entrada: {operation.entry_price:.6f} | {stage_name}: {result_price:.6f}")
+    log(f"  📊 {operation.symbol} M1 | Abertura: {fmt_price(operation.symbol, candle_open_price)} | Fechamento: {fmt_price(operation.symbol, result_price)} | {stage_name}")
 
     if operation.direction == TradeDirection.BUY:
         if result_price <= operation.entry_price - Config.STOP_LOSS_PIPS:
@@ -924,7 +935,16 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     if is_win:
         state.record_win(operation.symbol)
         learning_mgr.record_result(operation.symbol, True, 0.0, str(get_br_now().hour))
-        msg = f"🏆 WIN\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+        msg = (
+            f"🏆 WIN\n\n"
+            f"💱 {operation.symbol}\n"
+            f"✅ {stage_name}\n"
+            f"{direction_text}\n"
+            f"🕯️ Abertura: {fmt_price(operation.symbol, candle_open_price)}\n"
+            f"🕯️ Fechamento: {fmt_price(operation.symbol, result_price)}\n\n"
+            f"Wins: {state.wins} | Losses: {state.losses}\n"
+            f"📈 {state.winrate:.1f}%"
+        )
         send_telegram(msg)
         log(f"✅ WIN REGISTRADO | {operation.symbol}")
         return None
@@ -936,7 +956,16 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
 
     state.record_loss(operation.symbol)
     learning_mgr.record_result(operation.symbol, False, 0.0, str(get_br_now().hour))
-    msg = f"🏆 LOSS\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+    msg = (
+        f"🏆 LOSS\n\n"
+        f"💱 {operation.symbol}\n"
+        f"❌ {stage_name}\n"
+        f"{direction_text}\n"
+        f"🕯️ Abertura: {fmt_price(operation.symbol, candle_open_price)}\n"
+        f"🕯️ Fechamento: {fmt_price(operation.symbol, result_price)}\n\n"
+        f"Wins: {state.wins} | Losses: {state.losses}\n"
+        f"📈 {state.winrate:.1f}%"
+    )
     send_telegram(msg)
     log(f"❌ LOSS REGISTRADO | {operation.symbol}")
 
