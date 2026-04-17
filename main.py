@@ -187,7 +187,7 @@ class BotState:
         except:
             pass
     
-        def _validate_mode(self) -> None:
+    def _validate_mode(self) -> None:
         """✅ Versão corrigida: tratando winrate como função"""
         if Config.PAPER_TRADING:
             self.trading_mode = TradingMode.PAPER
