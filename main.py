@@ -187,21 +187,28 @@ class BotState:
         except:
             pass
     
-    def _validate_mode(self) -> None:
-        """✅ Ajustado para evitar o congelamento inicial"""
+        def _validate_mode(self) -> None:
+        """✅ Versão corrigida: tratando winrate como função"""
         if Config.PAPER_TRADING:
             self.trading_mode = TradingMode.PAPER
             return
         
         total_ops = self.wins + self.losses
-        current_winrate = self.winrate / 100
+        
+        # Tentamos ler como valor, se falhar (por ser método), chamamos a função ()
+        try:
+            # Se o @property estiver funcionando, usa assim:
+            wr_value = self.winrate 
+            if callable(wr_value): # Se o Python ainda achar que é uma função:
+                wr_value = wr_value()
+        except:
+            wr_value = 0.0
+
+        current_winrate = wr_value / 100
         
         # Se não atingiu os requisitos para REAL, ele opera em PAPER em vez de congelar
         if total_ops < Config.MIN_TRAINING_OPERATIONS or current_winrate < Config.REQUIRED_WINRATE_FOR_REAL:
             self.trading_mode = TradingMode.PAPER
-            # Registra no log que está em modo de treino
-            if total_ops == 0:
-                audit.log("MODE", "Iniciando em modo PAPER para treinamento", "INFO")
             return
         
         # Se passou nos requisitos, entra no modo REAL
