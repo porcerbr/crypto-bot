@@ -14,7 +14,7 @@ from enum import Enum
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
-    FOREX_API_KEY: str = "BFKUJTMXC8KO6RMS"
+    FOREX_API_KEY: str = os.getenv("FOREX_API_KEY", "").strip()
 
     SIGNAL_INTERVAL: int = 10
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
@@ -463,6 +463,16 @@ def normalize_forex_symbol(symbol: str) -> str:
         return f"{symbol[:3]}/{symbol[3:]}"
     return symbol
 
+def yahoo_forex_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper().replace("/", "")
+    if symbol == "USDJPY":
+        return "USDJPY=X"
+    if symbol == "EURUSD":
+        return "EURUSD=X"
+    if symbol == "GBPUSD":
+        return "GBPUSD=X"
+    return f"{symbol}=X"
+
 def should_trade_now() -> bool:
     hour = get_br_now().hour
     if hour >= 22 or hour < 0:
@@ -632,6 +642,7 @@ def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, ent
 # ========================================
 # GERADOR DE DADOS
 # ========================================
+
 class CandleGenerator:
     def __init__(self):
         self.price_state = {
@@ -640,26 +651,88 @@ class CandleGenerator:
             "USDJPY": 150.50,
         }
         self.cache: Dict[str, Tuple[datetime, List[Candle]]] = {}
-        self.cache_ttl_seconds: int = 55
+        self.cache_ttl_seconds: int = 45
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        }
 
-    def _parse_dt(self, value: str) -> datetime:
-        value = value.replace("Z", "+00:00")
+    def _parse_dt(self, value: Any) -> datetime:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        value = str(value).replace("Z", "+00:00")
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
 
-    def _api_symbol(self, symbol: str) -> str:
-        return normalize_forex_symbol(symbol)
+    def _fetch_yahoo_chart(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
+        ticker = yahoo_forex_symbol(symbol)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        params = {
+            "interval": "1m",
+            "range": "1d",
+            "includePrePost": "false",
+            "events": "div,splits",
+        }
 
-    def _fetch_time_series(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
-        api_symbol = self._api_symbol(symbol)
+        try:
+            response = requests.get(url, params=params, headers=self.headers, timeout=12)
+            response.raise_for_status()
+            data = response.json()
+
+            chart = data.get("chart", {})
+            error = chart.get("error")
+            result = chart.get("result") or []
+            if error or not result:
+                log(f"⚠️ Yahoo sem candles para {symbol}: {error.get('description') if error else 'resposta vazia'}")
+                return None
+
+            r0 = result[0]
+            timestamps = r0.get("timestamp") or []
+            quote = (((r0.get("indicators") or {}).get("quote") or [{}])[0])
+            opens = quote.get("open") or []
+            highs = quote.get("high") or []
+            lows = quote.get("low") or []
+            closes = quote.get("close") or []
+            volumes = quote.get("volume") or []
+
+            candles: List[Candle] = []
+            for i in range(len(timestamps)):
+                o = opens[i] if i < len(opens) and opens[i] is not None else None
+                h = highs[i] if i < len(highs) and highs[i] is not None else None
+                l = lows[i] if i < len(lows) and lows[i] is not None else None
+                c = closes[i] if i < len(closes) and closes[i] is not None else None
+                if None in (o, h, l, c):
+                    continue
+                candles.append(Candle(
+                    time=self._parse_dt(timestamps[i]),
+                    open=float(o),
+                    high=float(h),
+                    low=float(l),
+                    close=float(c),
+                    volume=float(volumes[i]) if i < len(volumes) and volumes[i] is not None else 0.0,
+                ))
+
+            if candles:
+                self.price_state[symbol] = candles[-1].close
+                return candles[-limit:]
+            return None
+        except Exception as e:
+            log(f"⚠️ Falha Yahoo {symbol}: {e}")
+            return None
+
+    def _fetch_twelvedata(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
+        api_key = (Config.FOREX_API_KEY or "").strip()
+        if not api_key:
+            return None
+
+        api_symbol = normalize_forex_symbol(symbol)
         url = "https://api.twelvedata.com/time_series"
         params = {
             "symbol": api_symbol,
             "interval": "1min",
             "outputsize": max(limit, 120),
-            "apikey": Config.FOREX_API_KEY,
+            "apikey": api_key,
         }
 
         try:
@@ -668,34 +741,35 @@ class CandleGenerator:
             data = response.json()
 
             if "values" not in data or not data["values"]:
-                log(f"⚠️ API sem candles para {symbol}: {data.get('message', 'resposta vazia')}")
+                msg = data.get("message") or data.get("status") or "resposta vazia"
+                log(f"⚠️ TwelveData sem candles para {symbol}: {msg}")
                 return None
 
             candles: List[Candle] = []
             for item in reversed(data["values"][:limit]):
                 t = self._parse_dt(item["datetime"])
-                open_price = float(item["open"])
-                high = float(item["high"])
-                low = float(item["low"])
-                close = float(item["close"])
-                volume = float(item.get("volume", 0) or 0)
-
                 candles.append(Candle(
                     time=t,
-                    open=open_price,
-                    close=close,
-                    high=high,
-                    low=low,
-                    volume=volume
+                    open=float(item["open"]),
+                    high=float(item["high"]),
+                    low=float(item["low"]),
+                    close=float(item["close"]),
+                    volume=float(item.get("volume", 0) or 0),
                 ))
 
             if candles:
                 self.price_state[symbol] = candles[-1].close
-
-            return candles
-        except Exception as e:
-            log(f"⚠️ Falha ao buscar candles reais de {symbol}: {e}")
+                return candles
             return None
+        except Exception as e:
+            log(f"⚠️ Falha TwelveData {symbol}: {e}")
+            return None
+
+    def _fallback_from_cache(self, symbol: str) -> Optional[List[Candle]]:
+        cached = self.cache.get(symbol)
+        if cached:
+            return cached[1]
+        return None
 
     def get_candle_at_time(self, symbol: str, timestamp: datetime) -> Optional[Candle]:
         candles = self.get_candles(symbol, limit=120)
@@ -705,14 +779,16 @@ class CandleGenerator:
         for candle in candles:
             if floor_minute(candle.time) == target:
                 return candle
-        return None
+        # fallback: pega a vela mais próxima anterior
+        older = [c for c in candles if c.time <= target]
+        if older:
+            return older[-1]
+        return candles[-1]
 
     def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
         candle = self.get_candle_at_time(symbol, timestamp)
         if candle is not None:
-            if timestamp.second == 0:
-                return candle.open
-            return candle.close
+            return candle.open if timestamp.second == 0 else candle.close
         return self.price_state.get(symbol, 1.0)
 
     def get_candles(self, symbol: str, limit: int = 120) -> List[Candle]:
@@ -723,25 +799,19 @@ class CandleGenerator:
             if (now - cached_at).total_seconds() < self.cache_ttl_seconds and len(cached_candles) >= limit:
                 return cached_candles[-limit:]
 
-        candles = self._fetch_time_series(symbol, limit=limit)
+        candles = self._fetch_yahoo_chart(symbol, limit=limit)
+        if candles is None:
+            candles = self._fetch_twelvedata(symbol, limit=limit)
+
         if candles:
             self.cache[symbol] = (now, candles)
-            return candles
+            return candles[-limit:]
 
-        fallback_candles: List[Candle] = []
-        base = self.price_state.get(symbol, 1.0)
-        for i in range(limit, 0, -1):
-            timestamp = now - timedelta(minutes=i)
-            fallback_candles.append(Candle(
-                time=timestamp,
-                open=base,
-                close=base,
-                high=base,
-                low=base,
-                volume=0.0
-            ))
-        return fallback_candles
+        fallback = self._fallback_from_cache(symbol)
+        if fallback:
+            return fallback[-limit:]
 
+        return []
 candle_gen = CandleGenerator()
 
 def get_candles(symbol: str, limit: int = 120) -> Optional[List[Candle]]:
