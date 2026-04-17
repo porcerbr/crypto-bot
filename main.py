@@ -6,10 +6,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, List, Any
 from dataclasses import dataclass
 from enum import Enum
-import hashlib
 
 # ========================================
-# CONFIGURAÇÕES PROFISSIONAIS
+# CONFIGURAÇÕES
+# ========================================
+class Config:
+
+# ========================================
+# CONFIGURAÇÕES
 # ========================================
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
@@ -20,11 +24,11 @@ class Config:
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
     UNIVERSE_REFRESH: int = 900
     
-    # ✅ Apenas os melhores pares
+    # ✅ REDUZIDO: Apenas os melhores pares
     ACTIVE_SYMBOLS: List[str] = [
-        "EURUSD",
-        "GBPUSD",
-        "USDJPY",
+        "EURUSD",   # Mais liquido, tendências claras
+        "GBPUSD",   # Volatilidade boa
+        "USDJPY",   # Correlação inversa (diversificação)
     ]
     
     EMA_SHORT: int = 9
@@ -35,35 +39,12 @@ class Config:
     
     LEARNING_FILE: str = "learning.json"
     OPERATIONS_LOG: str = "operations_log.csv"
-    BACKTEST_FILE: str = "backtest_results.json"
-    AUDIT_LOG: str = "audit.log"  # ✅ NOVO
     
     MIN_SIGNAL_STRENGTH: float = 5.0
     STOP_LOSS_PIPS: float = 0.0050
     TAKE_PROFIT_PIPS: float = 0.0100
     
     DEBUG_MODE: bool = False
-    PAPER_TRADING: bool = False  # ✅ ALTERADO: Pronto para REAL
-    
-    # ✅ NOVO: Limites rigorosos de segurança
-    MAX_LOSS_STREAK: int = 3  # Pausa após 3 losses (menos tolerante)
-    MAX_DAILY_LOSS: float = 2.0  # Máximo 2% de loss por dia
-    MAX_OPERATIONS_PER_HOUR: int = 2  # Máximo 2 ops por hora (menos agressivo)
-    MIN_WINRATE_TO_TRADE: float = 0.55  # Mínimo 55% para continuar
-    
-    # ✅ NOVO: Validações profissionais
-    ACCOUNT_BALANCE: float = 1000.0  # Saldo inicial
-    MAX_RISK_PER_TRADE: float = 0.01  # 1% por operação
-    MIN_TRAINING_OPERATIONS: int = 50  # Precisa de 50 ops antes de fazer real
-    REQUIRED_WINRATE_FOR_REAL: float = 0.58  # Precisa de 58% no simulado
-    
-    # ✅ NOVO: Horário operacional
-    TRADING_START_HOUR: int = 6  # Começa 6h BR
-    TRADING_END_HOUR: int = 21  # Termina 21h BR
-    
-    # ✅ NOVO: Validações de qualidade
-    MIN_VOLUME_REQUIRED: float = 1000000.0
-    MAX_SPREAD_ALLOWED: float = 0.0003  # 3 pips máximo
 
 # ========================================
 # ENUMERAÇÕES
@@ -76,11 +57,6 @@ class TradeStage(Enum):
     ENTRY = 0
     PROTECTION_1 = 1
     PROTECTION_2 = 2
-
-class TradingMode(Enum):
-    PAPER = "PAPER"
-    REAL = "REAL"
-    FROZEN = "FROZEN"  # ✅ NOVO
 
 # ========================================
 # DATA CLASSES
@@ -110,41 +86,9 @@ class ActiveOperation:
     entry_price: float
     protection1_time: datetime
     protection2_time: datetime
-    operation_id: str = ""  # ✅ NOVO
 
 # ========================================
-# ✅ NOVO: AUDITORIA PROFISSIONAL
-# ========================================
-class AuditLog:
-    def __init__(self, file_path: str = Config.AUDIT_LOG):
-        self.file_path = file_path
-    
-    def log(self, event_type: str, message: str, severity: str = "INFO") -> None:
-        """Registra evento em arquivo de auditoria"""
-        try:
-            timestamp = datetime.now().isoformat()
-            with open(self.file_path, "a") as f:
-                f.write(f"{timestamp} | {severity:8} | {event_type:20} | {message}\n")
-        except:
-            pass
-    
-    def log_operation(self, operation_id: str, symbol: str, direction: str, entry_price: float, is_win: bool) -> None:
-        """Registra operação realizada"""
-        result = "WIN" if is_win else "LOSS"
-        self.log("OPERATION", f"ID:{operation_id} | {symbol} {direction} @ {entry_price:.6f} | {result}", "TRADE")
-    
-    def log_risk_limit(self, reason: str) -> None:
-        """Registra limite de risco acionado"""
-        self.log("RISK_LIMIT", reason, "WARNING")
-    
-    def log_mode_change(self, old_mode: str, new_mode: str, reason: str) -> None:
-        """Registra mudança de modo"""
-        self.log("MODE_CHANGE", f"{old_mode} -> {new_mode} ({reason})", "CRITICAL")
-
-audit = AuditLog()
-
-# ========================================
-# STATE MANAGER PROFISSIONAL
+# STATE MANAGER
 # ========================================
 class BotState:
     def __init__(self):
@@ -164,20 +108,7 @@ class BotState:
         self.loss_streak: int = 0
         self.paused: bool = False
         self.pause_until: Optional[datetime] = None
-        self.operations_today: List[Dict[str, Any]] = []
-        self.daily_loss_percent: float = 0.0
-        self.operations_this_hour: int = 0
-        self.last_hour_reset: datetime = get_utc_now()
-        
-        # ✅ NOVO: Modo de trading
-        self.trading_mode: TradingMode = TradingMode.PAPER
-        self.mode_locked: bool = False  # ✅ Impede mudança acidental
-        
-        # ✅ NOVO: Histórico de capital
-        self.capital_history: List[Dict[str, Any]] = []
-        
         self._init_log_file()
-        self._validate_mode()
     
     def _init_log_file(self) -> None:
         try:
@@ -187,70 +118,22 @@ class BotState:
         except:
             pass
     
-    def _validate_mode(self) -> None:
-        """✅ Versão corrigida: tratando winrate como função"""
-        if Config.PAPER_TRADING:
-            self.trading_mode = TradingMode.PAPER
-            return
-        
-        total_ops = self.wins + self.losses
-        
-        # Tentamos ler como valor, se falhar (por ser método), chamamos a função ()
-        try:
-            # Se o @property estiver funcionando, usa assim:
-            wr_value = self.winrate 
-            if callable(wr_value): # Se o Python ainda achar que é uma função:
-                wr_value = wr_value()
-        except:
-            wr_value = 0.0
-
-        current_winrate = wr_value / 100
-        
-        # Se não atingiu os requisitos para REAL, ele opera em PAPER em vez de congelar
-        if total_ops < Config.MIN_TRAINING_OPERATIONS or current_winrate < Config.REQUIRED_WINRATE_FOR_REAL:
-            self.trading_mode = TradingMode.PAPER
-            return
-        
-        # Se passou nos requisitos, entra no modo REAL
-        self.trading_mode = TradingMode.REAL
-        audit.log_mode_change("PAPER", "REAL", "Requisitos atingidos!")
-
-    
+    @property
     def winrate(self) -> float:
         total = self.wins + self.losses
         return (self.wins / total * 100) if total > 0 else 0.0
     
-    def record_win(self, symbol: str, entry_price: float, result_price: float) -> None:
+    def record_win(self, symbol: str) -> None:
         self.wins += 1
         self.performance[symbol]["win"] += 1
         self.loss_streak = 0
         self._add_to_history(symbol)
-        
-        # ✅ NOVO: Registrar lucro
-        profit_pips = (result_price - entry_price) * 10000
-        self.capital_history.append({
-            "timestamp": get_br_now().isoformat(),
-            "type": "WIN",
-            "symbol": symbol,
-            "pips": profit_pips,
-            "cumulative_pips": sum(h["pips"] for h in self.capital_history)
-        })
     
-    def record_loss(self, symbol: str, entry_price: float, result_price: float) -> None:
+    def record_loss(self, symbol: str) -> None:
         self.losses += 1
         self.performance[symbol]["loss"] += 1
         self.loss_streak += 1
         self._add_to_history(symbol)
-        
-        # ✅ NOVO: Registrar perda
-        loss_pips = (result_price - entry_price) * 10000
-        self.capital_history.append({
-            "timestamp": get_br_now().isoformat(),
-            "type": "LOSS",
-            "symbol": symbol,
-            "pips": loss_pips,
-            "cumulative_pips": sum(h["pips"] for h in self.capital_history)
-        })
     
     def _add_to_history(self, symbol: str) -> None:
         if symbol not in self.last_used_symbols:
@@ -260,34 +143,9 @@ class BotState:
     
     def can_use_symbol(self, symbol: str) -> bool:
         return symbol not in self.last_used_symbols[:3]
-    
-    def check_safety_limits(self) -> Tuple[bool, str]:
-        """Verifica se pode abrir nova operação"""
-        
-        # ✅ NOVO: Verificar modo congelado
-        if self.trading_mode == TradingMode.FROZEN:
-            return False, "🛑 BOT CONGELADO: Não atende critérios para operar"
-        
-        if (get_utc_now() - self.last_hour_reset).total_seconds() > 3600:
-            self.operations_this_hour = 0
-            self.last_hour_reset = get_utc_now()
-        
-        if self.operations_this_hour >= Config.MAX_OPERATIONS_PER_HOUR:
-            return False, f"⏸️ Máximo de {Config.MAX_OPERATIONS_PER_HOUR} ops por hora atingido"
-        
-        if self.loss_streak >= Config.MAX_LOSS_STREAK:
-            return False, f"🛑 Loss streak de {self.loss_streak} atingido"
-        
-        if self.winrate < Config.MIN_WINRATE_TO_TRADE and (self.wins + self.losses) >= 10:
-            return False, f"🛑 Winrate {self.winrate:.1f}% abaixo de {Config.MIN_WINRATE_TO_TRADE*100:.0f}%"
-        
-        if self.daily_loss_percent > Config.MAX_DAILY_LOSS:
-            return False, f"🛑 Loss diário {self.daily_loss_percent:.1f}% atingido"
-        
-        return True, "✅ OK"
 
 # ========================================
-# APRENDIZADO INTELIGENTE (MANTÉM IGUAL)
+# ✅ APRENDIZADO INTELIGENTE AVANÇADO
 # ========================================
 class LearningManager:
     def __init__(self, file_path: str = Config.LEARNING_FILE):
@@ -298,7 +156,6 @@ class LearningManager:
             "pattern_stats": {},
             "correlation_matrix": {},
             "ml_model": {},
-            "backtest_history": {},
         }
         self.load()
         self.initialize_ml_data()
@@ -413,8 +270,8 @@ class LearningManager:
     def get_correlation_multiplier(self, symbol: str) -> float:
         correlations = {
             "EURUSD": {"GBPUSD": 0.8, "USDJPY": -0.6},
-            "GBPUSD": {"EURUSD": 0.8, "USDJPY": -0.5},
-            "USDJPY": {"EURUSD": -0.6, "GBPUSD": -0.5},
+            "GBPUSD": {"EURUSD": 0.8, "AUDCAD": -0.5},
+            "USDJPY": {"EURUSD": -0.6},
         }
         
         if symbol not in correlations:
@@ -552,7 +409,7 @@ def fmt_br(dt: datetime) -> str:
 
 def should_trade_now() -> bool:
     hour = get_br_now().hour
-    if hour < Config.TRADING_START_HOUR or hour >= Config.TRADING_END_HOUR:
+    if hour >= 22 or hour < 0:
         return False
     return True
 
@@ -619,8 +476,7 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
             if text == "/start":
                 state.is_active = True
                 state.paused = False
-                mode_display = "📄 SIMULADO (Paper)" if state.trading_mode == TradingMode.PAPER else "💰 REAL"
-                send_telegram(f"🟢 BOT ATIVADO\n{mode_display}")
+                send_telegram("🟢 BOT ATIVADO")
                 log("✅ BOT ATIVADO")
             elif text == "/stop":
                 state.is_active = False
@@ -633,67 +489,8 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
                 health_check(state)
             elif text == "/ai":
                 send_telegram(learning_mgr.generate_report())
-            elif text == "/limits":
-                limits_msg = generate_limits_message(state)
-                send_telegram(limits_msg)
-            elif text == "/mode":  # ✅ NOVO
-                send_telegram(generate_mode_message(state))
-            elif text == "/capital":  # ✅ NOVO
-                send_telegram(generate_capital_message(state))
     except Exception as e:
         log(f"❌ Erro comandos: {e}")
-
-# ========================================
-# ✅ NOVO: MODO STATUS
-# ========================================
-def generate_mode_message(state: BotState) -> str:
-    total_ops = state.wins + state.losses
-    winrate = state.winrate
-    
-    msg = "🎯 STATUS DO BOT:\n━━━━━━━━━━━━━━━\n"
-    msg += f"Modo: {state.trading_mode.value}\n"
-    msg += f"Operações: {total_ops}/{Config.MIN_TRAINING_OPERATIONS}\n"
-    msg += f"Winrate: {winrate:.1f}%/{Config.REQUIRED_WINRATE_FOR_REAL*100:.0f}%\n"
-    msg += "━━━━━━━━━━━━━━━\n"
-    
-    if state.trading_mode == TradingMode.FROZEN:
-        msg += "🛑 CONGELADO - Não atende critérios\n"
-        if total_ops < Config.MIN_TRAINING_OPERATIONS:
-            msg += f"Precisa de {Config.MIN_TRAINING_OPERATIONS - total_ops} mais operações\n"
-        if winrate < Config.REQUIRED_WINRATE_FOR_REAL * 100:
-            msg += f"Winrate abaixo do mínimo ({Config.REQUIRED_WINRATE_FOR_REAL*100:.0f}%)\n"
-    elif state.trading_mode == TradingMode.PAPER:
-        msg += "📄 PAPER TRADING\n"
-        msg += "Simulando operações para validação\n"
-    else:
-        msg += "💰 REAL TRADING ATIVO\n"
-        msg += "⚠️ COM DINHEIRO REAL!\n"
-    
-    return msg
-
-# ========================================
-# ✅ NOVO: CAPITAL TRACKING
-# ========================================
-def generate_capital_message(state: BotState) -> str:
-    if not state.capital_history:
-        return "📈 Nenhuma operação realizada ainda"
-    
-    cumulative_pips = state.capital_history[-1].get("cumulative_pips", 0)
-    total_ops = len(state.capital_history)
-    
-    msg = "📈 HISTÓRICO DE CAPITAL:\n━━━━━━━━━━━━━━━\n"
-    msg += f"Total de Pips: {cumulative_pips:+.0f}\n"
-    msg += f"Operações: {total_ops}\n"
-    msg += f"Média por Op: {cumulative_pips/total_ops:+.1f} pips\n"
-    msg += "━━━━━━━━━━━━━━━\n"
-    
-    # Últimas 5 operações
-    msg += "Últimas 5 operações:\n"
-    for op in state.capital_history[-5:]:
-        result = "✅" if op["type"] == "WIN" else "❌"
-        msg += f"{result} {op['symbol']} {op['pips']:+.0f}p\n"
-    
-    return msg
 
 # ========================================
 # ESTATÍSTICAS AVANÇADAS
@@ -712,8 +509,7 @@ def generate_stats_message(state: BotState) -> str:
         f"🔥 Loss Streak: {state.loss_streak}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"🏆 Melhor: {best_symbol[0]}\n"
-        f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}\n"
-        f"🎯 Modo: {state.trading_mode.value}"
+        f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}"
     )
     
     if state.paused:
@@ -729,8 +525,6 @@ def health_check(state: BotState) -> None:
         "Telegram API": validate_credentials(),
         "Learning File": os.path.exists(Config.LEARNING_FILE),
         "Operations Log": os.path.exists(Config.OPERATIONS_LOG),
-        "Safety Limits": state.check_safety_limits()[0],
-        "Trading Mode": state.trading_mode != TradingMode.FROZEN,
     }
     
     msg = "🏥 HEALTH CHECK:\n━━━━━━━━━━━━━━━\n"
@@ -759,14 +553,6 @@ def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, ent
         pass
 
 # ========================================
-# ✅ NOVO: GERADOR DE ID ÚNICO
-# ========================================
-def generate_operation_id(symbol: str, entry_price: float, timestamp: datetime) -> str:
-    """Gera ID único para operação"""
-    data = f"{symbol}{entry_price}{timestamp.isoformat()}".encode()
-    return hashlib.md5(data).hexdigest()[:8].upper()
-
-# ========================================
 # GERADOR DE DADOS
 # ========================================
 class CandleGenerator:
@@ -775,6 +561,15 @@ class CandleGenerator:
             "EURUSD": 1.0850,
             "GBPUSD": 1.2650,
             "USDJPY": 150.50,
+            "USDCAD": 1.3650,
+            "AUDUSD": 0.6550,
+            "NZDUSD": 0.6050,
+            "EURCAD": 1.4850,
+            "EURGBP": 0.8550,
+            "EURJPY": 163.50,
+            "GBPJPY": 190.50,
+            "AUDCAD": 0.9350,
+            "AUDCHF": 0.6150,
         }
     
     def get_price_at_time(self, symbol: str, timestamp: datetime) -> float:
@@ -888,23 +683,17 @@ def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> Non
         return
     
     scored.sort(key=lambda x: x[1], reverse=True)
+    Config.ACTIVE_SYMBOLS = [s[0] for s in scored[:8]]
     state.last_universe_update = get_utc_now()
     
-    log(f"✅ Universo atualizado:")
-    for i, (symbol, score) in enumerate(scored, 1):
+    log(f"✅ Universo atualizado com 8 ativos:")
+    for i, (symbol, score) in enumerate(scored[:8], 1):
         log(f"  {i}. {symbol} (score: {score:.3f})")
 
 def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
-    can_trade, reason = state.check_safety_limits()
-    if not can_trade:
-        log(reason)
-        if "CONGELADO" in reason:
-            audit.log_risk_limit(reason)
-        return None
-    
     if not should_trade_now():
         if Config.DEBUG_MODE:
-            log(f"⏸️ Fora do horário de negociação ({Config.TRADING_START_HOUR}h-{Config.TRADING_END_HOUR}h)")
+            log("⏸️ Fora do horário de negociação (22:00-00:00)")
         return None
     
     if state.paused and get_utc_now() < state.pause_until:
@@ -943,6 +732,7 @@ def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optiona
         trend_pct = abs(ema_short - ema_long) / closes[-1]
         score = trend_pct * 1000 + abs(rsi - 50) * 2
         
+        # ✅ Aplicar IA de multiplicadores
         ai_multiplier = learning_mgr.get_total_multiplier(symbol, score)
         score *= ai_multiplier
         
@@ -1000,7 +790,6 @@ def process_pending_setup(state: BotState) -> None:
     p2_time = setup.entry_time + timedelta(minutes=2)
     
     entry_price = candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
-    operation_id = generate_operation_id(setup.symbol, entry_price, setup.entry_time)
     
     operation = ActiveOperation(
         symbol=setup.symbol,
@@ -1010,17 +799,11 @@ def process_pending_setup(state: BotState) -> None:
         entry_price=entry_price,
         protection1_time=p1_time,
         protection2_time=p2_time,
-        operation_id=operation_id,
     )
     state.active_operations.append(operation)
     state.pending_setup = None
-    state.operations_this_hour += 1
-    
-    mode_text = "(PAPER)" if state.trading_mode == TradingMode.PAPER else "(REAL)"
-    audit.log("ENTRY", f"ID:{operation_id} | {setup.symbol} @ {entry_price:.6f} {mode_text}", "TRADE")
-    
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    msg = f"✅ ENTRADA [{operation_id}]\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
+    msg = f"✅ ENTRADA\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
     send_telegram(msg)
 
 # ========================================
@@ -1077,10 +860,9 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     log_operation(operation, stage_name, is_win, operation.entry_price, result_price)
     
     if is_win:
-        state.record_win(operation.symbol, operation.entry_price, result_price)
+        state.record_win(operation.symbol)
         learning_mgr.record_result(operation.symbol, True, 0.0, str(get_br_now().hour))
-        audit.log_operation(operation.operation_id, operation.symbol, operation.direction.value, operation.entry_price, True)
-        msg = f"🏆 WIN [{operation.operation_id}]\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+        msg = f"🏆 WIN\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
         send_telegram(msg)
         log(f"✅ WIN REGISTRADO | {operation.symbol}")
         return None
@@ -1090,19 +872,17 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         log(f"  ⚠️ Avançando para {next_stage.name}")
         return operation
     
-    state.record_loss(operation.symbol, operation.entry_price, result_price)
+    state.record_loss(operation.symbol)
     learning_mgr.record_result(operation.symbol, False, 0.0, str(get_br_now().hour))
-    audit.log_operation(operation.operation_id, operation.symbol, operation.direction.value, operation.entry_price, False)
-    msg = f"🏆 LOSS [{operation.operation_id}]\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+    msg = f"🏆 LOSS\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
     send_telegram(msg)
     log(f"❌ LOSS REGISTRADO | {operation.symbol}")
     
-    if state.loss_streak >= Config.MAX_LOSS_STREAK and not state.paused:
+    if state.loss_streak >= 5 and not state.paused:
         state.paused = True
         state.pause_until = get_utc_now() + timedelta(hours=1)
         msg = f"⏸️ PAUSA AUTOMÁTICA\n\n{state.loss_streak} losses consecutivos!\nBot pausado por 1 hora."
         send_telegram(msg)
-        audit.log_risk_limit(f"Loss streak de {state.loss_streak} atingido")
         log(f"⏸️ BOT PAUSADO: {state.loss_streak} losses")
     
     return None
@@ -1116,21 +896,6 @@ def check_results(learning_mgr: LearningManager, state: BotState) -> None:
     state.active_operations = new_operations
 
 # ========================================
-# ✅ NOVO: GERADOR DE LIMITES
-# ========================================
-def generate_limits_message(state: BotState) -> str:
-    can_trade, reason = state.check_safety_limits()
-    
-    msg = "🛡️ LIMITES DE SEGURANÇA:\n━━━━━━━━━━━━━━━\n"
-    msg += f"📊 Status: {'✅ LIBERADO' if can_trade else f'❌ {reason}'}\n"
-    msg += f"🔥 Loss Streak: {state.loss_streak}/{Config.MAX_LOSS_STREAK}\n"
-    msg += f"⏰ Ops/Hora: {state.operations_this_hour}/{Config.MAX_OPERATIONS_PER_HOUR}\n"
-    msg += f"📉 Loss Diário: {state.daily_loss_percent:.1f}%/{Config.MAX_DAILY_LOSS}%\n"
-    msg += f"📈 Winrate: {state.winrate:.1f}%/{Config.MIN_WINRATE_TO_TRADE*100:.0f}%\n"
-    
-    return msg
-
-# ========================================
 # MAIN
 # ========================================
 def main() -> None:
@@ -1142,13 +907,8 @@ def main() -> None:
     remove_webhook()
     learning_mgr = LearningManager()
     state = BotState()
-    
-    mode_display = "📄 SIMULADO (Paper)" if state.trading_mode == TradingMode.PAPER else "💰 REAL"
-    log(f"🤖 BOT FOREX INICIANDO... ({mode_display})")
-    
-    startup_msg = f"🤖 BOT FOREX ATIVADO 💱\n{mode_display}\n\nComandos:\n/start /stop /stats /health /ai /limits /mode /capital"
-    send_telegram(startup_msg)
-    audit.log("STARTUP", f"Bot iniciado em modo {state.trading_mode.value}", "INFO")
+    log("🤖 BOT FOREX INICIANDO...")
+    send_telegram("🤖 BOT FOREX ATIVADO 💱\n\nComandos: /start /stop /stats /health /ai")
     
     while True:
         try:
@@ -1156,10 +916,6 @@ def main() -> None:
             if not state.is_active:
                 time.sleep(10)
                 continue
-            
-            # Revalidar modo a cada ciclo
-            state._validate_mode()
-            
             if state.last_universe_update is None or (get_utc_now() - state.last_universe_update).total_seconds() > Config.UNIVERSE_REFRESH:
                 update_active_symbols(learning_mgr, state)
             process_pending_setup(state)
@@ -1175,7 +931,6 @@ def main() -> None:
             time.sleep(10)
         except Exception as e:
             log(f"❌ Erro: {e}")
-            audit.log("ERROR", str(e), "ERROR")
             time.sleep(10)
 
 main()
