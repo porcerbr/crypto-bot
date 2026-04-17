@@ -14,8 +14,7 @@ from enum import Enum
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
-    POLYGON_API_KEY: str = os.getenv("POLYGON_API_KEY", "yiUDb9DVgc8CFyOiheh9BI7d4VE_L82f")
-
+    
 
     SIGNAL_INTERVAL: int = 10
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
@@ -649,93 +648,60 @@ class CandleGenerator:
     def _api_key(self) -> str:
         return str(Config.POLYGON_API_KEY or "").strip()
 
-    def _fetch_polygon_bars(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
-        api_key = self._api_key()
-        if not api_key:
-            log("⚠️ POLYGON_API_KEY não configurada")
-            return None
+    
 
-        ticker = polygon_forex_ticker(symbol)
-        now = get_utc_now()
-        start = now - timedelta(minutes=max(limit * 3, 240))
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/{int(start.timestamp() * 1000)}/{int(now.timestamp() * 1000)}"
-        params = {
-            "adjusted": "true",
-            "sort": "asc",
-            "limit": 50000,
-            "apiKey": api_key,
-        }
+    
+    def _fetch_yfinance_bars(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
+        import yfinance as yf
+        
+        # O Yahoo Finance exige o sufixo =X para pares de Forex
+        yf_symbol = f"{symbol}=X"
 
         try:
-            response = self.session.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
+            # Baixa os dados. '1d' traz o dia atual, '1m' é o intervalo de 1 minuto.
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(period="1d", interval="1m")
 
-            results = data.get("results") or []
-            if not results:
-                msg = data.get("error") or data.get("message") or "resposta vazia"
-                log(f"⚠️ Polygon sem candles para {symbol}: {msg}")
+            if df.empty:
+                log(f"⚠️ Yahoo Finance não retornou dados para {symbol}")
                 return None
 
             raw: List[Candle] = []
-            for item in results:
-                ts = ms_to_dt(int(item["t"]))
+            for index, row in df.iterrows():
+                # Converte o tempo para o padrão UTC que o resto do seu bot usa
+                ts = index.astimezone(timezone.utc).to_pydatetime()
+
                 raw.append(Candle(
                     time=ts,
-                    open=float(item["o"]),
-                    close=float(item["c"]),
-                    high=float(item["h"]),
-                    low=float(item["l"]),
-                    volume=float(item.get("v", 0) or 0),
+                    open=float(row['Open']),
+                    close=float(row['Close']),
+                    high=float(row['High']),
+                    low=float(row['Low']),
+                    volume=float(row.get('Volume', 0))
                 ))
 
+            # Reutilizando sua lógica de preenchimento de lacunas (Gaps)
             raw.sort(key=lambda c: c.time)
             filled: List[Candle] = []
+            now = get_utc_now()
             expected_time = floor_minute(raw[0].time)
             last_close = raw[0].open
 
             for candle in raw:
                 candle_time = floor_minute(candle.time)
                 while expected_time < candle_time:
-                    filled.append(Candle(
-                        time=expected_time,
-                        open=last_close,
-                        close=last_close,
-                        high=last_close,
-                        low=last_close,
-                        volume=0.0,
-                    ))
+                    filled.append(Candle(time=expected_time, open=last_close, close=last_close, high=last_close, low=last_close, volume=0.0))
                     expected_time += timedelta(minutes=1)
-
-                filled.append(Candle(
-                    time=candle_time,
-                    open=candle.open,
-                    close=candle.close,
-                    high=candle.high,
-                    low=candle.low,
-                    volume=candle.volume,
-                ))
+                filled.append(Candle(time=candle_time, open=candle.open, close=candle.close, high=candle.high, low=candle.low, volume=candle.volume))
                 last_close = candle.close
                 expected_time = candle_time + timedelta(minutes=1)
 
-            while len(filled) < limit and expected_time <= floor_minute(now):
-                filled.append(Candle(
-                    time=expected_time,
-                    open=last_close,
-                    close=last_close,
-                    high=last_close,
-                    low=last_close,
-                    volume=0.0,
-                ))
-                expected_time += timedelta(minutes=1)
-
             if filled:
-                self.cache[symbol] = (now, filled)
                 return filled[-limit:]
-
             return None
+            
         except Exception as e:
-            log(f"⚠️ Falha ao buscar candles da Polygon para {symbol}: {e}")
+            log(f"⚠️ Erro no Yahoo Finance ({symbol}): {e}")
             return None
 
     def get_candles(self, symbol: str, limit: int = 120) -> Optional[List[Candle]]:
@@ -746,7 +712,8 @@ class CandleGenerator:
             if (now - cached_at).total_seconds() < self.cache_ttl_seconds and len(cached_candles) >= limit:
                 return cached_candles[-limit:]
 
-        candles = self._fetch_polygon_bars(symbol, limit=limit)
+        candles = self._fetch_yfinance_bars(symbol, limit=limit) 
+        
         if candles is not None:
             return candles
         return None
