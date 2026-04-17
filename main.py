@@ -6,9 +6,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, List, Any
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 
 # ========================================
-# CONFIGURAÇÕES
+# CONFIGURAÇÕES PROFISSIONAIS
 # ========================================
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
@@ -34,20 +35,35 @@ class Config:
     
     LEARNING_FILE: str = "learning.json"
     OPERATIONS_LOG: str = "operations_log.csv"
-    BACKTEST_FILE: str = "backtest_results.json"  # ✅ NOVO
+    BACKTEST_FILE: str = "backtest_results.json"
+    AUDIT_LOG: str = "audit.log"  # ✅ NOVO
     
     MIN_SIGNAL_STRENGTH: float = 5.0
     STOP_LOSS_PIPS: float = 0.0050
     TAKE_PROFIT_PIPS: float = 0.0100
     
     DEBUG_MODE: bool = False
-    PAPER_TRADING: bool = True  # ✅ NOVO: Modo paper trading
+    PAPER_TRADING: bool = False  # ✅ ALTERADO: Pronto para REAL
     
-    # ✅ NOVO: Limites de segurança
-    MAX_LOSS_STREAK: int = 5  # Pausa após 5 losses
-    MAX_DAILY_LOSS: float = 3.0  # Máximo 3% de loss por dia
-    MAX_OPERATIONS_PER_HOUR: int = 3  # Máximo 3 ops por hora
-    MIN_WINRATE_TO_TRADE: float = 0.50  # Mínimo 50% winrate para continuar
+    # ✅ NOVO: Limites rigorosos de segurança
+    MAX_LOSS_STREAK: int = 3  # Pausa após 3 losses (menos tolerante)
+    MAX_DAILY_LOSS: float = 2.0  # Máximo 2% de loss por dia
+    MAX_OPERATIONS_PER_HOUR: int = 2  # Máximo 2 ops por hora (menos agressivo)
+    MIN_WINRATE_TO_TRADE: float = 0.55  # Mínimo 55% para continuar
+    
+    # ✅ NOVO: Validações profissionais
+    ACCOUNT_BALANCE: float = 1000.0  # Saldo inicial
+    MAX_RISK_PER_TRADE: float = 0.01  # 1% por operação
+    MIN_TRAINING_OPERATIONS: int = 50  # Precisa de 50 ops antes de fazer real
+    REQUIRED_WINRATE_FOR_REAL: float = 0.58  # Precisa de 58% no simulado
+    
+    # ✅ NOVO: Horário operacional
+    TRADING_START_HOUR: int = 6  # Começa 6h BR
+    TRADING_END_HOUR: int = 21  # Termina 21h BR
+    
+    # ✅ NOVO: Validações de qualidade
+    MIN_VOLUME_REQUIRED: float = 1000000.0
+    MAX_SPREAD_ALLOWED: float = 0.0003  # 3 pips máximo
 
 # ========================================
 # ENUMERAÇÕES
@@ -60,6 +76,11 @@ class TradeStage(Enum):
     ENTRY = 0
     PROTECTION_1 = 1
     PROTECTION_2 = 2
+
+class TradingMode(Enum):
+    PAPER = "PAPER"
+    REAL = "REAL"
+    FROZEN = "FROZEN"  # ✅ NOVO
 
 # ========================================
 # DATA CLASSES
@@ -89,9 +110,41 @@ class ActiveOperation:
     entry_price: float
     protection1_time: datetime
     protection2_time: datetime
+    operation_id: str = ""  # ✅ NOVO
 
 # ========================================
-# STATE MANAGER
+# ✅ NOVO: AUDITORIA PROFISSIONAL
+# ========================================
+class AuditLog:
+    def __init__(self, file_path: str = Config.AUDIT_LOG):
+        self.file_path = file_path
+    
+    def log(self, event_type: str, message: str, severity: str = "INFO") -> None:
+        """Registra evento em arquivo de auditoria"""
+        try:
+            timestamp = datetime.now().isoformat()
+            with open(self.file_path, "a") as f:
+                f.write(f"{timestamp} | {severity:8} | {event_type:20} | {message}\n")
+        except:
+            pass
+    
+    def log_operation(self, operation_id: str, symbol: str, direction: str, entry_price: float, is_win: bool) -> None:
+        """Registra operação realizada"""
+        result = "WIN" if is_win else "LOSS"
+        self.log("OPERATION", f"ID:{operation_id} | {symbol} {direction} @ {entry_price:.6f} | {result}", "TRADE")
+    
+    def log_risk_limit(self, reason: str) -> None:
+        """Registra limite de risco acionado"""
+        self.log("RISK_LIMIT", reason, "WARNING")
+    
+    def log_mode_change(self, old_mode: str, new_mode: str, reason: str) -> None:
+        """Registra mudança de modo"""
+        self.log("MODE_CHANGE", f"{old_mode} -> {new_mode} ({reason})", "CRITICAL")
+
+audit = AuditLog()
+
+# ========================================
+# STATE MANAGER PROFISSIONAL
 # ========================================
 class BotState:
     def __init__(self):
@@ -111,11 +164,20 @@ class BotState:
         self.loss_streak: int = 0
         self.paused: bool = False
         self.pause_until: Optional[datetime] = None
-        self.operations_today: List[Dict[str, Any]] = []  # ✅ NOVO
-        self.daily_loss_percent: float = 0.0  # ✅ NOVO
-        self.operations_this_hour: int = 0  # ✅ NOVO
-        self.last_hour_reset: datetime = get_utc_now()  # ✅ NOVO
+        self.operations_today: List[Dict[str, Any]] = []
+        self.daily_loss_percent: float = 0.0
+        self.operations_this_hour: int = 0
+        self.last_hour_reset: datetime = get_utc_now()
+        
+        # ✅ NOVO: Modo de trading
+        self.trading_mode: TradingMode = TradingMode.PAPER
+        self.mode_locked: bool = False  # ✅ Impede mudança acidental
+        
+        # ✅ NOVO: Histórico de capital
+        self.capital_history: List[Dict[str, Any]] = []
+        
         self._init_log_file()
+        self._validate_mode()
     
     def _init_log_file(self) -> None:
         try:
@@ -125,22 +187,63 @@ class BotState:
         except:
             pass
     
-    @property
+    def _validate_mode(self) -> None:
+        """✅ Ajustado para evitar o congelamento inicial"""
+        if Config.PAPER_TRADING:
+            self.trading_mode = TradingMode.PAPER
+            return
+        
+        total_ops = self.wins + self.losses
+        current_winrate = self.winrate / 100
+        
+        # Se não atingiu os requisitos para REAL, ele opera em PAPER em vez de congelar
+        if total_ops < Config.MIN_TRAINING_OPERATIONS or current_winrate < Config.REQUIRED_WINRATE_FOR_REAL:
+            self.trading_mode = TradingMode.PAPER
+            # Registra no log que está em modo de treino
+            if total_ops == 0:
+                audit.log("MODE", "Iniciando em modo PAPER para treinamento", "INFO")
+            return
+        
+        # Se passou nos requisitos, entra no modo REAL
+        self.trading_mode = TradingMode.REAL
+        audit.log_mode_change("PAPER", "REAL", "Requisitos atingidos!")
+
+    
     def winrate(self) -> float:
         total = self.wins + self.losses
         return (self.wins / total * 100) if total > 0 else 0.0
     
-    def record_win(self, symbol: str) -> None:
+    def record_win(self, symbol: str, entry_price: float, result_price: float) -> None:
         self.wins += 1
         self.performance[symbol]["win"] += 1
         self.loss_streak = 0
         self._add_to_history(symbol)
+        
+        # ✅ NOVO: Registrar lucro
+        profit_pips = (result_price - entry_price) * 10000
+        self.capital_history.append({
+            "timestamp": get_br_now().isoformat(),
+            "type": "WIN",
+            "symbol": symbol,
+            "pips": profit_pips,
+            "cumulative_pips": sum(h["pips"] for h in self.capital_history)
+        })
     
-    def record_loss(self, symbol: str) -> None:
+    def record_loss(self, symbol: str, entry_price: float, result_price: float) -> None:
         self.losses += 1
         self.performance[symbol]["loss"] += 1
         self.loss_streak += 1
         self._add_to_history(symbol)
+        
+        # ✅ NOVO: Registrar perda
+        loss_pips = (result_price - entry_price) * 10000
+        self.capital_history.append({
+            "timestamp": get_br_now().isoformat(),
+            "type": "LOSS",
+            "symbol": symbol,
+            "pips": loss_pips,
+            "cumulative_pips": sum(h["pips"] for h in self.capital_history)
+        })
     
     def _add_to_history(self, symbol: str) -> None:
         if symbol not in self.last_used_symbols:
@@ -151,35 +254,33 @@ class BotState:
     def can_use_symbol(self, symbol: str) -> bool:
         return symbol not in self.last_used_symbols[:3]
     
-    # ✅ NOVO: Verificar limites de segurança
     def check_safety_limits(self) -> Tuple[bool, str]:
         """Verifica se pode abrir nova operação"""
         
-        # Resetar contador de hora se necessário
+        # ✅ NOVO: Verificar modo congelado
+        if self.trading_mode == TradingMode.FROZEN:
+            return False, "🛑 BOT CONGELADO: Não atende critérios para operar"
+        
         if (get_utc_now() - self.last_hour_reset).total_seconds() > 3600:
             self.operations_this_hour = 0
             self.last_hour_reset = get_utc_now()
         
-        # Limite de operações por hora
         if self.operations_this_hour >= Config.MAX_OPERATIONS_PER_HOUR:
             return False, f"⏸️ Máximo de {Config.MAX_OPERATIONS_PER_HOUR} ops por hora atingido"
         
-        # Limite de loss streak
         if self.loss_streak >= Config.MAX_LOSS_STREAK:
             return False, f"🛑 Loss streak de {self.loss_streak} atingido"
         
-        # Limite de winrate mínimo
         if self.winrate < Config.MIN_WINRATE_TO_TRADE and (self.wins + self.losses) >= 10:
             return False, f"🛑 Winrate {self.winrate:.1f}% abaixo de {Config.MIN_WINRATE_TO_TRADE*100:.0f}%"
         
-        # Limite de loss diário
         if self.daily_loss_percent > Config.MAX_DAILY_LOSS:
             return False, f"🛑 Loss diário {self.daily_loss_percent:.1f}% atingido"
         
         return True, "✅ OK"
 
 # ========================================
-# APRENDIZADO INTELIGENTE AVANÇADO
+# APRENDIZADO INTELIGENTE (MANTÉM IGUAL)
 # ========================================
 class LearningManager:
     def __init__(self, file_path: str = Config.LEARNING_FILE):
@@ -190,7 +291,7 @@ class LearningManager:
             "pattern_stats": {},
             "correlation_matrix": {},
             "ml_model": {},
-            "backtest_history": {},  # ✅ NOVO
+            "backtest_history": {},
         }
         self.load()
         self.initialize_ml_data()
@@ -444,7 +545,7 @@ def fmt_br(dt: datetime) -> str:
 
 def should_trade_now() -> bool:
     hour = get_br_now().hour
-    if hour >= 22 or hour < 0:
+    if hour < Config.TRADING_START_HOUR or hour >= Config.TRADING_END_HOUR:
         return False
     return True
 
@@ -511,8 +612,8 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
             if text == "/start":
                 state.is_active = True
                 state.paused = False
-                mode = "📄 PAPER TRADING" if Config.PAPER_TRADING else "💰 REAL TRADING"
-                send_telegram(f"🟢 BOT ATIVADO\n{mode}")
+                mode_display = "📄 SIMULADO (Paper)" if state.trading_mode == TradingMode.PAPER else "💰 REAL"
+                send_telegram(f"🟢 BOT ATIVADO\n{mode_display}")
                 log("✅ BOT ATIVADO")
             elif text == "/stop":
                 state.is_active = False
@@ -525,24 +626,65 @@ def check_commands(state: BotState, learning_mgr: LearningManager) -> None:
                 health_check(state)
             elif text == "/ai":
                 send_telegram(learning_mgr.generate_report())
-            elif text == "/limits":  # ✅ NOVO
+            elif text == "/limits":
                 limits_msg = generate_limits_message(state)
                 send_telegram(limits_msg)
+            elif text == "/mode":  # ✅ NOVO
+                send_telegram(generate_mode_message(state))
+            elif text == "/capital":  # ✅ NOVO
+                send_telegram(generate_capital_message(state))
     except Exception as e:
         log(f"❌ Erro comandos: {e}")
 
 # ========================================
-# ✅ NOVO: MENSAGEM DE LIMITES
+# ✅ NOVO: MODO STATUS
 # ========================================
-def generate_limits_message(state: BotState) -> str:
-    can_trade, reason = state.check_safety_limits()
+def generate_mode_message(state: BotState) -> str:
+    total_ops = state.wins + state.losses
+    winrate = state.winrate
     
-    msg = "🛡️ LIMITES DE SEGURANÇA:\n━━━━━━━━━━━━━━━\n"
-    msg += f"📊 Status: {'✅ LIBERADO' if can_trade else f'❌ {reason}'}\n"
-    msg += f"🔥 Loss Streak: {state.loss_streak}/{Config.MAX_LOSS_STREAK}\n"
-    msg += f"⏰ Ops/Hora: {state.operations_this_hour}/{Config.MAX_OPERATIONS_PER_HOUR}\n"
-    msg += f"📉 Loss Diário: {state.daily_loss_percent:.1f}%/{Config.MAX_DAILY_LOSS}%\n"
-    msg += f"📈 Winrate: {state.winrate:.1f}%/{Config.MIN_WINRATE_TO_TRADE*100:.0f}%\n"
+    msg = "🎯 STATUS DO BOT:\n━━━━━━━━━━━━━━━\n"
+    msg += f"Modo: {state.trading_mode.value}\n"
+    msg += f"Operações: {total_ops}/{Config.MIN_TRAINING_OPERATIONS}\n"
+    msg += f"Winrate: {winrate:.1f}%/{Config.REQUIRED_WINRATE_FOR_REAL*100:.0f}%\n"
+    msg += "━━━━━━━━━━━━━━━\n"
+    
+    if state.trading_mode == TradingMode.FROZEN:
+        msg += "🛑 CONGELADO - Não atende critérios\n"
+        if total_ops < Config.MIN_TRAINING_OPERATIONS:
+            msg += f"Precisa de {Config.MIN_TRAINING_OPERATIONS - total_ops} mais operações\n"
+        if winrate < Config.REQUIRED_WINRATE_FOR_REAL * 100:
+            msg += f"Winrate abaixo do mínimo ({Config.REQUIRED_WINRATE_FOR_REAL*100:.0f}%)\n"
+    elif state.trading_mode == TradingMode.PAPER:
+        msg += "📄 PAPER TRADING\n"
+        msg += "Simulando operações para validação\n"
+    else:
+        msg += "💰 REAL TRADING ATIVO\n"
+        msg += "⚠️ COM DINHEIRO REAL!\n"
+    
+    return msg
+
+# ========================================
+# ✅ NOVO: CAPITAL TRACKING
+# ========================================
+def generate_capital_message(state: BotState) -> str:
+    if not state.capital_history:
+        return "📈 Nenhuma operação realizada ainda"
+    
+    cumulative_pips = state.capital_history[-1].get("cumulative_pips", 0)
+    total_ops = len(state.capital_history)
+    
+    msg = "📈 HISTÓRICO DE CAPITAL:\n━━━━━━━━━━━━━━━\n"
+    msg += f"Total de Pips: {cumulative_pips:+.0f}\n"
+    msg += f"Operações: {total_ops}\n"
+    msg += f"Média por Op: {cumulative_pips/total_ops:+.1f} pips\n"
+    msg += "━━━━━━━━━━━━━━━\n"
+    
+    # Últimas 5 operações
+    msg += "Últimas 5 operações:\n"
+    for op in state.capital_history[-5:]:
+        result = "✅" if op["type"] == "WIN" else "❌"
+        msg += f"{result} {op['symbol']} {op['pips']:+.0f}p\n"
     
     return msg
 
@@ -564,7 +706,7 @@ def generate_stats_message(state: BotState) -> str:
         f"━━━━━━━━━━━━━━━\n"
         f"🏆 Melhor: {best_symbol[0]}\n"
         f"📋 Últimos: {', '.join(state.last_used_symbols[-3:]) if state.last_used_symbols else 'Nenhum'}\n"
-        f"📄 Modo: {'📄 PAPER' if Config.PAPER_TRADING else '💰 REAL'}"
+        f"🎯 Modo: {state.trading_mode.value}"
     )
     
     if state.paused:
@@ -581,6 +723,7 @@ def health_check(state: BotState) -> None:
         "Learning File": os.path.exists(Config.LEARNING_FILE),
         "Operations Log": os.path.exists(Config.OPERATIONS_LOG),
         "Safety Limits": state.check_safety_limits()[0],
+        "Trading Mode": state.trading_mode != TradingMode.FROZEN,
     }
     
     msg = "🏥 HEALTH CHECK:\n━━━━━━━━━━━━━━━\n"
@@ -607,6 +750,14 @@ def log_operation(operation: ActiveOperation, stage_name: str, is_win: bool, ent
             f.write(f"{get_br_now().isoformat()},{operation.symbol},{operation.direction.value},{stage_name},{is_win},{entry_price:.6f},{result_price:.6f},{diff:.6f}\n")
     except:
         pass
+
+# ========================================
+# ✅ NOVO: GERADOR DE ID ÚNICO
+# ========================================
+def generate_operation_id(symbol: str, entry_price: float, timestamp: datetime) -> str:
+    """Gera ID único para operação"""
+    data = f"{symbol}{entry_price}{timestamp.isoformat()}".encode()
+    return hashlib.md5(data).hexdigest()[:8].upper()
 
 # ========================================
 # GERADOR DE DADOS
@@ -737,15 +888,16 @@ def update_active_symbols(learning_mgr: LearningManager, state: BotState) -> Non
         log(f"  {i}. {symbol} (score: {score:.3f})")
 
 def select_best_asset(learning_mgr: LearningManager, state: BotState) -> Optional[Tuple[str, TradeDirection, float]]:
-    # ✅ Verificar limites de segurança
     can_trade, reason = state.check_safety_limits()
     if not can_trade:
         log(reason)
+        if "CONGELADO" in reason:
+            audit.log_risk_limit(reason)
         return None
     
     if not should_trade_now():
         if Config.DEBUG_MODE:
-            log("⏸️ Fora do horário de negociação (22:00-00:00)")
+            log(f"⏸️ Fora do horário de negociação ({Config.TRADING_START_HOUR}h-{Config.TRADING_END_HOUR}h)")
         return None
     
     if state.paused and get_utc_now() < state.pause_until:
@@ -841,6 +993,7 @@ def process_pending_setup(state: BotState) -> None:
     p2_time = setup.entry_time + timedelta(minutes=2)
     
     entry_price = candle_gen.get_price_at_time(setup.symbol, setup.entry_time)
+    operation_id = generate_operation_id(setup.symbol, entry_price, setup.entry_time)
     
     operation = ActiveOperation(
         symbol=setup.symbol,
@@ -850,12 +1003,17 @@ def process_pending_setup(state: BotState) -> None:
         entry_price=entry_price,
         protection1_time=p1_time,
         protection2_time=p2_time,
+        operation_id=operation_id,
     )
     state.active_operations.append(operation)
     state.pending_setup = None
-    state.operations_this_hour += 1  # ✅ NOVO
+    state.operations_this_hour += 1
+    
+    mode_text = "(PAPER)" if state.trading_mode == TradingMode.PAPER else "(REAL)"
+    audit.log("ENTRY", f"ID:{operation_id} | {setup.symbol} @ {entry_price:.6f} {mode_text}", "TRADE")
+    
     direction_emoji = "🟢 COMPRA" if setup.direction == TradeDirection.BUY else "🔴 VENDA"
-    msg = f"✅ ENTRADA\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
+    msg = f"✅ ENTRADA [{operation_id}]\n\n💱 {setup.symbol}\n{direction_emoji}\n⏰ {fmt_br(setup.entry_time)}"
     send_telegram(msg)
 
 # ========================================
@@ -912,9 +1070,10 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
     log_operation(operation, stage_name, is_win, operation.entry_price, result_price)
     
     if is_win:
-        state.record_win(operation.symbol)
+        state.record_win(operation.symbol, operation.entry_price, result_price)
         learning_mgr.record_result(operation.symbol, True, 0.0, str(get_br_now().hour))
-        msg = f"🏆 WIN\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+        audit.log_operation(operation.operation_id, operation.symbol, operation.direction.value, operation.entry_price, True)
+        msg = f"🏆 WIN [{operation.operation_id}]\n\n💱 {operation.symbol}\n✅ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
         send_telegram(msg)
         log(f"✅ WIN REGISTRADO | {operation.symbol}")
         return None
@@ -924,9 +1083,10 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         log(f"  ⚠️ Avançando para {next_stage.name}")
         return operation
     
-    state.record_loss(operation.symbol)
+    state.record_loss(operation.symbol, operation.entry_price, result_price)
     learning_mgr.record_result(operation.symbol, False, 0.0, str(get_br_now().hour))
-    msg = f"🏆 LOSS\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
+    audit.log_operation(operation.operation_id, operation.symbol, operation.direction.value, operation.entry_price, False)
+    msg = f"🏆 LOSS [{operation.operation_id}]\n\n💱 {operation.symbol}\n❌ {stage_name}\n{direction_text}\n\nWins: {state.wins} | Losses: {state.losses}\n📈 {state.winrate:.1f}%"
     send_telegram(msg)
     log(f"❌ LOSS REGISTRADO | {operation.symbol}")
     
@@ -935,6 +1095,7 @@ def check_operation_result(operation: ActiveOperation, learning_mgr: LearningMan
         state.pause_until = get_utc_now() + timedelta(hours=1)
         msg = f"⏸️ PAUSA AUTOMÁTICA\n\n{state.loss_streak} losses consecutivos!\nBot pausado por 1 hora."
         send_telegram(msg)
+        audit.log_risk_limit(f"Loss streak de {state.loss_streak} atingido")
         log(f"⏸️ BOT PAUSADO: {state.loss_streak} losses")
     
     return None
@@ -946,6 +1107,21 @@ def check_results(learning_mgr: LearningManager, state: BotState) -> None:
         if result is not None:
             new_operations.append(result)
     state.active_operations = new_operations
+
+# ========================================
+# ✅ NOVO: GERADOR DE LIMITES
+# ========================================
+def generate_limits_message(state: BotState) -> str:
+    can_trade, reason = state.check_safety_limits()
+    
+    msg = "🛡️ LIMITES DE SEGURANÇA:\n━━━━━━━━━━━━━━━\n"
+    msg += f"📊 Status: {'✅ LIBERADO' if can_trade else f'❌ {reason}'}\n"
+    msg += f"🔥 Loss Streak: {state.loss_streak}/{Config.MAX_LOSS_STREAK}\n"
+    msg += f"⏰ Ops/Hora: {state.operations_this_hour}/{Config.MAX_OPERATIONS_PER_HOUR}\n"
+    msg += f"📉 Loss Diário: {state.daily_loss_percent:.1f}%/{Config.MAX_DAILY_LOSS}%\n"
+    msg += f"📈 Winrate: {state.winrate:.1f}%/{Config.MIN_WINRATE_TO_TRADE*100:.0f}%\n"
+    
+    return msg
 
 # ========================================
 # MAIN
@@ -960,9 +1136,12 @@ def main() -> None:
     learning_mgr = LearningManager()
     state = BotState()
     
-    mode_msg = "📄 PAPER TRADING (Simulado)" if Config.PAPER_TRADING else "💰 REAL TRADING (Dinheiro Real)"
-    log(f"🤖 BOT FOREX INICIANDO... ({mode_msg})")
-    send_telegram(f"🤖 BOT FOREX ATIVADO 💱\n{mode_msg}\n\nComandos: /start /stop /stats /health /ai /limits")
+    mode_display = "📄 SIMULADO (Paper)" if state.trading_mode == TradingMode.PAPER else "💰 REAL"
+    log(f"🤖 BOT FOREX INICIANDO... ({mode_display})")
+    
+    startup_msg = f"🤖 BOT FOREX ATIVADO 💱\n{mode_display}\n\nComandos:\n/start /stop /stats /health /ai /limits /mode /capital"
+    send_telegram(startup_msg)
+    audit.log("STARTUP", f"Bot iniciado em modo {state.trading_mode.value}", "INFO")
     
     while True:
         try:
@@ -970,6 +1149,10 @@ def main() -> None:
             if not state.is_active:
                 time.sleep(10)
                 continue
+            
+            # Revalidar modo a cada ciclo
+            state._validate_mode()
+            
             if state.last_universe_update is None or (get_utc_now() - state.last_universe_update).total_seconds() > Config.UNIVERSE_REFRESH:
                 update_active_symbols(learning_mgr, state)
             process_pending_setup(state)
@@ -985,6 +1168,7 @@ def main() -> None:
             time.sleep(10)
         except Exception as e:
             log(f"❌ Erro: {e}")
+            audit.log("ERROR", str(e), "ERROR")
             time.sleep(10)
 
 main()
