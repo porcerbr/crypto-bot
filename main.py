@@ -12,7 +12,8 @@ from enum import Enum
 # CONFIGURAÇÕES
 # ========================================
 class Config:
-    BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
+    BOT_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
+
     CHAT_ID: str = "1056795017"
     
 
