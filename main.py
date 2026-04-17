@@ -22,10 +22,9 @@ class Config:
     
     # ✅ REDUZIDO: Apenas os melhores pares
     ACTIVE_SYMBOLS: List[str] = [
-        "EURUSD",   # Mais liquido, tendências claras
-        "GBPUSD",   # Volatilidade boa
-        "USDJPY",   # Correlação inversa (diversificação)
-    ]
+    "EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD"
+]
+
     
     EMA_SHORT: int = 9
     EMA_LONG: int = 21
