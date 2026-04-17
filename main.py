@@ -81,9 +81,10 @@ class BotManager:
         
         for symbol in universe:
             df = fetch_price_data(symbol)
-            if df is None: continue
+            if df is None: 
+                log(f"⚠️ Erro ao obter dados de {symbol}")
+                continue
 
-            # Lógica de Médias Móveis (EMA 9 e 21)
             closes = df['Close'].tolist()
             ema9 = sum(closes[-9:]) / 9
             ema21 = sum(closes[-21:]) / 21
@@ -91,20 +92,21 @@ class BotManager:
             strength = abs(ema9 - ema21) / closes[-1] * 1000
             direction = "BUY 🟢" if ema9 > ema21 else "SELL 🔴"
 
-            # Se a tendência for forte, manda o sinal
+            # ESSA LINHA É O SEU DIAGNÓSTICO NOS LOGS:
+            log(f"📊 {symbol} | Força Atual: {strength:.2f} | Alvo: {Config.SIGNAL_STRENGTH_THRESHOLD}")
+
             if strength > Config.SIGNAL_STRENGTH_THRESHOLD:
-                # Evita mandar sinal repetido do mesmo ativo muito rápido
                 if not any(t['symbol'] == symbol for t in self.active_trades):
                     price = closes[-1]
-                    self.send(f"⚡ <b>NOVO SINAL: {symbol}</b>\nDireção: {direction}\nPreço: {price:.5f}\nForça: {strength:.2f}")
+                    self.send(f"⚡ <b>SINAL: {symbol}</b>\nDireção: {direction}\nForça: {strength:.2f}")
                     
-                    # Salva para checar resultado daqui a X minutos
                     self.active_trades.append({
                         "symbol": symbol,
                         "entry_price": price,
                         "direction": "BUY" if "BUY" in direction else "SELL",
                         "check_at": datetime.now() + timedelta(minutes=Config.CHECK_RESULT_MINUTES)
                     })
+
 
     def check_results(self):
         now = datetime.now()
