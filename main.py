@@ -14,7 +14,8 @@ from enum import Enum
 class Config:
     BOT_TOKEN: str = "7952260034:AAFAY9-cEIe9aqcWxmy9WR6_qP5Uxxn8RhQ"
     CHAT_ID: str = "1056795017"
-    POLYGON_API_KEY: str = os.getenv("yiUDb9DVgc8CFyOiheh9BI7d4VE_L82f", os.getenv("FOREX_API_KEY", ""))
+    POLYGON_API_KEY: str = os.getenv("POLYGON_API_KEY", "yiUDb9DVgc8CFyOiheh9BI7d4VE_L82f")
+
 
     SIGNAL_INTERVAL: int = 10
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
