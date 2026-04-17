@@ -7,10 +7,6 @@ from typing import Optional, Tuple, Dict, List, Any
 from dataclasses import dataclass
 from enum import Enum
 
-# ========================================
-# CONFIGURAÇÕES
-# ========================================
-class Config:
 
 # ========================================
 # CONFIGURAÇÕES
