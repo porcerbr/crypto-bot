@@ -7,9 +7,10 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 
 # ========================================
-# CONFIGURAÇÕES DE GESTÃO (AJUSTE AQUI)
+# CONFIGURAÇÕES DE GESTÃO
 # ========================================
 class Config:
+    # Token mantido conforme sua versão anterior
     BOT_TOKEN = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID = "1056795017" 
     BR_TIMEZONE = timezone(timedelta(hours=-3))
@@ -17,18 +18,17 @@ class Config:
     FOREX_ASSETS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
     CRYPTO_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD"]
     
-    # --- GESTÃO DE RISCO ---
-    TP_PERCENT = 0.50  # Take Profit: Fecha com 0.50% de lucro
-    SL_PERCENT = 0.25  # Stop Loss: Fecha com 0.25% de prejuízo
-    THRESHOLD = 1.8    # Sensibilidade das médias
-    TIMEFRAME = "5m"   # Tempo gráfico (mais estável que 1m)
+    TP_PERCENT = 0.50  
+    SL_PERCENT = 0.25  
+    THRESHOLD = 1.8    
+    TIMEFRAME = "5m"   
 
 def log(msg):
     ts = datetime.now(Config.BR_TIMEZONE).strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 # ========================================
-# MOTOR DE ANÁLISE TÉCNICA
+# MOTOR DE ANÁLISE TÉCNICA (ATUALIZADO)
 # ========================================
 def get_analysis(symbol):
     import yfinance as yf
@@ -36,13 +36,14 @@ def get_analysis(symbol):
     if "JPY" in symbol and "=" not in symbol: yf_symbol = f"{symbol}=X"
     
     try:
-        # Busca dados de 5 minutos
         df = yf.Ticker(yf_symbol).history(period="2d", interval=Config.TIMEFRAME)
         if len(df) < 30: return None
         
         closes = df['Close']
+        highs = df['High']
+        lows = df['Low']
         
-        # Cálculo RSI (Período 14)
+        # RSI e Médias
         delta = closes.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -50,45 +51,41 @@ def get_analysis(symbol):
         rsi = 100 - (100 / (1 + rs))
         cur_rsi = rsi.iloc[-1]
 
-        # Médias Móveis
         ema9 = closes.tail(9).mean()
         ema21 = closes.tail(21).mean()
         diff = ema9 - ema21
         std = closes.std()
         score = abs(diff / std) * 10 if std > 0 else 0
         
-        direction, simple_dir = None, None
-        
-        # Lógica: Cruzamento + Filtro RSI (Compra < 70 / Venda > 30)
-        if diff > 0 and cur_rsi < 65:
-            direction, simple_dir = "BUY 🟢", "BUY"
-        elif diff < 0 and cur_rsi > 35:
-            direction, simple_dir = "SELL 🔴", "SELL"
-            
-        if not direction: return None
+        # Gatilhos de Rompimento (Máxima/Mínima das últimas 5 velas)
+        trigger_buy = highs.tail(5).max()
+        trigger_sell = lows.tail(5).min()
 
         return {
             "symbol": symbol, "price": closes.iloc[-1], 
-            "score": score, "dir": direction, "simple": simple_dir, "rsi": cur_rsi
+            "score": score, "diff": diff, "rsi": cur_rsi,
+            "t_buy": trigger_buy, "t_sell": trigger_sell
         }
     except: return None
 
 # ========================================
-# CLASSE DO BOT
+# CLASSE DO BOT (INTEGRADA COM RADAR)
 # ========================================
 class TradingBot:
     def __init__(self):
-        self.mode = "CRYPTO" # Começa em Cripto que é mais volátil
+        self.mode = "CRYPTO" 
         self.wins = 0
         self.losses = 0
         self.active_trades = []
         self.last_id = 0
-
+        self.radar_list = {} # Armazena tempo do último alerta para evitar spam
+        
     def send(self, text, markup=None):
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": text, "parse_mode": "HTML"}
         if markup: payload["reply_markup"] = json.dumps(markup)
-        requests.post(url, json=payload, timeout=5)
+        try: requests.post(url, json=payload, timeout=5)
+        except: pass
 
     def build_menu(self):
         markup = {"inline_keyboard": [
@@ -114,35 +111,56 @@ class TradingBot:
         
         msg = f"🏆 <b>RANKING {self.mode}</b>\n\n"
         for i, r in enumerate(ranks[:3], 1):
-            msg += f"{i}º {r['symbol']}: {r['score']:.2f} ({r['simple']})\n"
+            sentido = "BUY" if r['diff'] > 0 else "SELL"
+            msg += f"{i}º {r['symbol']}: {r['score']:.2f} ({sentido})\n"
         self.send(msg)
 
     def scan(self):
         log(f"🔎 Varrendo {self.mode}...")
         universe = Config.FOREX_ASSETS if self.mode == "FOREX" else Config.CRYPTO_ASSETS
         for s in universe:
-            # Não entra se já houver trade aberto no mesmo ativo
             if any(t['symbol'] == s for t in self.active_trades): continue
             
             res = get_analysis(s)
-            if res and res['score'] > Config.THRESHOLD:
-                price = res['price']
-                # Cálculo de TP e SL
-                tp = price * (1 + Config.TP_PERCENT/100) if res['simple'] == "BUY" else price * (1 - Config.TP_PERCENT/100)
-                sl = price * (1 - Config.SL_PERCENT/100) if res['simple'] == "BUY" else price * (1 + Config.SL_PERCENT/100)
+            if not res: continue
+
+            # --- LÓGICA 1: O RADAR (ANTECIPAÇÃO) ---
+            if 0.8 < res['score'] < Config.THRESHOLD:
+                # Cooldown de 30 minutos para o mesmo alerta
+                last_alert = self.radar_list.get(s, 0)
+                if time.time() - last_alert > 1800:
+                    tipo = "ALTA" if res['diff'] > 0 else "BAIXA"
+                    valor_x = res['t_buy'] if tipo == "ALTA" else res['t_sell']
+                    
+                    msg = (f"⚠️ <b>RADAR: {s}</b>\n"
+                           f"Tendência de {tipo} em formação.\n"
+                           f"<b>Gatilho:</b> Se romper <code>{valor_x:.5f}</code> a entrada é confirmada.\n"
+                           f"Força Atual: {res['score']:.2f}")
+                    self.send(msg)
+                    self.radar_list[s] = time.time()
+
+            # --- LÓGICA 2: SINAL DE ENTRADA ---
+            if res['score'] >= Config.THRESHOLD:
+                # Filtro RSI para segurança
+                pode_entrar = (res['diff'] > 0 and res['rsi'] < 65) or (res['diff'] < 0 and res['rsi'] > 35)
                 
-                msg = (f"⚡ <b>SINAL DE ENTRADA</b>\n\n"
-                       f"Ativo: <b>{s}</b>\n"
-                       f"Ação: {res['dir']}\n"
-                       f"Preço: <code>{price:.5f}</code>\n"
-                       f"----------------------\n"
-                       f"🎯 Alvo (TP): <code>{tp:.5f}</code>\n"
-                       f"🛡 Proteção (SL): <code>{sl:.5f}</code>\n"
-                       f"📊 RSI: {res['rsi']:.1f}")
-                self.send(msg)
-                self.active_trades.append({
-                    "symbol": s, "entry": price, "tp": tp, "sl": sl, "dir": res['simple']
-                })
+                if pode_entrar:
+                    price = res['price']
+                    direcao = "BUY" if res['diff'] > 0 else "SELL"
+                    tp = price * (1 + Config.TP_PERCENT/100) if direcao == "BUY" else price * (1 - Config.TP_PERCENT/100)
+                    sl = price * (1 - Config.SL_PERCENT/100) if direcao == "BUY" else price * (1 + Config.SL_PERCENT/100)
+                    
+                    msg = (f"⚡ <b>SINAL DE ENTRADA</b>\n\n"
+                           f"Ativo: <b>{s}</b>\n"
+                           f"Ação: {'BUY 🟢' if direcao == 'BUY' else 'SELL 🔴'}\n"
+                           f"Preço: <code>{price:.5f}</code>\n"
+                           f"----------------------\n"
+                           f"🎯 Alvo (TP): <code>{tp:.5f}</code>\n"
+                           f"🛡 Proteção (SL): <code>{sl:.5f}</code>")
+                    self.send(msg)
+                    self.active_trades.append({
+                        "symbol": s, "entry": price, "tp": tp, "sl": sl, "dir": direcao
+                    })
 
     def monitor_trades(self):
         for t in self.active_trades[:]:
@@ -150,7 +168,6 @@ class TradingBot:
             if not res: continue
             cur_price = res['price']
             
-            # Checa Ganho ou Perda
             is_win = (t['dir'] == "BUY" and cur_price >= t['tp']) or (t['dir'] == "SELL" and cur_price <= t['tp'])
             is_loss = (t['dir'] == "BUY" and cur_price <= t['sl']) or (t['dir'] == "SELL" and cur_price >= t['sl'])
             
@@ -172,14 +189,13 @@ class TradingBot:
 # EXECUÇÃO
 # ========================================
 def main():
-    log("🔌 Iniciando sistema PRO...")
+    log("🔌 Iniciando sistema PRO com Radar...")
     requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook")
     bot = TradingBot()
     bot.build_menu()
 
     while True:
         try:
-            # Comandos
             url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates?offset={bot.last_id + 1}&timeout=5"
             r = requests.get(url, timeout=10).json()
             if "result" in r:
