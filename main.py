@@ -4,6 +4,7 @@ import time
 import requests
 import json
 import pandas as pd
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
 # ========================================
@@ -12,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 class Config:
     BOT_TOKEN     = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID       = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
-    NEWS_API_KEY  = os.getenv("NEWS_API_KEY", "0e6203999d224158aa2f48ef2b59c930")   # https://newsapi.org (plano gratuito)
     BR_TIMEZONE   = timezone(timedelta(hours=-3))
 
     FOREX_ASSETS  = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
@@ -32,61 +32,59 @@ def log(msg):
 
 
 # ========================================
-# NOTÍCIAS E DADOS MACROECONÔMICOS
+# NOTÍCIAS VIA RSS (SEM API KEY)
 # ========================================
-def get_news(query="forex crypto trading economia", lang="pt", max_results=5):
+
+# Feeds RSS de mercado financeiro e cripto — todos gratuitos, sem cadastro
+RSS_FEEDS = [
+    ("Investing.com BR",  "https://br.investing.com/rss/news.rss"),
+    ("CoinDesk",          "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("Reuters Markets",   "https://feeds.reuters.com/reuters/businessNews"),
+    ("MarketWatch",       "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
+    ("Cointelegraph",     "https://cointelegraph.com/rss"),
+]
+
+def _parse_rss(url, source_name, max_results=3):
+    """Faz o parse de um feed RSS e retorna lista de artigos."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0)"}
+    r = requests.get(url, headers=headers, timeout=8)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+
+    articles = []
+    # Suporte a RSS 2.0 e Atom
+    items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    for item in items[:max_results]:
+        title = (
+            item.findtext("title") or
+            item.findtext("{http://www.w3.org/2005/Atom}title") or ""
+        ).strip()
+        link = (
+            item.findtext("link") or
+            item.findtext("{http://www.w3.org/2005/Atom}link") or ""
+        ).strip()
+        if title and link:
+            articles.append({"title": title, "url": link, "source": source_name})
+    return articles
+
+
+def get_news(max_results=5):
     """
-    Tenta buscar notícias via NewsAPI.org.
-    Fallback: GNews (gratuito, sem chave).
-    Retorna lista de dicts com 'title', 'url', 'source'.
+    Busca notícias em múltiplos feeds RSS sem nenhuma chave de API.
+    Tenta cada feed em ordem e para quando tiver resultados suficientes.
     """
     articles = []
-
-    # --- Tentativa 1: NewsAPI ---
-    if Config.NEWS_API_KEY:
+    for source_name, url in RSS_FEEDS:
+        if len(articles) >= max_results:
+            break
         try:
-            url = "https://newsapi.org/v2/everything"
-            params = {
-                "q": query,
-                "language": lang,
-                "sortBy": "publishedAt",
-                "pageSize": max_results,
-                "apiKey": Config.NEWS_API_KEY,
-            }
-            r = requests.get(url, params=params, timeout=8)
-            data = r.json()
-            for a in data.get("articles", [])[:max_results]:
-                articles.append({
-                    "title":  a.get("title", ""),
-                    "url":    a.get("url", ""),
-                    "source": a.get("source", {}).get("name", "NewsAPI"),
-                })
-            if articles:
-                return articles
+            fetched = _parse_rss(url, source_name, max_results=2)
+            articles.extend(fetched)
+            log(f"[RSS] {source_name}: {len(fetched)} notícia(s)")
         except Exception as e:
-            log(f"[NEWS] NewsAPI falhou: {e}")
+            log(f"[RSS] {source_name} falhou: {e}")
 
-    # --- Fallback: GNews (sem chave, mercados em inglês) ---
-    try:
-        gnews_url = "https://gnews.io/api/v4/search"
-        params = {
-            "q": "forex OR crypto OR stock market",
-            "lang": "en",
-            "max": max_results,
-            "token": os.getenv("GNEWS_TOKEN", ""),   # opcional, plano grátis sem token é limitado
-        }
-        r = requests.get(gnews_url, params=params, timeout=8)
-        data = r.json()
-        for a in data.get("articles", [])[:max_results]:
-            articles.append({
-                "title":  a.get("title", ""),
-                "url":    a.get("url", ""),
-                "source": a.get("source", {}).get("name", "GNews"),
-            })
-    except Exception as e:
-        log(f"[NEWS] GNews falhou: {e}")
-
-    return articles
+    return articles[:max_results]
 
 
 def get_fear_greed():
@@ -101,9 +99,9 @@ def get_fear_greed():
         return "N/D"
 
 
-def build_news_message(query="forex crypto trading"):
+def build_news_message():
     """Monta o bloco HTML de notícias para o Telegram."""
-    articles = get_news(query=query)
+    articles = get_news()
     fg = get_fear_greed()
 
     if not articles:
@@ -243,9 +241,9 @@ class TradingBot:
         self.send(msg, markup)
 
     # ------ Notícias ------
-    def send_news(self, query="forex crypto trading"):
+    def send_news(self):
         log("📰 Enviando notícias...")
-        msg = build_news_message(query)
+        msg = build_news_message()
         self.send(msg, disable_preview=True)
         self.last_news_ts = time.time()
 
@@ -380,7 +378,7 @@ def main():
                     if "message" in u:
                         text = u["message"].get("text", "").strip().lower()
                         if text in ("/noticias", "/news", "notícias"):
-                            bot.send_news(query="forex cripto economia mercado")
+                            bot.send_news()
                         elif text == "/menu":
                             bot.build_menu()
 
