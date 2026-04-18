@@ -7,153 +7,162 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 
 # ========================================
-# CONFIGURAÇÕES DE TRADING
+# CONFIGURAÇÕES
 # ========================================
 class Config:
     BOT_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID: str = "1056795017"
     BR_TIMEZONE: timezone = timezone(timedelta(hours=-3))
     
-    # Ativos para monitorar
     FOREX_ASSETS: List[str] = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
     CRYPTO_ASSETS: List[str] = ["BTC-USD", "ETH-USD", "SOL-USD"]
 
-    # Estratégia
-    SIGNAL_STRENGTH_THRESHOLD: float = 1.5  # Sensibilidade (Menor = Mais sinais)
-    CHECK_RESULT_MINUTES: int = 5           # Tempo para validar o Win/Loss
+    # Sensibilidade: 1.5 é equilibrado com a nova normalização
+    THRESHOLD: float = 1.5
+    CHECK_TIME: int = 5 # Minutos para conferir o resultado
 
 # ========================================
-# MOTOR DE DADOS
+# MOTOR TÉCNICO
 # ========================================
 def log(msg: str):
     ts = datetime.now(Config.BR_TIMEZONE).strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-def fetch_price_data(symbol: str):
+def fetch_data(symbol: str):
     import yfinance as yf
     yf_symbol = f"{symbol}=X" if "-" not in symbol and "JPY" not in symbol else symbol
     if "JPY" in symbol and "=" not in symbol: yf_symbol = f"{symbol}=X"
     try:
-        ticker = yf.Ticker(yf_symbol)
-        df = ticker.history(period="1d", interval="1m")
+        df = yf.Ticker(yf_symbol).history(period="1d", interval="1m")
         return df if not df.empty else None
     except: return None
 
+def get_analysis(symbol: str):
+    df = fetch_data(symbol)
+    if df is None: return None
+    
+    closes = df['Close'].tolist()
+    ema9 = sum(closes[-9:]) / 9
+    ema21 = sum(closes[-21:]) / 21
+    
+    # Normalização para equilibrar Forex e Cripto
+    diff = (ema9 - ema21)
+    std_dev = df['Close'].std()
+    score = abs(diff / std_dev) * 10 if std_dev > 0 else 0
+    
+    return {
+        "symbol": symbol,
+        "price": closes[-1],
+        "score": score,
+        "direction": "BUY 🟢" if diff > 0 else "SELL 🔴",
+        "dir_simple": "BUY" if diff > 0 else "SELL"
+    }
+
 # ========================================
-# GESTÃO DE ESTADO E INTERFACE
+# GESTÃO DO BOT
 # ========================================
-class BotManager:
+class TradingBot:
     def __init__(self):
-        self.market_mode = "FOREX"
+        self.mode = "FOREX"
         self.wins = 0
         self.losses = 0
-        self.active_trades = [] # Guarda sinais para checar resultado depois
-        self.last_update_id = 0
+        self.trades = []
+        self.last_id = 0
 
-    def send(self, text, markup=None):
+    def send_msg(self, text, markup=None):
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": text, "parse_mode": "HTML"}
         if markup: payload["reply_markup"] = json.dumps(markup)
         try: requests.post(url, json=payload, timeout=5)
         except: pass
 
-    def show_menu(self):
-        winrate = (self.wins / (self.wins + self.losses) * 100) if (self.wins + self.losses) > 0 else 0
+    def build_menu(self):
         markup = {
             "inline_keyboard": [
-                [{"text": f"📍 Mercado: {self.market_mode}", "callback_data": "ignore"}],
-                [{"text": "📈 FOREX", "callback_data": "set_forex"}, {"text": "₿ CRIPTO", "callback_data": "set_crypto"}],
-                [{"text": "🔄 Atualizar Painel", "callback_data": "refresh"}]
+                [{"text": f"📍 Mercado: {self.mode}", "callback_data": "ignore"}],
+                [{"text": "📈 FOREX", "callback_data": "set_fx"}, {"text": "₿ CRIPTO", "callback_data": "set_crypto"}],
+                [{"text": "🏆 VER RANKING", "callback_data": "get_rank"}],
+                [{"text": "🔄 ATUALIZAR", "callback_data": "refresh"}]
             ]
         }
-        msg = (f"<b>📊 DASHBOARD DE TRADING</b>\n"
-               f"---------------------------\n"
-               f"Placar: <b>{self.wins}W - {self.losses}L</b>\n"
+        winrate = (self.wins/(self.wins+self.losses)*100) if (self.wins+self.losses)>0 else 0
+        msg = (f"<b>🎛 DASHBOARD TRADING</b>\n"
+               f"Placar: <code>{self.wins}W - {self.losses}L</code>\n"
                f"Assertividade: <code>{winrate:.1f}%</code>\n"
-               f"Modo: <b>{self.market_mode}</b>\n"
-               f"---------------------------\n"
-               f"🔎 Monitorando oportunidades...")
-        self.send(msg, markup)
+               f"Status: 🟢 Ativo")
+        self.send_msg(msg, markup)
 
-    def process_signals(self):
-        log(f"🔎 Varrendo {self.market_mode}...")
-        universe = Config.FOREX_ASSETS if self.market_mode == "FOREX" else Config.CRYPTO_ASSETS
+    def run_ranking(self):
+        self.send_msg("⏳ <i>Analisando ranking de ativos...</i>")
+        universe = Config.FOREX_ASSETS if self.mode == "FOREX" else Config.CRYPTO_ASSETS
+        ranks = []
+        for s in universe:
+            res = get_analysis(s)
+            if res: ranks.append(res)
         
-        for symbol in universe:
-            df = fetch_price_data(symbol)
-            if df is None: 
-                log(f"⚠️ Erro ao obter dados de {symbol}")
-                continue
+        ranks.sort(key=lambda x: x['score'], reverse=True)
+        msg = f"🏆 <b>MELHORES OPORTUNIDADES ({self.mode})</b>\n\n"
+        for i, r in enumerate(ranks[:3], 1):
+            msg += f"{i}º <b>{r['symbol']}</b>\nForça: {r['score']:.2f} | {r['direction']}\nPreço: {r['price']:.5f}\n\n"
+        self.send_msg(msg)
 
-            closes = df['Close'].tolist()
-            ema9 = sum(closes[-9:]) / 9
-            ema21 = sum(closes[-21:]) / 21
-            
-            strength = abs(ema9 - ema21) / closes[-1] * 1000
-            direction = "BUY 🟢" if ema9 > ema21 else "SELL 🔴"
-
-            # ESSA LINHA É O SEU DIAGNÓSTICO NOS LOGS:
-            log(f"📊 {symbol} | Força Atual: {strength:.2f} | Alvo: {Config.SIGNAL_STRENGTH_THRESHOLD}")
-
-            if strength > Config.SIGNAL_STRENGTH_THRESHOLD:
-                if not any(t['symbol'] == symbol for t in self.active_trades):
-                    price = closes[-1]
-                    self.send(f"⚡ <b>SINAL: {symbol}</b>\nDireção: {direction}\nForça: {strength:.2f}")
-                    
-                    self.active_trades.append({
-                        "symbol": symbol,
-                        "entry_price": price,
-                        "direction": "BUY" if "BUY" in direction else "SELL",
-                        "check_at": datetime.now() + timedelta(minutes=Config.CHECK_RESULT_MINUTES)
+    def scan(self):
+        log(f"🔎 Varrendo {self.mode}...")
+        universe = Config.FOREX_ASSETS if self.mode == "FOREX" else Config.CRYPTO_ASSETS
+        for s in universe:
+            res = get_analysis(s)
+            if res and res['score'] > Config.THRESHOLD:
+                if not any(t['symbol'] == s for t in self.trades):
+                    self.send_msg(f"⚡ <b>SINAL DE ENTRADA</b>\n\nAtivo: {s}\nDireção: <b>{res['direction']}</b>\nPreço Entrada: <code>{res['price']:.5f}</code>\nForça: {res['score']:.2f}")
+                    self.trades.append({
+                        "symbol": s, "entry": res['price'], "dir": res['dir_simple'],
+                        "time": datetime.now() + timedelta(minutes=Config.CHECK_TIME)
                     })
 
-
-    def check_results(self):
+    def check(self):
         now = datetime.now()
-        for trade in self.active_trades[:]:
-            if now >= trade['check_at']:
-                df = fetch_price_data(trade['symbol'])
-                if df is not None:
-                    current_price = df['Close'].iloc[-1]
-                    diff = current_price - trade['entry_price']
+        for t in self.trades[:]:
+            if now >= t['time']:
+                res = get_analysis(t['symbol'])
+                if res:
+                    exit_price = res['price']
+                    win = (exit_price > t['entry'] and t['dir'] == "BUY") or (exit_price < t['entry'] and t['dir'] == "SELL")
                     
-                    win = (diff > 0 and trade['direction'] == "BUY") or (diff < 0 and trade['direction'] == "SELL")
+                    status = "✅ WIN" if win else "❌ LOSS"
+                    if win: self.wins += 1
+                    else: self.losses += 1
                     
-                    if win:
-                        self.wins += 1
-                        self.send(f"✅ <b>RESULTADO: {trade['symbol']}</b>\nStatus: WIN! 🎉\nPreço Saída: {current_price:.5f}")
-                    else:
-                        self.losses += 1
-                        self.send(f"❌ <b>RESULTADO: {trade['symbol']}</b>\nStatus: LOSS\nPreço Saída: {current_price:.5f}")
-                    
-                    self.active_trades.remove(trade)
-                    self.show_menu() # Atualiza o placar no Telegram
+                    msg = (f"🏁 <b>RESULTADO DA OPERAÇÃO</b>\n\n"
+                           f"Ativo: {t['symbol']}\n"
+                           f"Status: <b>{status}</b>\n"
+                           f"Entrada: <code>{t['entry']:.5f}</code>\n"
+                           f"Saída: <code>{exit_price:.5f}</code>")
+                    self.send_msg(msg)
+                    self.trades.remove(t)
+                    self.build_menu()
 
 # ========================================
-# LOOP PRINCIPAL
+# LOOP
 # ========================================
 def main():
-    bot = BotManager()
-    log("🚀 Bot de Sinais Reiniciado.")
-    bot.show_menu()
-
+    bot = TradingBot()
+    bot.build_menu()
     while True:
         try:
-            # 1. Checa comandos do usuário
-            url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates?offset={bot.last_update_id + 1}"
-            updates = requests.get(url, timeout=5).json()
-            for u in updates.get("result", []):
-                bot.last_update_id = u["update_id"]
+            # Updates Telegram
+            url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates?offset={bot.last_id + 1}"
+            r = requests.get(url, timeout=5).json()
+            for u in r.get("result", []):
+                bot.last_id = u["update_id"]
                 if "callback_query" in u:
                     data = u["callback_query"]["data"]
-                    if data == "set_forex": bot.market_mode = "FOREX"
-                    elif data == "set_crypto": bot.market_mode = "CRYPTO"
-                    bot.show_menu()
-
-            # 2. Varredura e Resultados
-            bot.process_signals()
-            bot.check_results()
+                    if data == "set_fx": bot.mode = "FOREX"
+                    elif data == "set_crypto": bot.mode = "CRYPTO"
+                    elif data == "get_rank": bot.run_ranking()
+                    bot.build_menu()
             
+            bot.scan()
+            bot.check()
             time.sleep(30)
         except Exception as e:
             log(f"Erro: {e}")
