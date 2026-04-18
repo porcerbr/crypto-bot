@@ -25,19 +25,59 @@ def log(msg):
 # ========================================
 # FUNÇÕES DE MERCADO
 # ========================================
+
 def get_analysis(symbol):
     import yfinance as yf
+    import pandas as pd
     yf_symbol = f"{symbol}=X" if "-" not in symbol and "JPY" not in symbol else symbol
     if "JPY" in symbol and "=" not in symbol: yf_symbol = f"{symbol}=X"
     try:
-        df = yf.Ticker(yf_symbol).history(period="1d", interval="1m")
+        # 1. Mudança para o gráfico de 5 minutos (menos falsos sinais)
+        df = yf.Ticker(yf_symbol).history(period="5d", interval="5m")
         if df.empty: return None
-        closes = df['Close'].tolist()
-        diff = (sum(closes[-9:])/9) - (sum(closes[-21:])/21)
-        std = df['Close'].std()
+        
+        closes = df['Close']
+        
+        # 2. Cálculo do RSI (Impede comprar no topo e vender no fundo)
+        delta = closes.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.iloc[-1]
+
+        # 3. Cálculo das Médias e Score
+        ema9 = closes.tail(9).mean()
+        ema21 = closes.tail(21).mean()
+        diff = ema9 - ema21
+        std = closes.std()
         score = abs(diff / std) * 10 if std > 0 else 0
-        return {"symbol": symbol, "price": closes[-1], "score": score, "dir": "BUY 🟢" if diff > 0 else "SELL 🔴", "simple": "BUY" if diff > 0 else "SELL"}
-    except: return None
+        
+        # 4. A TRAVA DE SEGURANÇA:
+        # Só COMPRA se o RSI estiver abaixo de 70.
+        # Só VENDE se o RSI estiver acima de 30.
+        direction = None
+        simple_dir = None
+        
+        if diff > 0 and current_rsi < 70:
+            direction, simple_dir = "BUY 🟢", "BUY"
+        elif diff < 0 and current_rsi > 30:
+            direction, simple_dir = "SELL 🔴", "SELL"
+            
+        # Se as médias deram sinal, mas o RSI bloqueou, ele aborta e não envia nada.
+        if direction is None: 
+            return None 
+        
+        return {
+            "symbol": symbol, 
+            "price": closes.iloc[-1], 
+            "score": score, 
+            "dir": direction, 
+            "simple": simple_dir
+        }
+    except Exception as e: 
+        return None
+
 
 # ========================================
 # CLASSE DO BOT
