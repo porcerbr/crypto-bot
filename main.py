@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ══════════════════════════════════════════════════════════════════
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
+    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
     BR_TZ      = timezone(timedelta(hours=-3))
 
@@ -56,7 +56,7 @@ class Config:
                 "XRP-USD":   "XRP",       "ADA-USD":   "Cardano",
                 "DOGE-USD":  "Dogecoin",  "AVAX-USD":  "Avalanche",
                 "LINK-USD":  "Chainlink", "DOT-USD":   "Polkadot",
-                "MATIC-USD": "Polygon",   "LTC-USD":   "Litecoin",
+                "POL-USD":   "Polygon (POL)",   "LTC-USD":   "Litecoin",
             },
         },
         "COMMODITIES": {
@@ -263,11 +263,11 @@ def load_state(bot):
 # NOTÍCIAS / FEAR & GREED
 # ══════════════════════════════════════════════════════════════════
 RSS_FEEDS = [
-    ("Investing.com BR", "https://br.investing.com/rss/news.rss"),
     ("CoinDesk",         "https://www.coindesk.com/arc/outboundfeeds/rss/"),
-    ("Reuters Markets",  "https://feeds.reuters.com/reuters/businessNews"),
-    ("MarketWatch",      "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ("Cointelegraph",    "https://cointelegraph.com/rss"),
+    ("Decrypt",          "https://decrypt.co/feed"),
+    ("Yahoo Finance",    "https://finance.yahoo.com/rss/topfinstories"),
+    ("SeekingAlpha",     "https://seekingalpha.com/market_currents.xml"),
 ]
 
 def _parse_rss(url, source_name, max_results=3):
