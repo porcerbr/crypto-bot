@@ -1,29 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-BOT SNIPER – ESTRATÉGIA CURINGA (v5.0)
+BOT SNIPER – ESTRATÉGIA CURINGA (v6.0)
 ══════════════════════════════════════════════════════════════════
-HISTÓRICO DE VERSÕES
-  v3 → EMA real, MACD, Volume, Trailing Stop, /status, /placar
-  v4 → SL/TP via ATR, Circuit Breaker, ADX, Filtro H1,
-        Cooldown por ativo, MAX_TRADES, MIN_CONFLUENCE=5
-  v4.1 → Aviso de trades restaurados, flag session_alerted
-  v4.x → Timeframe dinâmico via Telegram (1m→4h)
+HISTÓRICO
+  v3  → EMA, MACD, Volume, Trailing Stop, /status, /placar
+  v4  → ATR-based SL/TP, Circuit Breaker, ADX, Filtro H1,
+         Cooldown, MAX_TRADES, MIN_CONFLUENCE=5
+  v4.1→ Aviso de trades restaurados, flag session_alerted
+  v4.x→ Timeframe dinâmico via botões Telegram
+  v5  → Multi-mercado: FOREX / CRIPTO / COMMODITIES / ÍNDICES / TUDO
+         Horário por categoria, resolução de símbolo automática
 
-NOVIDADES v5:
-  • 5 categorias de mercado operáveis pelo Telegram:
-      FOREX      – 10 pares principais + cruzamentos
-      CRIPTO     – 12 ativos (BTC, ETH, SOL, BNB, XRP…)
-      COMMODITIES– Ouro, Prata, Petróleo WTI/Brent, Gás, Cobre
-      ÍNDICES    – S&P500, Nasdaq, Dow, DAX, IBOV, Nikkei, FTSE
-      TUDO       – Todos os ativos acima em paralelo
-  • Resolução inteligente de símbolo por tipo de ativo
-      Forex  → agrega "=X"   (ex: EURUSD=X)
-      Crypto → usa diretamente (ex: BTC-USD)
-      Futures→ já tem "=F"   (ex: GC=F)
-      Índices→ já tem "^"    (ex: ^GSPC)
-  • Horário de mercado por categoria (FOREX, COMMODITIES, ÍNDICES)
-  • Volume ignorado para índices/futuros (dado não-confiável)
-  • Confluência adaptada: 6 fatores com H1 + ADX
+NOVIDADES v6 — Fluxo de alertas completo e acionável:
+  ① ⚠️  RADAR         → Tendência detectada, preço AINDA não chegou
+                         no gatilho. Mostra: gatilho, SL estimado,
+                         TP estimado, ratio, instrução clara.
+  ② 🔔  GATILHO       → Preço CHEGOU no nível de entrada. Alerta
+                         separado: "ENTRE AGORA, aqui estão os níveis".
+  ③ 🎯  SINAL         → Confluência confirmada. Card operacional
+                         completo para abrir o trade na plataforma.
+  ④ ⚡  CONFLUÊNCIA   → Gatilho atingido mas score insuficiente.
+         INSUFICIENTE    Bot NÃO entrou; mostra quais filtros falharam.
+  • Décimos de preço adaptados por ativo (forex 5d, cripto 2d…)
+  • Formatação de preço inteligente por magnitude do ativo
+  • Novo dict gatilho_list para anti-spam do alerta de gatilho
 ══════════════════════════════════════════════════════════════════
 """
 import os, time, json, math, requests, pandas as pd, xml.etree.ElementTree as ET
@@ -33,72 +33,74 @@ from datetime import datetime, timedelta, timezone
 # CONFIGURAÇÕES
 # ══════════════════════════════════════════════════════════════════
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
+    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
     BR_TZ      = timezone(timedelta(hours=-3))
 
-    # ── Ativos por categoria ────────────────────────────────────
-    # Símbolo : nome amigável
     MARKET_CATEGORIES = {
         "FOREX": {
-            "label":   "📈 FOREX",
+            "label": "📈 FOREX",
             "assets": {
                 "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD",
                 "USDJPY": "USD/JPY", "AUDUSD": "AUD/USD",
                 "USDCAD": "USD/CAD", "USDCHF": "USD/CHF",
                 "NZDUSD": "NZD/USD", "EURGBP": "EUR/GBP",
                 "EURJPY": "EUR/JPY", "GBPJPY": "GBP/JPY",
-            }
+            },
         },
         "CRYPTO": {
-            "label":   "₿ CRIPTO",
+            "label": "₿ CRIPTO",
             "assets": {
-                "BTC-USD":  "Bitcoin",  "ETH-USD":  "Ethereum",
-                "SOL-USD":  "Solana",   "BNB-USD":  "BNB",
-                "XRP-USD":  "XRP",      "ADA-USD":  "Cardano",
-                "DOGE-USD": "Dogecoin", "AVAX-USD": "Avalanche",
-                "LINK-USD": "Chainlink","DOT-USD":  "Polkadot",
-                "MATIC-USD":"Polygon",  "LTC-USD":  "Litecoin",
-            }
+                "BTC-USD":   "Bitcoin",   "ETH-USD":   "Ethereum",
+                "SOL-USD":   "Solana",    "BNB-USD":   "BNB",
+                "XRP-USD":   "XRP",       "ADA-USD":   "Cardano",
+                "DOGE-USD":  "Dogecoin",  "AVAX-USD":  "Avalanche",
+                "LINK-USD":  "Chainlink", "DOT-USD":   "Polkadot",
+                "MATIC-USD": "Polygon",   "LTC-USD":   "Litecoin",
+            },
         },
         "COMMODITIES": {
-            "label":   "🏅 COMMODITIES",
+            "label": "🏅 COMMODITIES",
             "assets": {
-                "GC=F": "Ouro",           "SI=F": "Prata",
-                "CL=F": "Petróleo WTI",   "BZ=F": "Petróleo Brent",
-                "NG=F": "Gás Natural",     "HG=F": "Cobre",
-                "ZC=F": "Milho",           "ZW=F": "Trigo",
-                "ZS=F": "Soja",            "PL=F": "Platina",
-            }
+                "GC=F": "Ouro",          "SI=F": "Prata",
+                "CL=F": "Petróleo WTI",  "BZ=F": "Petróleo Brent",
+                "NG=F": "Gás Natural",    "HG=F": "Cobre",
+                "ZC=F": "Milho",          "ZW=F": "Trigo",
+                "ZS=F": "Soja",           "PL=F": "Platina",
+            },
         },
         "INDICES": {
-            "label":   "📊 ÍNDICES",
+            "label": "📊 ÍNDICES",
             "assets": {
-                "ES=F":   "S&P 500",   "NQ=F":   "Nasdaq 100",
-                "YM=F":   "Dow Jones", "RTY=F":  "Russell 2000",
-                "^GDAXI": "DAX",       "^FTSE":  "FTSE 100",
-                "^N225":  "Nikkei",    "^BVSP":  "IBOVESPA",
-                "^HSI":   "Hang Seng", "^STOXX50E": "Euro Stoxx 50",
-            }
+                "ES=F":      "S&P 500",      "NQ=F":      "Nasdaq 100",
+                "YM=F":      "Dow Jones",    "RTY=F":     "Russell 2000",
+                "^GDAXI":    "DAX",          "^FTSE":     "FTSE 100",
+                "^N225":     "Nikkei",       "^BVSP":     "IBOVESPA",
+                "^HSI":      "Hang Seng",    "^STOXX50E": "Euro Stoxx 50",
+            },
         },
     }
 
-    # ── Gestão de risco via ATR ─────────────────────────────────
-    ATR_MULT_SL    = 1.5   # SL  = preço ± 1.5 × ATR
-    ATR_MULT_TP    = 3.0   # TP  = preço ± 3.0 × ATR  (ratio 2:1)
-    ATR_MULT_TRAIL = 1.2   # Trailing = pico ± 1.2 × ATR
+    # ── Gestão de risco ──────────────────────────────────────────
+    ATR_MULT_SL    = 1.5   # SL  = entrada ± 1.5×ATR
+    ATR_MULT_TP    = 3.0   # TP  = entrada ± 3.0×ATR  (ratio 2:1)
+    ATR_MULT_TRAIL = 1.2   # Trailing = pico ± 1.2×ATR
 
-    # ── Circuit Breaker ─────────────────────────────────────────
+    # ── Circuit Breaker ──────────────────────────────────────────
     MAX_CONSECUTIVE_LOSSES = 2
     PAUSE_DURATION         = 3600   # 1 hora
 
-    # ── Filtros ─────────────────────────────────────────────────
+    # ── Filtros ──────────────────────────────────────────────────
     ADX_MIN        = 22
-    MAX_TRADES     = 3     # Aumentado para comportar mais categorias
-    ASSET_COOLDOWN = 3600  # 1 hora de cooldown por ativo após loss
-    MIN_CONFLUENCE = 5     # de 7 fatores
+    MAX_TRADES     = 3
+    ASSET_COOLDOWN = 3600   # 1h cooldown por ativo após loss
+    MIN_CONFLUENCE = 5      # de 7 fatores
 
-    # ── Timeframes ──────────────────────────────────────────────
+    # ── Timers de alertas ────────────────────────────────────────
+    RADAR_COOLDOWN   = 1800  # 30min entre radares do mesmo ativo
+    GATILHO_COOLDOWN = 300   # 5min entre alertas de gatilho (anti-spam)
+
+    # ── Timeframes ───────────────────────────────────────────────
     TIMEFRAMES = {
         "1m":  ("🔴 Agressivo",    "7d"),
         "5m":  ("🟠 Alto",         "5d"),
@@ -110,19 +112,27 @@ class Config:
     TIMEFRAME = "15m"
 
     # ── Horários de mercado (UTC) ────────────────────────────────
-    # FOREX: Londres + NY abertas
-    FOREX_OPEN_UTC  = 7
-    FOREX_CLOSE_UTC = 17
-    # COMMODITIES: futures abertos quase 24h, mas melhor liquidez:
-    COMM_OPEN_UTC   = 7
-    COMM_CLOSE_UTC  = 21
-    # ÍNDICES: janela ampla cobrindo EU + US regular + after-hours
-    IDX_OPEN_UTC    = 7
-    IDX_CLOSE_UTC   = 21
+    FOREX_OPEN_UTC  = 7;  FOREX_CLOSE_UTC = 17
+    COMM_OPEN_UTC   = 7;  COMM_CLOSE_UTC  = 21
+    IDX_OPEN_UTC    = 7;  IDX_CLOSE_UTC   = 21
 
     NEWS_INTERVAL = 7200
     SCAN_INTERVAL = 30
     STATE_FILE    = "bot_state.json"
+
+
+# ── Formatação inteligente de preço ─────────────────────────────
+def fmt(price: float) -> str:
+    """Casas decimais adaptadas à magnitude do preço."""
+    if price == 0:
+        return "0"
+    if price >= 1000:
+        return f"{price:,.2f}"
+    if price >= 10:
+        return f"{price:.4f}"
+    if price >= 1:
+        return f"{price:.5f}"
+    return f"{price:.6f}"
 
 
 def log(msg):
@@ -134,25 +144,28 @@ def log(msg):
 # HELPERS DE SÍMBOLO E MERCADO
 # ══════════════════════════════════════════════════════════════════
 def to_yf_symbol(symbol: str) -> str:
-    """Converte símbolo interno → símbolo do yfinance."""
-    if "-" in symbol:          return symbol          # BTC-USD → BTC-USD
-    if symbol.startswith("^"): return symbol          # ^GDAXI  → ^GDAXI
-    if symbol.endswith("=F"):  return symbol          # GC=F    → GC=F
-    return f"{symbol}=X"                              # EURUSD  → EURUSD=X
+    if "-" in symbol:          return symbol
+    if symbol.startswith("^"): return symbol
+    if symbol.endswith("=F"):  return symbol
+    return f"{symbol}=X"
 
 
 def asset_category(symbol: str) -> str:
-    """Retorna a categoria de um símbolo."""
     for cat, info in Config.MARKET_CATEGORIES.items():
         if symbol in info["assets"]:
             return cat
     return "CRYPTO"
 
 
+def asset_name(symbol: str) -> str:
+    for info in Config.MARKET_CATEGORIES.values():
+        if symbol in info["assets"]:
+            return info["assets"][symbol]
+    return symbol
+
+
 def volume_reliable(symbol: str) -> bool:
-    """Volume de índices e alguns futuros não é confiável no yfinance."""
-    cat = asset_category(symbol)
-    return cat not in ("INDICES",)
+    return asset_category(symbol) not in ("INDICES",)
 
 
 def all_symbols() -> list:
@@ -163,25 +176,19 @@ def all_symbols() -> list:
 
 
 def market_open(category: str) -> bool:
-    """Verifica se o mercado da categoria está aberto (UTC)."""
-    now_utc   = datetime.now(timezone.utc)
-    hour_utc  = now_utc.hour
-    weekday   = now_utc.weekday()   # 0=Mon … 6=Sun
-
+    now     = datetime.now(timezone.utc)
+    h, wd   = now.hour, now.weekday()
     if category == "CRYPTO":
-        return True                 # 24/7
-    if weekday >= 5:                # Fds fechados para os demais
+        return True
+    if wd >= 5:
         return False
     if category == "FOREX":
-        return Config.FOREX_OPEN_UTC <= hour_utc < Config.FOREX_CLOSE_UTC
+        return Config.FOREX_OPEN_UTC <= h < Config.FOREX_CLOSE_UTC
     if category == "COMMODITIES":
-        return Config.COMM_OPEN_UTC <= hour_utc < Config.COMM_CLOSE_UTC
+        return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
     if category == "INDICES":
-        return Config.IDX_OPEN_UTC  <= hour_utc < Config.IDX_CLOSE_UTC
-    if category == "TUDO":
-        # Aberto se pelo menos CRYPTO (sempre) ou outro mercado aberto
-        return True
-    return False
+        return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
+    return True   # TUDO
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -197,6 +204,7 @@ def save_state(bot):
         "paused_until":       bot.paused_until,
         "active_trades":      bot.active_trades,
         "radar_list":         bot.radar_list,
+        "gatilho_list":       bot.gatilho_list,
         "asset_cooldown":     bot.asset_cooldown,
         "history":            bot.history,
     }
@@ -213,22 +221,22 @@ def load_state(bot):
     try:
         with open(Config.STATE_FILE) as f:
             data = json.load(f)
-        bot.mode               = data.get("mode", "CRYPTO")
-        bot.timeframe          = data.get("timeframe", Config.TIMEFRAME)
-        bot.wins               = data.get("wins", 0)
-        bot.losses             = data.get("losses", 0)
+        bot.mode               = data.get("mode",               "CRYPTO")
+        bot.timeframe          = data.get("timeframe",          Config.TIMEFRAME)
+        bot.wins               = data.get("wins",               0)
+        bot.losses             = data.get("losses",             0)
         bot.consecutive_losses = data.get("consecutive_losses", 0)
-        bot.paused_until       = data.get("paused_until", 0)
-        bot.active_trades      = data.get("active_trades", [])
-        bot.radar_list         = data.get("radar_list", {})
-        bot.asset_cooldown     = data.get("asset_cooldown", {})
-        bot.history            = data.get("history", [])
+        bot.paused_until       = data.get("paused_until",       0)
+        bot.active_trades      = data.get("active_trades",      [])
+        bot.radar_list         = data.get("radar_list",         {})
+        bot.gatilho_list       = data.get("gatilho_list",       {})
+        bot.asset_cooldown     = data.get("asset_cooldown",     {})
+        bot.history            = data.get("history",            [])
 
-        # Marcar trades restaurados como não-anunciados nesta sessão
         for t in bot.active_trades:
             t["session_alerted"] = False
 
-        log(f"[STATE] Restaurado: {bot.wins}W/{bot.losses}L | "
+        log(f"[STATE] {bot.wins}W/{bot.losses}L | "
             f"{len(bot.active_trades)} trade(s) | "
             f"Modo: {bot.mode} | TF: {bot.timeframe}")
 
@@ -237,9 +245,11 @@ def load_state(bot):
             for t in bot.active_trades:
                 dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
                 lines.append(
-                    f"📌 <b>{t['symbol']}</b>  {dl}  |  desde {t.get('opened_at','?')}\n"
-                    f"   Entrada: <code>{t['entry']:.5f}</code>  "
-                    f"TP: <code>{t['tp']:.5f}</code>  SL: <code>{t['sl']:.5f}</code>"
+                    f"📌 <b>{t['symbol']}</b> ({t.get('name', t['symbol'])})  {dl}\n"
+                    f"   Aberto: {t.get('opened_at','?')}  |  "
+                    f"Entrada: <code>{fmt(t['entry'])}</code>\n"
+                    f"   🎯 TP: <code>{fmt(t['tp'])}</code>  "
+                    f"🛡 SL: <code>{fmt(t['sl'])}</code>"
                 )
             bot._restore_msg = "\n".join(lines)
         else:
@@ -265,11 +275,14 @@ def _parse_rss(url, source_name, max_results=3):
     r       = requests.get(url, headers=headers, timeout=8)
     r.raise_for_status()
     root    = ET.fromstring(r.content)
-    items   = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    items   = (root.findall(".//item") or
+               root.findall(".//{http://www.w3.org/2005/Atom}entry"))
     out = []
     for item in items[:max_results]:
-        title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-        link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or "").strip()
+        title = (item.findtext("title") or
+                 item.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
+        link  = (item.findtext("link") or
+                 item.findtext("{http://www.w3.org/2005/Atom}link") or "").strip()
         if title and link:
             out.append({"title": title, "url": link, "source": source_name})
     return out
@@ -280,18 +293,15 @@ def get_news(max_results=5):
         if len(articles) >= max_results:
             break
         try:
-            fetched = _parse_rss(url, name, max_results=2)
-            articles.extend(fetched)
-            log(f"[RSS] {name}: {len(fetched)}")
+            articles.extend(_parse_rss(url, name, 2))
         except Exception as e:
-            log(f"[RSS] {name} falhou: {e}")
+            log(f"[RSS] {name}: {e}")
     return articles[:max_results]
 
 def get_fear_greed():
     try:
-        r    = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6)
-        data = r.json()["data"][0]
-        return f"{data['value']} – {data['value_classification']}"
+        d = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6).json()["data"][0]
+        return f"{d['value']} – {d['value_classification']}"
     except:
         return "N/D"
 
@@ -303,8 +313,8 @@ def build_news_message():
                 f"😱 <b>Fear &amp; Greed:</b> {fg}")
     lines = ["📰 <b>NOTÍCIAS RELEVANTES DO MERCADO</b>\n"]
     for i, a in enumerate(articles, 1):
-        title = a["title"][:120] + ("…" if len(a["title"]) > 120 else "")
-        lines.append(f"{i}. <a href='{a['url']}'>{title}</a> <i>({a['source']})</i>")
+        t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "")
+        lines.append(f"{i}. <a href='{a['url']}'>{t}</a> <i>({a['source']})</i>")
     lines.append(f"\n😱 <b>Fear &amp; Greed (Cripto):</b> {fg}")
     lines.append(f"🕐 {datetime.now(Config.BR_TZ).strftime('%H:%M')} (Brasília)")
     return "\n".join(lines)
@@ -332,15 +342,15 @@ def get_analysis(symbol, timeframe=None):
         volume = df["Volume"]
 
         # ── EMAs ────────────────────────────────────────────────
-        ema9   = closes.ewm(span=9,   adjust=False).mean().iloc[-1]
-        ema21  = closes.ewm(span=21,  adjust=False).mean().iloc[-1]
-        span200 = min(200, len(closes) - 1)
-        ema200 = closes.ewm(span=span200, adjust=False).mean().iloc[-1]
+        ema9    = closes.ewm(span=9,  adjust=False).mean().iloc[-1]
+        ema21   = closes.ewm(span=21, adjust=False).mean().iloc[-1]
+        sp200   = min(200, len(closes) - 1)
+        ema200  = closes.ewm(span=sp200, adjust=False).mean().iloc[-1]
 
         # ── Bollinger Bands ──────────────────────────────────────
-        window     = min(20, len(closes) - 1)
-        sma20      = closes.rolling(window).mean().iloc[-1]
-        std20      = closes.rolling(window).std().iloc[-1]
+        w          = min(20, len(closes) - 1)
+        sma20      = closes.rolling(w).mean().iloc[-1]
+        std20      = closes.rolling(w).std().iloc[-1]
         upper_band = sma20 + std20 * 2
         lower_band = sma20 - std20 * 2
 
@@ -348,19 +358,14 @@ def get_analysis(symbol, timeframe=None):
         delta   = closes.diff()
         gain    = delta.where(delta > 0, 0).rolling(14).mean()
         loss    = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs      = gain / loss
-        cur_rsi = (100 - 100 / (1 + rs)).iloc[-1]
+        cur_rsi = (100 - 100 / (1 + gain / loss)).iloc[-1]
 
         # ── MACD (12,26,9) ───────────────────────────────────────
         ema12       = closes.ewm(span=12, adjust=False).mean()
         ema26       = closes.ewm(span=26, adjust=False).mean()
-        macd_line   = ema12 - ema26
-        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        macd_hist   = macd_line - signal_line
-        macd_bull   = (macd_hist.iloc[-1] > 0 and
-                       macd_hist.iloc[-1] > macd_hist.iloc[-2])
-        macd_bear   = (macd_hist.iloc[-1] < 0 and
-                       macd_hist.iloc[-1] < macd_hist.iloc[-2])
+        macd_hist   = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+        macd_bull   = macd_hist.iloc[-1] > 0 and macd_hist.iloc[-1] > macd_hist.iloc[-2]
+        macd_bear   = macd_hist.iloc[-1] < 0 and macd_hist.iloc[-1] < macd_hist.iloc[-2]
 
         # ── Volume ───────────────────────────────────────────────
         if use_volume and volume.sum() > 0:
@@ -369,7 +374,7 @@ def get_analysis(symbol, timeframe=None):
             vol_ok    = bool(vol_cur > vol_avg) if vol_avg > 0 else False
             vol_ratio = vol_cur / vol_avg if vol_avg > 0 else 0
         else:
-            vol_ok    = True   # ignorado para índices/futuros sem dados
+            vol_ok    = True
             vol_ratio = 0
 
         # ── ATR 14 ───────────────────────────────────────────────
@@ -381,55 +386,45 @@ def get_analysis(symbol, timeframe=None):
         atr = tr.rolling(14).mean().iloc[-1]
 
         # ── ADX 14 (Wilder) ──────────────────────────────────────
-        high_diff    = highs.diff()
-        low_diff     = lows.diff()
-        plus_dm_raw  = high_diff.where(
-            (high_diff > 0) & (high_diff > -low_diff), 0.0)
-        minus_dm_raw = (-low_diff).where(
-            (-low_diff > 0) & (-low_diff > high_diff), 0.0)
-        atr_s    = tr.ewm(alpha=1/14, adjust=False).mean()
-        plus_di  = 100 * plus_dm_raw.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
-        minus_di = 100 * minus_dm_raw.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
-        dx       = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
-        adx      = dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1]
+        hd = highs.diff(); ld = lows.diff()
+        pdm = hd.where((hd > 0) & (hd > -ld), 0.0)
+        mdm = (-ld).where((-ld > 0) & (-ld > hd), 0.0)
+        atr_s   = tr.ewm(alpha=1/14, adjust=False).mean()
+        pdi     = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
+        mdi     = 100 * mdm.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
+        dx      = 100 * (pdi - mdi).abs() / (pdi + mdi + 1e-10)
+        adx     = dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1]
 
         cur_price    = closes.iloc[-1]
-        trigger_buy  = highs.tail(5).max()
-        trigger_sell = lows.tail(5).min()
+        trigger_buy  = highs.tail(5).max()   # rompimento de máxima dos últimos 5 candles
+        trigger_sell = lows.tail(5).min()    # rompimento de mínima dos últimos 5 candles
 
-        # ── Cenário base (TF operado) ─────────────────────────────
+        # ── Cenário base ──────────────────────────────────────────
         cenario = "NEUTRO"
         if cur_price > ema200 and ema9 > ema21:
             cenario = "ALTA"
         elif cur_price < ema200 and ema9 < ema21:
             cenario = "BAIXA"
 
-        # ── Filtro H1: tendência do timeframe superior ────────────
-        # Só se o TF operado for < 1h; para 1h/4h usa o 1d
+        # ── Filtro timeframe superior ─────────────────────────────
         h1_bull = h1_bear = False
-        h1_tf   = "1h" if timeframe in ("1m","5m","15m","30m") else "1d"
-        h1_per  = "60d" if h1_tf == "1h" else "2y"
+        sup_tf  = "1h"  if timeframe in ("1m","5m","15m","30m") else "1d"
+        sup_per = "60d" if sup_tf == "1h" else "2y"
         try:
-            df_h = yf.Ticker(yf_symbol).history(period=h1_per, interval=h1_tf)
-            if len(df_h) >= 50:
-                c_h      = df_h["Close"]
-                ema21_h  = c_h.ewm(span=21, adjust=False).mean().iloc[-1]
-                sp_h     = min(200, len(c_h) - 1)
-                ema_h    = c_h.ewm(span=sp_h, adjust=False).mean().iloc[-1]
-                price_h  = c_h.iloc[-1]
-                h1_bull  = price_h > ema21_h and ema21_h > ema_h
-                h1_bear  = price_h < ema21_h and ema21_h < ema_h
-        except Exception as e_h:
-            log(f"[H-SUP] {symbol}: {e_h}")
-
-        name = (Config.MARKET_CATEGORIES
-                .get(asset_category(symbol), {})
-                .get("assets", {})
-                .get(symbol, symbol))
+            dh = yf.Ticker(yf_symbol).history(period=sup_per, interval=sup_tf)
+            if len(dh) >= 50:
+                ch     = dh["Close"]
+                e21h   = ch.ewm(span=21,       adjust=False).mean().iloc[-1]
+                e200h  = ch.ewm(span=min(200, len(ch)-1), adjust=False).mean().iloc[-1]
+                ph     = ch.iloc[-1]
+                h1_bull = ph > e21h and e21h > e200h
+                h1_bear = ph < e21h and e21h < e200h
+        except Exception as eh:
+            log(f"[H-SUP] {symbol}: {eh}")
 
         return {
             "symbol":    symbol,
-            "name":      name,
+            "name":      asset_name(symbol),
             "price":     cur_price,
             "cenario":   cenario,
             "rsi":       cur_rsi,
@@ -460,23 +455,23 @@ def get_analysis(symbol, timeframe=None):
 def calc_confluence(res, direcao):
     if direcao == "BUY":
         checks = [
-            ("EMA 200",          res["price"]  > res["ema200"]),
-            ("EMA 9 > 21",       res["ema9"]   > res["ema21"]),
-            ("MACD Alta",        res["macd_bull"]),
-            ("Volume / Liquidez",res["vol_ok"]),
-            ("RSI < 65",         res["rsi"] < 65),
-            ("TF Superior Alta", res["h1_bull"]),
-            ("ADX Tendência",    res["adx"] > Config.ADX_MIN),
+            ("EMA 200 (preço acima)",    res["price"]  > res["ema200"]),
+            ("EMA 9 acima da 21",        res["ema9"]   > res["ema21"]),
+            ("MACD em alta",             res["macd_bull"]),
+            ("Volume / Liquidez OK",     res["vol_ok"]),
+            ("RSI abaixo de 65",         res["rsi"] < 65),
+            ("TF Superior em alta",      res["h1_bull"]),
+            ("ADX força tendência",      res["adx"] > Config.ADX_MIN),
         ]
     else:
         checks = [
-            ("EMA 200",          res["price"]  < res["ema200"]),
-            ("EMA 9 < 21",       res["ema9"]   < res["ema21"]),
-            ("MACD Baixa",       res["macd_bear"]),
-            ("Volume / Liquidez",res["vol_ok"]),
-            ("RSI > 35",         res["rsi"] > 35),
-            ("TF Superior Baixa",res["h1_bear"]),
-            ("ADX Tendência",    res["adx"] > Config.ADX_MIN),
+            ("EMA 200 (preço abaixo)",   res["price"]  < res["ema200"]),
+            ("EMA 9 abaixo da 21",       res["ema9"]   < res["ema21"]),
+            ("MACD em queda",            res["macd_bear"]),
+            ("Volume / Liquidez OK",     res["vol_ok"]),
+            ("RSI acima de 35",          res["rsi"] > 35),
+            ("TF Superior em queda",     res["h1_bear"]),
+            ("ADX força tendência",      res["adx"] > Config.ADX_MIN),
         ]
     score = sum(1 for _, ok in checks if ok)
     return score, len(checks), checks
@@ -499,8 +494,9 @@ class TradingBot:
         self.consecutive_losses = 0
         self.paused_until       = 0
         self.active_trades      = []
-        self.radar_list         = {}
-        self.asset_cooldown     = {}
+        self.radar_list         = {}    # {symbol: ts} último alerta RADAR
+        self.gatilho_list       = {}    # {symbol: ts} último alerta GATILHO
+        self.asset_cooldown     = {}    # {symbol: ts} cooldown pós-loss
         self.history            = []
         self.last_id            = 0
         self.last_news_ts       = 0
@@ -524,10 +520,9 @@ class TradingBot:
 
     # ── Menu principal ───────────────────────────────────────────
     def build_menu(self):
-        tf_label  = Config.TIMEFRAMES.get(self.timeframe, ("?",""))[0]
-        mode_info = Config.MARKET_CATEGORIES.get(self.mode, {})
-        mode_label= mode_info.get("label", self.mode) if self.mode != "TUDO" else "🌍 TUDO"
-
+        tf_label   = Config.TIMEFRAMES.get(self.timeframe, ("?",""))[0]
+        mode_label = (Config.MARKET_CATEGORIES[self.mode]["label"]
+                      if self.mode != "TUDO" else "🌍 TUDO")
         markup = {"inline_keyboard": [
             [{"text": f"📍 Mercado: {mode_label}", "callback_data": "ignore"}],
             [{"text": "📈 FOREX",       "callback_data": "set_FOREX"},
@@ -547,27 +542,24 @@ class TradingBot:
         winrate = (self.wins / total * 100) if total > 0 else 0
         fg      = get_fear_greed()
 
-        # Status de mercado por categoria
-        mkt_lines = []
+        mkt_status = []
         for cat, info in Config.MARKET_CATEGORIES.items():
             icon = "🟢" if market_open(cat) else "🔴"
-            mkt_lines.append(f"{icon} {info['label']}")
-        mkt_txt = "  |  ".join(mkt_lines)
+            mkt_status.append(f"{icon} {info['label']}")
 
         cb_txt = ""
-        if time.time() < self.paused_until:
-            mins  = int((self.paused_until - time.time()) / 60)
+        if self.is_paused():
+            mins   = int((self.paused_until - time.time()) / 60)
             cb_txt = f"\n⛔ <b>CIRCUIT BREAKER</b> – retoma em {mins}min"
 
         self.send(
-            f"<b>🎛 BOT SNIPER v5 – ESTRATÉGIA CURINGA</b>\n"
+            f"<b>🎛 BOT SNIPER v6 – MULTI-MERCADO</b>\n"
             f"Placar: <code>{self.wins}W – {self.losses}L</code>  ({winrate:.1f}%)\n"
             f"Losses seguidos: <code>{self.consecutive_losses}</code>  "
             f"(limite: {Config.MAX_CONSECUTIVE_LOSSES})\n"
             f"Modo: <b>{mode_label}</b>  |  TF: <code>{self.timeframe}</code> {tf_label}\n"
             f"Gestão: SL={Config.ATR_MULT_SL}×ATR  TP={Config.ATR_MULT_TP}×ATR\n\n"
-            f"<b>Mercados:</b>\n{mkt_txt}"
-            f"{cb_txt}",
+            f"<b>Mercados:</b>\n" + "  |  ".join(mkt_status) + cb_txt,
             markup
         )
 
@@ -581,8 +573,9 @@ class TradingBot:
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
         self.send(
             "⏱ <b>SELECIONE O TIMEFRAME</b>\n\n"
-            "🔴 1m/5m  = mais sinais, mais risco\n"
-            "🟢 30m/1h = menos sinais, mais segurança\n"
+            "🔴 1m / 5m  → mais sinais, mais risco\n"
+            "🟡 15m / 30m→ equilíbrio risco/retorno\n"
+            "🔵 1h / 4h  → menos sinais, mais segurança\n"
             f"\nAtual: <b>{self.timeframe}</b>",
             {"inline_keyboard": rows}
         )
@@ -597,30 +590,23 @@ class TradingBot:
         log(f"[TF] {old} → {tf}")
         self.send(
             f"✅ <b>Timeframe alterado:</b> <b>{old}</b> → <b>{tf}</b> {label}\n\n"
-            f"⚠️ <i>Trades abertos mantêm os níveis do TF anterior.\n"
+            f"⚠️ <i>Trades abertos mantêm os níveis anteriores.\n"
             f"Novos sinais usarão {tf}.</i>"
         )
         self.build_menu()
 
-    # ── Menu de Mercado ──────────────────────────────────────────
+    # ── Menu Mercado ─────────────────────────────────────────────
     def set_mode(self, mode):
         valid = list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]
         if mode not in valid:
             return
-        self.mode = mode
-        label = (Config.MARKET_CATEGORIES[mode]["label"]
-                 if mode != "TUDO" else "🌍 TUDO")
+        self.mode  = mode
+        label      = (Config.MARKET_CATEGORIES[mode]["label"]
+                      if mode != "TUDO" else "🌍 TUDO")
+        n = len(all_symbols()) if mode == "TUDO" else len(Config.MARKET_CATEGORIES[mode]["assets"])
         save_state(self)
-        log(f"[MODE] Modo → {mode}")
-
-        # Conta ativos que serão escaneados
-        if mode == "TUDO":
-            n = len(all_symbols())
-        else:
-            n = len(Config.MARKET_CATEGORIES[mode]["assets"])
-
-        self.send(f"✅ <b>Modo alterado para {label}</b>\n"
-                  f"Escaneando <b>{n} ativos</b>.")
+        log(f"[MODE] → {mode}")
+        self.send(f"✅ <b>Modo: {label}</b> — escaneando <b>{n} ativos</b>.")
         self.build_menu()
 
     # ── Notícias ─────────────────────────────────────────────────
@@ -636,7 +622,7 @@ class TradingBot:
     # ── /status ──────────────────────────────────────────────────
     def send_status(self):
         lines = ["📊 <b>OPERAÇÕES ABERTAS</b>\n"]
-        if time.time() < self.paused_until:
+        if self.is_paused():
             mins = int((self.paused_until - time.time()) / 60)
             lines.append(f"⛔ Circuit Breaker ativo – retoma em {mins}min\n")
         if not self.active_trades:
@@ -651,11 +637,12 @@ class TradingBot:
                 pnl = -pnl
             em = "🟢" if pnl >= 0 else "🔴"
             lines.append(
-                f"{em} <b>{t['symbol']}</b> {t['dir']} | {t.get('opened_at','?')}\n"
-                f"   Entrada: <code>{t['entry']:.5f}</code>  "
-                f"Atual: <code>{cur:.5f}</code>\n"
+                f"{em} <b>{t['symbol']}</b> ({t.get('name','-')})  "
+                f"{t['dir']} | {t.get('opened_at','?')}\n"
+                f"   Entrada: <code>{fmt(t['entry'])}</code>  "
+                f"Atual: <code>{fmt(cur)}</code>\n"
                 f"   P&amp;L: <code>{pnl:+.2f}%</code>  "
-                f"SL: <code>{t['sl']:.5f}</code>  TP: <code>{t['tp']:.5f}</code>"
+                f"SL: <code>{fmt(t['sl'])}</code>  TP: <code>{fmt(t['tp'])}</code>"
             )
         self.send("\n".join(lines))
 
@@ -692,92 +679,146 @@ class TradingBot:
         self.send("✅ <b>Circuit Breaker resetado.</b> Bot liberado para operar.")
         log("[CB] Resetado manualmente.")
 
-    # ── Scan ─────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # SCAN — FLUXO DE 4 FASES
+    # ══════════════════════════════════════════════════════════════
     def scan(self):
         if self.is_paused():
             mins = int((self.paused_until - time.time()) / 60)
-            log(f"⛔ Pausado (circuit breaker). Retoma em {mins}min.")
+            log(f"⛔ Pausado. Retoma em {mins}min.")
             return
 
         if len(self.active_trades) >= Config.MAX_TRADES:
             log(f"⚠️ Limite de {Config.MAX_TRADES} trades atingido.")
             return
 
-        # Monta lista de ativos a escanear
-        if self.mode == "TUDO":
-            universe = all_symbols()
-        else:
-            universe = list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
+        universe = all_symbols() if self.mode == "TUDO" else \
+                   list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
 
-        log(f"🔎 Varrendo {self.mode} ({len(universe)} ativos)...")
+        log(f"🔎 Varrendo {self.mode} ({len(universe)} ativos, TF {self.timeframe})...")
 
         for s in universe:
             cat = asset_category(s)
-
-            # Verifica horário de mercado por categoria do ativo
             if not market_open(cat):
                 continue
-
-            # Já tem trade aberto nesse ativo?
             if any(t["symbol"] == s for t in self.active_trades):
                 continue
-
-            # Cooldown após loss
-            cd_remaining = Config.ASSET_COOLDOWN - (time.time() - self.asset_cooldown.get(s, 0))
-            if cd_remaining > 0:
-                log(f"[COOL] {s} em cooldown por {int(cd_remaining/60)}min.")
+            cd_rem = Config.ASSET_COOLDOWN - (time.time() - self.asset_cooldown.get(s, 0))
+            if cd_rem > 0:
+                log(f"[COOL] {s} cooldown {int(cd_rem/60)}min.")
                 continue
 
             res = get_analysis(s, self.timeframe)
             if not res or res["cenario"] == "NEUTRO":
                 continue
 
-            price = res["price"]
-            name  = res["name"]
+            price      = res["price"]
+            name       = res["name"]
+            cat_label  = Config.MARKET_CATEGORIES.get(cat, {}).get("label", cat)
+            atr        = res["atr"]
+            cenario    = res["cenario"]
 
-            # ── Radar ──────────────────────────────────────────
-            if time.time() - self.radar_list.get(s, 0) > 1800:
-                g = res["t_buy"] if res["cenario"] == "ALTA" else res["t_sell"]
+            # ── Preços estimados de SL/TP (calculados no gatilho) ──
+            if cenario == "ALTA":
+                gatilho    = res["t_buy"]
+                sl_est     = gatilho - Config.ATR_MULT_SL * atr
+                tp_est     = gatilho + Config.ATR_MULT_TP * atr
+                dir_simple = "BUY"
+                preco_ok   = price >= gatilho and price < res["upper"] and res["rsi"] < 70
+            else:
+                gatilho    = res["t_sell"]
+                sl_est     = gatilho + Config.ATR_MULT_SL * atr
+                tp_est     = gatilho - Config.ATR_MULT_TP * atr
+                dir_simple = "SELL"
+                preco_ok   = price <= gatilho and price > res["lower"] and res["rsi"] > 30
+
+            sl_pct_est = abs(gatilho - sl_est) / gatilho * 100
+            tp_pct_est = abs(tp_est  - gatilho) / gatilho * 100
+            ratio_str  = f"1:{Config.ATR_MULT_TP / Config.ATR_MULT_SL:.1f}"
+
+            # ══════════════════════════════════════════════════════
+            # FASE 1 — ⚠️ RADAR
+            # Preço ainda NÃO chegou no gatilho. Avisa o que está
+            # se formando e o que o usuário deve esperar.
+            # ══════════════════════════════════════════════════════
+            if not preco_ok:
+                if time.time() - self.radar_list.get(s, 0) > Config.RADAR_COOLDOWN:
+                    dir_label  = "COMPRA 🟢" if dir_simple == "BUY" else "VENDA 🔴"
+                    dist_pct   = abs(price - gatilho) / price * 100
+                    self.send(
+                        f"⚠️ <b>RADAR – {s}</b> ({name})\n"
+                        f"{cat_label}  |  TF: <code>{self.timeframe}</code>\n\n"
+                        f"📡 Tendência de <b>{cenario}</b> detectada\n"
+                        f"Aguardando preço chegar no gatilho de <b>{dir_label}</b>\n\n"
+                        f"──────────────────────\n"
+                        f"🎯 Gatilho de entrada: <code>{fmt(gatilho)}</code>\n"
+                        f"📍 Preço atual:        <code>{fmt(price)}</code>  "
+                        f"({dist_pct:.2f}% de distância)\n"
+                        f"──────────────────────\n"
+                        f"🛡 Stop Loss est.:  <code>{fmt(sl_est)}</code>  ({-sl_pct_est:.2f}%)\n"
+                        f"🎯 Take Profit est.:<code>{fmt(tp_est)}</code>  ({tp_pct_est:+.2f}%)\n"
+                        f"⚖️ Ratio estimado:   <b>{ratio_str}</b>\n"
+                        f"──────────────────────\n"
+                        f"RSI: <code>{res['rsi']:.1f}</code>  "
+                        f"ADX: <code>{res['adx']:.1f}</code>  "
+                        f"ATR: <code>{fmt(atr)}</code>\n\n"
+                        f"🕐 <i>Você receberá um alerta quando o preço "
+                        f"atingir <code>{fmt(gatilho)}</code></i>"
+                    )
+                    self.radar_list[s] = time.time()
+                continue   # Preço ainda não chegou, não abre trade
+
+            # ══════════════════════════════════════════════════════
+            # FASE 2 — 🔔 GATILHO ATINGIDO
+            # Preço chegou no nível. Avisa IMEDIATAMENTE com todas
+            # as informações necessárias para entrar na plataforma.
+            # ══════════════════════════════════════════════════════
+            if time.time() - self.gatilho_list.get(s, 0) > Config.GATILHO_COOLDOWN:
+                dir_label = "COMPRAR (BUY) 🟢" if dir_simple == "BUY" else "VENDER (SELL) 🔴"
                 self.send(
-                    f"⚠️ <b>RADAR: {s}</b> ({name})\n"
-                    f"Tendência: <b>{res['cenario']}</b>  |  ADX: <code>{res['adx']:.1f}</code>\n"
-                    f"Gatilho: <code>{g:.5f}</code>  ATR: <code>{res['atr']:.5f}</code>  "
-                    f"RSI: <code>{res['rsi']:.1f}</code>"
+                    f"🔔 <b>GATILHO ATINGIDO – {s}</b> ({name})\n"
+                    f"{cat_label}  |  TF: <code>{self.timeframe}</code>\n\n"
+                    f"✅ Preço chegou no nível de entrada!\n\n"
+                    f"▶️ <b>AÇÃO: {dir_label}</b>\n\n"
+                    f"──────────────────────\n"
+                    f"💰 Entrada agora:    <code>{fmt(price)}</code>\n"
+                    f"🛡 Stop Loss:        <code>{fmt(sl_est)}</code>  ({-sl_pct_est:.2f}%)\n"
+                    f"🎯 Take Profit:      <code>{fmt(tp_est)}</code>  ({tp_pct_est:+.2f}%)\n"
+                    f"⚖️ Ratio risco:retorno: <b>{ratio_str}</b>\n"
+                    f"──────────────────────\n"
+                    f"RSI: <code>{res['rsi']:.1f}</code>  "
+                    f"ADX: <code>{res['adx']:.1f}</code>\n\n"
+                    f"⏳ <i>Verificando confluência…</i>"
                 )
-                self.radar_list[s] = time.time()
+                self.gatilho_list[s] = time.time()
 
-            # ── Gatilho ────────────────────────────────────────
-            pode_comprar = (
-                res["cenario"] == "ALTA"
-                and price >= res["t_buy"]
-                and price < res["upper"]
-                and res["rsi"] < 70
-            )
-            pode_vender = (
-                res["cenario"] == "BAIXA"
-                and price <= res["t_sell"]
-                and price > res["lower"]
-                and res["rsi"] > 30
-            )
-            if not (pode_comprar or pode_vender):
-                continue
-
-            dir_simple = "BUY" if pode_comprar else "SELL"
-
-            # ── Confluência ─────────────────────────────────────
+            # ══════════════════════════════════════════════════════
+            # FASE 3 — Verificação de confluência
+            # ══════════════════════════════════════════════════════
             score, total_c, checks = calc_confluence(res, dir_simple)
-            if score < Config.MIN_CONFLUENCE:
-                log(f"[SINAL] {s} {dir_simple} ignorado – {score}/{total_c}")
-                continue
-
             bar      = confluence_bar(score, total_c)
             conf_txt = "\n".join(
                 f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
-            vol_txt = (f"{res['vol_ratio']:.1f}x média"
-                       if res["vol_ratio"] > 0 else "N/A (índice/futuro)")
+            vol_txt  = (f"{res['vol_ratio']:.1f}x média"
+                        if res["vol_ratio"] > 0 else "N/A (índice/futuro)")
 
-            # ── SL/TP via ATR ───────────────────────────────────
-            atr = res["atr"]
+            # ── FASE 4A — ⚡ Confluência insuficiente ─────────────
+            if score < Config.MIN_CONFLUENCE:
+                log(f"[SINAL] {s} {dir_simple} – confluência {score}/{total_c}")
+                falhou = [nm for nm, ok in checks if not ok]
+                self.send(
+                    f"⚡ <b>CONFLUÊNCIA INSUFICIENTE – {s}</b>\n\n"
+                    f"Gatilho foi atingido mas o bot <b>NÃO entrou</b>.\n"
+                    f"Score: <code>{score}/{total_c}</code>  [{bar}]  "
+                    f"(mínimo: {Config.MIN_CONFLUENCE})\n\n"
+                    f"<b>Filtros que falharam:</b>\n"
+                    + "\n".join(f"   ❌ {nm}" for nm in falhou) +
+                    f"\n\n<i>Aguardando melhor configuração…</i>"
+                )
+                continue
+
+            # ── FASE 4B — 🎯 SINAL CONFIRMADO — Card operacional ──
+            # Recalcula com preço exato atual
             if dir_simple == "BUY":
                 sl = price - Config.ATR_MULT_SL * atr
                 tp = price + Config.ATR_MULT_TP * atr
@@ -787,22 +828,24 @@ class TradingBot:
 
             sl_pct = abs(price - sl) / price * 100
             tp_pct = abs(tp - price) / price * 100
-            dl     = "BUY 🟢" if dir_simple == "BUY" else "SELL 🔴"
-            cat_label = Config.MARKET_CATEGORIES.get(cat, {}).get("label", cat)
+            dl     = "COMPRAR (BUY) 🟢" if dir_simple == "BUY" else "VENDER (SELL) 🔴"
 
             self.send(
-                f"🎯 <b>SINAL CONFIRMADO</b>\n"
-                f"{cat_label}  |  <b>{s}</b> ({name})\n\n"
-                f"Ação: <b>{dl}</b>\n"
-                f"Entrada: <code>{price:.5f}</code>\n"
-                f"ATR(14): <code>{atr:.5f}</code>  "
+                f"🎯 <b>SINAL CONFIRMADO – {s}</b> ({name})\n"
+                f"{cat_label}  |  TF: <code>{self.timeframe}</code>\n\n"
+                f"╔══════════════════════╗\n"
+                f"  ▶️  <b>{dl}</b>\n"
+                f"╚══════════════════════╝\n\n"
+                f"💰 <b>Entrada:</b>     <code>{fmt(price)}</code>\n"
+                f"🛡 <b>Stop Loss:</b>   <code>{fmt(sl)}</code>  ({-sl_pct:.2f}%)\n"
+                f"🎯 <b>Take Profit:</b> <code>{fmt(tp)}</code>  ({tp_pct:+.2f}%)\n"
+                f"⚖️ <b>Ratio:</b>       <b>{ratio_str}</b>  "
+                f"(arrisca {sl_pct:.2f}% p/ ganhar {tp_pct:.2f}%)\n\n"
+                f"──────────────────────\n"
+                f"ATR(14): <code>{fmt(atr)}</code>  "
                 f"ADX: <code>{res['adx']:.1f}</code>  "
                 f"RSI: <code>{res['rsi']:.1f}</code>\n"
-                f"Volume:  <code>{vol_txt}</code>\n"
-                f"──────────────────────\n"
-                f"🎯 Take Profit: <code>{tp:.5f}</code>  ({tp_pct:+.2f}%)\n"
-                f"🛡 Stop Loss:   <code>{sl:.5f}</code>  ({-sl_pct:.2f}%)\n"
-                f"──────────────────────\n"
+                f"Volume: <code>{vol_txt}</code>\n\n"
                 f"<b>Confluência: {score}/{total_c}  [{bar}]</b>\n"
                 f"{conf_txt}"
             )
@@ -819,10 +862,13 @@ class TradingBot:
                 "opened_at":       datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
                 "session_alerted": True,
             })
-            self.radar_list[s] = time.time()
+            self.radar_list[s]   = time.time()
+            self.gatilho_list[s] = time.time()
             save_state(self)
 
-    # ── Monitor + Trailing Stop ──────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    # MONITOR + TRAILING STOP
+    # ══════════════════════════════════════════════════════════════
     def monitor_trades(self):
         changed = False
         for t in self.active_trades[:]:
@@ -832,18 +878,18 @@ class TradingBot:
             cur = res["price"]
             atr = res["atr"]
 
-            # Reanunciar trade restaurado (não alertado nesta sessão)
+            # Reanunciar trade restaurado (bot reiniciado)
             if not t.get("session_alerted", True):
                 dl     = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
                 sl_pct = abs(t["entry"] - t["sl"]) / t["entry"] * 100
                 tp_pct = abs(t["tp"] - t["entry"]) / t["entry"] * 100
                 self.send(
-                    f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\n\n"
+                    f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b> ({t.get('name','')})\n\n"
                     f"Ação: <b>{dl}</b>  |  Aberto: {t.get('opened_at','?')}\n"
-                    f"Entrada: <code>{t['entry']:.5f}</code>  "
-                    f"Atual: <code>{cur:.5f}</code>\n"
-                    f"🎯 TP: <code>{t['tp']:.5f}</code>  ({tp_pct:+.2f}%)\n"
-                    f"🛡 SL: <code>{t['sl']:.5f}</code>  ({-sl_pct:.2f}%)"
+                    f"Entrada: <code>{fmt(t['entry'])}</code>  "
+                    f"Atual: <code>{fmt(cur)}</code>\n"
+                    f"🎯 TP: <code>{fmt(t['tp'])}</code>  ({tp_pct:+.2f}%)\n"
+                    f"🛡 SL: <code>{fmt(t['sl'])}</code>  ({-sl_pct:.2f}%)"
                 )
                 t["session_alerted"] = True
                 changed = True
@@ -851,16 +897,16 @@ class TradingBot:
             # Trailing Stop via ATR
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
                 t["peak"] = cur
-                new_sl = cur - Config.ATR_MULT_TRAIL * atr
+                new_sl    = cur - Config.ATR_MULT_TRAIL * atr
                 if new_sl > t["sl"]:
-                    log(f"[TRAIL] {t['symbol']} SL {t['sl']:.5f}→{new_sl:.5f}")
+                    log(f"[TRAIL] {t['symbol']} SL {fmt(t['sl'])}→{fmt(new_sl)}")
                     t["sl"]  = new_sl
                     changed  = True
             elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):
                 t["peak"] = cur
-                new_sl = cur + Config.ATR_MULT_TRAIL * atr
+                new_sl    = cur + Config.ATR_MULT_TRAIL * atr
                 if new_sl < t["sl"]:
-                    log(f"[TRAIL] {t['symbol']} SL {t['sl']:.5f}→{new_sl:.5f}")
+                    log(f"[TRAIL] {t['symbol']} SL {fmt(t['sl'])}→{fmt(new_sl)}")
                     t["sl"]  = new_sl
                     changed  = True
 
@@ -878,13 +924,13 @@ class TradingBot:
                 closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
 
                 if is_win:
-                    self.wins              += 1
-                    self.consecutive_losses = 0
+                    self.wins               += 1
+                    self.consecutive_losses  = 0
                 else:
                     self.losses             += 1
                     self.consecutive_losses += 1
                     self.asset_cooldown[t["symbol"]] = time.time()
-                    log(f"[COOL] Cooldown 1h ativado: {t['symbol']}")
+                    log(f"[COOL] Cooldown 1h: {t['symbol']}")
 
                 self.history.append({
                     "symbol":    t["symbol"],
@@ -896,11 +942,12 @@ class TradingBot:
 
                 self.send(
                     f"🏁 <b>OPERAÇÃO ENCERRADA</b>\n"
-                    f"Ativo: <b>{t['symbol']}</b>  |  {t['dir']}\n"
+                    f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')})\n"
+                    f"Ação: <b>{t['dir']}</b>  |  Aberto: {t.get('opened_at','?')}\n"
                     f"Resultado: <b>{status}</b>\n\n"
-                    f"Entrada: <code>{t['entry']:.5f}</code>\n"
-                    f"Saída:   <code>{cur:.5f}</code>\n"
-                    f"P&amp;L:  <code>{pnl:+.2f}%</code>"
+                    f"💰 Entrada: <code>{fmt(t['entry'])}</code>\n"
+                    f"🔚 Saída:   <code>{fmt(cur)}</code>\n"
+                    f"P&amp;L:   <code>{pnl:+.2f}%</code>"
                 )
                 self.active_trades.remove(t)
                 changed = True
@@ -910,11 +957,11 @@ class TradingBot:
                 if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                     self.paused_until = time.time() + Config.PAUSE_DURATION
                     mins = Config.PAUSE_DURATION // 60
-                    log(f"[CB] ⛔ Ativado! {self.consecutive_losses} losses. Pausa {mins}min.")
+                    log(f"[CB] ⛔ {self.consecutive_losses} losses → pausa {mins}min.")
                     self.send(
                         f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n"
-                        f"🔴 {self.consecutive_losses} losses consecutivos.\n"
-                        f"🕐 Pausado por <b>{mins} minutos</b>.\n\n"
+                        f"🔴 {self.consecutive_losses} losses consecutivos detectados.\n"
+                        f"🕐 Bot pausado por <b>{mins} minutos</b>.\n\n"
                         f"Use /resetpausa para retomar antes do prazo."
                     )
 
@@ -926,7 +973,7 @@ class TradingBot:
 # LOOP PRINCIPAL
 # ══════════════════════════════════════════════════════════════════
 def main():
-    log("🔌 Iniciando Bot Sniper v5 – Multi-Mercado...")
+    log("🔌 Iniciando Bot Sniper v6 – Fluxo de alertas completo...")
     requests.get(
         f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook",
         timeout=8
@@ -950,21 +997,14 @@ def main():
                 for u in r["result"]:
                     bot.last_id = u["update_id"]
 
-                    # Comandos de texto
                     if "message" in u:
                         txt = u["message"].get("text", "").strip().lower()
-                        if txt in ("/noticias", "/news"):
-                            bot.send_news()
-                        elif txt == "/status":
-                            bot.send_status()
-                        elif txt in ("/placar", "/score"):
-                            bot.send_placar()
-                        elif txt in ("/menu", "/start"):
-                            bot.build_menu()
-                        elif txt == "/resetpausa":
-                            bot.reset_pause()
+                        if txt in ("/noticias", "/news"):   bot.send_news()
+                        elif txt == "/status":              bot.send_status()
+                        elif txt in ("/placar", "/score"):  bot.send_placar()
+                        elif txt in ("/menu", "/start"):    bot.build_menu()
+                        elif txt == "/resetpausa":          bot.reset_pause()
 
-                    # Botões inline
                     if "callback_query" in u:
                         cb  = u["callback_query"]["data"]
                         cid = u["callback_query"]["id"]
@@ -977,18 +1017,12 @@ def main():
                             bot.set_timeframe(cb.replace("set_tf_", ""))
                         elif cb.startswith("set_"):
                             bot.set_mode(cb.replace("set_", ""))
-                        elif cb == "tf_menu":
-                            bot.build_tf_menu()
-                        elif cb == "main_menu":
-                            bot.build_menu()
-                        elif cb == "news":
-                            bot.send_news()
-                        elif cb == "status":
-                            bot.send_status()
-                        elif cb == "placar":
-                            bot.send_placar()
-                        elif cb in ("refresh", "ignore"):
-                            bot.build_menu()
+                        elif cb == "tf_menu":     bot.build_tf_menu()
+                        elif cb == "main_menu":   bot.build_menu()
+                        elif cb == "news":        bot.send_news()
+                        elif cb == "status":      bot.send_status()
+                        elif cb == "placar":      bot.send_placar()
+                        else:                     bot.build_menu()
 
             bot.maybe_send_news()
             bot.scan()
