@@ -16,7 +16,7 @@ class Config:
     FOREX_ASSETS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
     CRYPTO_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD"]
     THRESHOLD = 1.5
-    CHECK_TIME = 5
+    CHECK_TIME = 15
 
 def log(msg):
     ts = datetime.now(Config.BR_TIMEZONE).strftime("%H:%M:%S")
