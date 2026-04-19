@@ -56,7 +56,7 @@ class Config:
                 "XRP-USD":   "XRP",       "ADA-USD":   "Cardano",
                 "DOGE-USD":  "Dogecoin",  "AVAX-USD":  "Avalanche",
                 "LINK-USD":  "Chainlink", "DOT-USD":   "Polkadot",
-                "POL-USD":   "Polygon (POL)",   "LTC-USD":   "Litecoin",
+                "MATIC-USD": "Polygon",   "LTC-USD":   "Litecoin",
             },
         },
         "COMMODITIES": {
@@ -263,11 +263,11 @@ def load_state(bot):
 # NOTÍCIAS / FEAR & GREED
 # ══════════════════════════════════════════════════════════════════
 RSS_FEEDS = [
+    ("Investing.com BR", "https://br.investing.com/rss/news.rss"),
     ("CoinDesk",         "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("Reuters Markets",  "https://feeds.reuters.com/reuters/businessNews"),
+    ("MarketWatch",      "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ("Cointelegraph",    "https://cointelegraph.com/rss"),
-    ("Decrypt",          "https://decrypt.co/feed"),
-    ("Yahoo Finance",    "https://finance.yahoo.com/rss/topfinstories"),
-    ("SeekingAlpha",     "https://seekingalpha.com/market_currents.xml"),
 ]
 
 def _parse_rss(url, source_name, max_results=3):
