@@ -26,8 +26,19 @@ NOVIDADES v6 — Fluxo de alertas completo e acionável:
   • Novo dict gatilho_list para anti-spam do alerta de gatilho
 ══════════════════════════════════════════════════════════════════
 """
-import os, time, json, math, requests, pandas as pd, xml.etree.ElementTree as ET
+import os
+import time
+import json
+import math
+import threading
+import requests
+import pandas as pd
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+
+from flask import Flask, jsonify
+
+app = Flask(__name__)
 
 # ══════════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES
@@ -1034,5 +1045,34 @@ def main():
             time.sleep(10)
 
 
+# ══════════════════════════════════════════════════════════════════
+# API WEB PARA O RAILWAY
+# ══════════════════════════════════════════════════════════════════
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "online",
+        "service": "bot_sniper_v6",
+        "endpoint": "/status"
+    })
+
+
+@app.route("/status")
+def status():
+    return jsonify({
+        "status": "ok",
+        "bot": "running"
+    })
+
+
+def run_bot():
+    try:
+        main()
+    except Exception as e:
+        log(f"[BOT] Erro fatal: {e}")
+
+
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_bot, daemon=True).start()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
