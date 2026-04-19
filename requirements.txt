@@ -4,3 +4,4 @@ yfinance
 pandas
 flask
 flask-cors
+pywebpush
