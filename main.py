@@ -27,6 +27,7 @@ NOVIDADES v6 — Fluxo de alertas completo e acionável:
 ══════════════════════════════════════════════════════════════════
 """
 import os, time, json, math, requests, pandas as pd, xml.etree.ElementTree as ET
+import threading
 from datetime import datetime, timedelta, timezone
 
 # ══════════════════════════════════════════════════════════════════
@@ -56,7 +57,7 @@ class Config:
                 "XRP-USD":   "XRP",       "ADA-USD":   "Cardano",
                 "DOGE-USD":  "Dogecoin",  "AVAX-USD":  "Avalanche",
                 "LINK-USD":  "Chainlink", "DOT-USD":   "Polkadot",
-                "MATIC-USD": "Polygon",   "LTC-USD":   "Litecoin",
+                "POL-USD":   "Polygon (POL)",   "LTC-USD":   "Litecoin",
             },
         },
         "COMMODITIES": {
@@ -115,6 +116,10 @@ class Config:
     FOREX_OPEN_UTC  = 7;  FOREX_CLOSE_UTC = 17
     COMM_OPEN_UTC   = 7;  COMM_CLOSE_UTC  = 21
     IDX_OPEN_UTC    = 7;  IDX_CLOSE_UTC   = 21
+
+    # ── Contra-Tendência (exclusivo FOREX) ─────────────────────
+    MIN_CONFLUENCE_CT  = 4     # de 7 fatores de reversão
+    REVERSAL_COOLDOWN  = 2700  # 45min entre alertas de reversão
 
     NEWS_INTERVAL = 7200
     SCAN_INTERVAL = 30
@@ -205,6 +210,7 @@ def save_state(bot):
         "active_trades":      bot.active_trades,
         "radar_list":         bot.radar_list,
         "gatilho_list":       bot.gatilho_list,
+        "reversal_list":      bot.reversal_list,
         "asset_cooldown":     bot.asset_cooldown,
         "history":            bot.history,
     }
@@ -230,6 +236,7 @@ def load_state(bot):
         bot.active_trades      = data.get("active_trades",      [])
         bot.radar_list         = data.get("radar_list",         {})
         bot.gatilho_list       = data.get("gatilho_list",       {})
+        bot.reversal_list      = data.get("reversal_list",      {})
         bot.asset_cooldown     = data.get("asset_cooldown",     {})
         bot.history            = data.get("history",            [])
 
@@ -263,11 +270,11 @@ def load_state(bot):
 # NOTÍCIAS / FEAR & GREED
 # ══════════════════════════════════════════════════════════════════
 RSS_FEEDS = [
-    ("Investing.com BR", "https://br.investing.com/rss/news.rss"),
     ("CoinDesk",         "https://www.coindesk.com/arc/outboundfeeds/rss/"),
-    ("Reuters Markets",  "https://feeds.reuters.com/reuters/businessNews"),
-    ("MarketWatch",      "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ("Cointelegraph",    "https://cointelegraph.com/rss"),
+    ("Decrypt",          "https://decrypt.co/feed"),
+    ("Yahoo Finance",    "https://finance.yahoo.com/rss/topfinstories"),
+    ("SeekingAlpha",     "https://seekingalpha.com/market_currents.xml"),
 ]
 
 def _parse_rss(url, source_name, max_results=3):
@@ -449,6 +456,266 @@ def get_analysis(symbol, timeframe=None):
         return None
 
 
+
+# ══════════════════════════════════════════════════════════════════
+# MOTOR DE CONTRA-TENDÊNCIA (exclusivo FOREX)
+# Detecta exaustão de tendência e sinais de reversão usando:
+#   • RSI divergência (preço vs RSI em direções opostas)
+#   • Bollinger Band extremo (preço fora ou tocando a banda)
+#   • RSI sobrecomprado / sobrevendido (>75 / <25)
+#   • MACD divergência (histograma contradiz o preço)
+#   • Padrões de candle de reversão (engolfo, martelo, estrela,
+#     doji, hanging man, shooting star)
+#   • Wick rejection (sombra longa rejeitando nível)
+#   • ADX alto (tendência madura = maior risco de exaustão)
+# ══════════════════════════════════════════════════════════════════
+def detect_candle_patterns(df):
+    """
+    Detecta padrões de reversão nos últimos 2 candles.
+    Retorna (pattern_bull, pattern_bear, pattern_name).
+    """
+    if len(df) < 3:
+        return False, False, ""
+
+    o1, h1, l1, c1 = (df["Open"].iloc[-2], df["High"].iloc[-2],
+                       df["Low"].iloc[-2],  df["Close"].iloc[-2])
+    o0, h0, l0, c0 = (df["Open"].iloc[-1], df["High"].iloc[-1],
+                       df["Low"].iloc[-1],  df["Close"].iloc[-1])
+
+    body0     = abs(c0 - o0)
+    body1     = abs(c1 - o1)
+    rng0      = h0 - l0 if h0 != l0 else 1e-10
+    upper_wick= h0 - max(c0, o0)
+    lower_wick= min(c0, o0) - l0
+    bull0     = c0 > o0
+    bear0     = c0 < o0
+    bull1     = c1 > o1
+    bear1     = c1 < o1
+
+    pattern_bull = False
+    pattern_bear = False
+    name         = ""
+
+    # Engolfo de alta
+    if bull0 and bear1 and c0 > o1 and o0 < c1:
+        pattern_bull = True
+        name = "Engolfo de Alta 🕯"
+
+    # Engolfo de baixa
+    elif bear0 and bull1 and c0 < o1 and o0 > c1:
+        pattern_bear = True
+        name = "Engolfo de Baixa 🕯"
+
+    # Martelo (hammer) – reversão de baixa para alta
+    elif (lower_wick > body0 * 2 and upper_wick < body0 * 0.5
+          and body0 < rng0 * 0.4):
+        pattern_bull = True
+        name = "Martelo (Hammer) 🔨"
+
+    # Estrela Cadente (shooting star) – reversão de alta para baixa
+    elif (upper_wick > body0 * 2 and lower_wick < body0 * 0.5
+          and body0 < rng0 * 0.4):
+        pattern_bear = True
+        name = "Estrela Cadente 🌠"
+
+    # Doji (indecisão)
+    elif body0 < rng0 * 0.1:
+        # Doji no topo → baixista; no fundo → altista (contexto externo decide)
+        pattern_bull = True
+        pattern_bear = True
+        name = "Doji ✤"
+
+    # Pin Bar de alta (grande wick inferior)
+    elif lower_wick > rng0 * 0.6 and body0 < rng0 * 0.25:
+        pattern_bull = True
+        name = "Pin Bar de Alta 📌"
+
+    # Pin Bar de baixa (grande wick superior)
+    elif upper_wick > rng0 * 0.6 and body0 < rng0 * 0.25:
+        pattern_bear = True
+        name = "Pin Bar de Baixa 📌"
+
+    return pattern_bull, pattern_bear, name
+
+
+def get_reversal_analysis(symbol, timeframe=None):
+    """
+    Análise completa de contra-tendência para FOREX.
+    Retorna dict com todos os sinais de reversão ou None.
+    """
+    import yfinance as yf
+
+    timeframe = timeframe or Config.TIMEFRAME
+    yf_symbol = to_yf_symbol(symbol)
+    period    = Config.TIMEFRAMES.get(timeframe, ("", "5d"))[1]
+
+    try:
+        df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
+        if len(df) < 30:
+            return None
+
+        closes = df["Close"]
+        highs  = df["High"]
+        lows   = df["Low"]
+
+        cur_price = closes.iloc[-1]
+
+        # ── Bollinger Bands ──────────────────────────────────────
+        w          = min(20, len(closes) - 1)
+        sma20      = closes.rolling(w).mean()
+        std20      = closes.rolling(w).std()
+        upper_band = (sma20 + std20 * 2).iloc[-1]
+        lower_band = (sma20 - std20 * 2).iloc[-1]
+        bb_width   = (upper_band - lower_band) / sma20.iloc[-1]  # largura %
+
+        above_upper = cur_price >= upper_band
+        below_lower = cur_price <= lower_band
+        near_upper  = cur_price >= upper_band * 0.998   # 0.2% da banda
+        near_lower  = cur_price <= lower_band * 1.002
+
+        # ── RSI ──────────────────────────────────────────────────
+        delta      = closes.diff()
+        gain       = delta.where(delta > 0, 0).rolling(14).mean()
+        loss       = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rsi_series = 100 - 100 / (1 + gain / loss)
+        cur_rsi    = rsi_series.iloc[-1]
+        prev_rsi   = rsi_series.iloc[-2]
+
+        rsi_overbought  = cur_rsi > 75
+        rsi_oversold    = cur_rsi < 25
+
+        # ── RSI Divergência ───────────────────────────────────────
+        # Janela de 10 candles: preço faz novo extremo, RSI não confirma
+        lookback = 10
+        recent_high   = closes.tail(lookback).max()
+        recent_low    = closes.tail(lookback).min()
+        rsi_at_high   = rsi_series.iloc[-lookback:][closes.tail(lookback) == recent_high].mean()
+        rsi_at_low    = rsi_series.iloc[-lookback:][closes.tail(lookback) == recent_low].mean()
+        prev_high     = closes.iloc[-lookback*2:-lookback].max()
+        prev_low      = closes.iloc[-lookback*2:-lookback].min()
+        prev_rsi_high = rsi_series.iloc[-lookback*2:-lookback].max()
+        prev_rsi_low  = rsi_series.iloc[-lookback*2:-lookback].min()
+
+        # Divergência bearish: preço faz máxima mais alta, RSI faz máxima mais baixa
+        div_bear = (recent_high > prev_high and
+                    not (rsi_at_high > prev_rsi_high) and
+                    cur_rsi > 55)
+        # Divergência bullish: preço faz mínima mais baixa, RSI faz mínima mais alta
+        div_bull = (recent_low < prev_low and
+                    not (rsi_at_low < prev_rsi_low) and
+                    cur_rsi < 45)
+
+        # ── MACD Divergência ──────────────────────────────────────
+        ema12      = closes.ewm(span=12, adjust=False).mean()
+        ema26      = closes.ewm(span=26, adjust=False).mean()
+        macd_hist  = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+        # Divergência: MACD histograma caindo enquanto preço sobe (bearish)
+        macd_div_bear = (closes.iloc[-1] > closes.iloc[-3] and
+                         macd_hist.iloc[-1] < macd_hist.iloc[-3])
+        # Divergência: MACD histograma subindo enquanto preço cai (bullish)
+        macd_div_bull = (closes.iloc[-1] < closes.iloc[-3] and
+                         macd_hist.iloc[-1] > macd_hist.iloc[-3])
+
+        # ── ATR ──────────────────────────────────────────────────
+        tr  = pd.concat([
+            highs - lows,
+            (highs - closes.shift()).abs(),
+            (lows  - closes.shift()).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+
+        # ── ADX ──────────────────────────────────────────────────
+        hd      = highs.diff(); ld = lows.diff()
+        pdm     = hd.where((hd > 0) & (hd > -ld), 0.0)
+        mdm     = (-ld).where((-ld > 0) & (-ld > hd), 0.0)
+        atr_s   = tr.ewm(alpha=1/14, adjust=False).mean()
+        pdi     = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
+        mdi     = 100 * mdm.ewm(alpha=1/14, adjust=False).mean() / (atr_s + 1e-10)
+        dx      = 100 * (pdi - mdi).abs() / (pdi + mdi + 1e-10)
+        adx     = dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1]
+        adx_mature = adx > 30   # tendência madura → maior risco de exaustão
+
+        # ── Wick Rejection ───────────────────────────────────────
+        rng0        = highs.iloc[-1] - lows.iloc[-1] or 1e-10
+        upper_wick  = highs.iloc[-1] - max(closes.iloc[-1], df["Open"].iloc[-1])
+        lower_wick  = min(closes.iloc[-1], df["Open"].iloc[-1]) - lows.iloc[-1]
+        wick_bear   = upper_wick > rng0 * 0.5   # wick superior longo
+        wick_bull   = lower_wick > rng0 * 0.5   # wick inferior longo
+
+        # ── Padrões de candle ────────────────────────────────────
+        pat_bull, pat_bear, pat_name = detect_candle_patterns(df)
+
+        # ── Determina direção do sinal de reversão ───────────────
+        # SELL reversal: preço sobrecomprado, divergências bearish
+        signal_sell_ct = (near_upper or rsi_overbought or div_bear or macd_div_bear)
+        # BUY reversal: preço sobrevendido, divergências bullish
+        signal_buy_ct  = (near_lower or rsi_oversold  or div_bull or macd_div_bull)
+
+        if not (signal_sell_ct or signal_buy_ct):
+            return None
+
+        return {
+            "symbol":        symbol,
+            "name":          asset_name(symbol),
+            "price":         cur_price,
+            "rsi":           cur_rsi,
+            "atr":           atr,
+            "adx":           adx,
+            "upper_band":    upper_band,
+            "lower_band":    lower_band,
+            "bb_width":      bb_width,
+            "above_upper":   above_upper,
+            "below_lower":   below_lower,
+            "near_upper":    near_upper,
+            "near_lower":    near_lower,
+            "rsi_overbought":rsi_overbought,
+            "rsi_oversold":  rsi_oversold,
+            "div_bear":      div_bear,
+            "div_bull":      div_bull,
+            "macd_div_bear": macd_div_bear,
+            "macd_div_bull": macd_div_bull,
+            "adx_mature":    adx_mature,
+            "wick_bear":     wick_bear,
+            "wick_bull":     wick_bull,
+            "pat_bull":      pat_bull,
+            "pat_bear":      pat_bear,
+            "pat_name":      pat_name,
+            "signal_sell_ct":signal_sell_ct,
+            "signal_buy_ct": signal_buy_ct,
+        }
+    except Exception as e:
+        log(f"[CT] {symbol}: {e}")
+        return None
+
+
+def calc_reversal_confluence(res, direcao):
+    """
+    Confluência de contra-tendência (7 fatores de reversão).
+    direcao: "BUY" (reversão de queda→alta) ou "SELL" (reversão de alta→queda)
+    """
+    if direcao == "SELL":
+        checks = [
+            ("RSI sobrecomprado (>75)",    res["rsi_overbought"]),
+            ("Preço na Banda Superior BB", res["near_upper"]),
+            ("RSI divergência bearish",    res["div_bear"]),
+            ("MACD divergência bearish",   res["macd_div_bear"]),
+            ("Padrão candle de baixa",     res["pat_bear"]),
+            ("Wick de rejeição superior",  res["wick_bear"]),
+            ("ADX tendência madura (>30)", res["adx_mature"]),
+        ]
+    else:
+        checks = [
+            ("RSI sobrevendido (<25)",     res["rsi_oversold"]),
+            ("Preço na Banda Inferior BB", res["near_lower"]),
+            ("RSI divergência bullish",    res["div_bull"]),
+            ("MACD divergência bullish",   res["macd_div_bull"]),
+            ("Padrão candle de alta",      res["pat_bull"]),
+            ("Wick de rejeição inferior",  res["wick_bull"]),
+            ("ADX tendência madura (>30)", res["adx_mature"]),
+        ]
+    score = sum(1 for _, ok in checks if ok)
+    return score, len(checks), checks
+
 # ══════════════════════════════════════════════════════════════════
 # CONFLUÊNCIA (7 fatores)
 # ══════════════════════════════════════════════════════════════════
@@ -496,6 +763,7 @@ class TradingBot:
         self.active_trades      = []
         self.radar_list         = {}    # {symbol: ts} último alerta RADAR
         self.gatilho_list       = {}    # {symbol: ts} último alerta GATILHO
+        self.reversal_list      = {}    # {symbol: ts} último alerta REVERSÃO
         self.asset_cooldown     = {}    # {symbol: ts} cooldown pós-loss
         self.history            = []
         self.last_id            = 0
@@ -866,6 +1134,149 @@ class TradingBot:
             self.gatilho_list[s] = time.time()
             save_state(self)
 
+
+    # ══════════════════════════════════════════════════════════════
+    # SCAN CONTRA-TENDÊNCIA — exclusivo FOREX
+    # ══════════════════════════════════════════════════════════════
+    def scan_reversal_forex(self):
+        """
+        Scanner híbrido de reversão para os pares FOREX.
+        Opera na direção OPOSTA à tendência atual quando detecta
+        exaustão com pelo menos MIN_CONFLUENCE_CT fatores confirmados.
+        Sinal enviado separadamente do scanner de tendência principal.
+        """
+        if self.is_paused():
+            return
+        if not market_open("FOREX"):
+            return
+        if len(self.active_trades) >= Config.MAX_TRADES:
+            return
+
+        forex_symbols = list(Config.MARKET_CATEGORIES["FOREX"]["assets"].keys())
+        log(f"⚡ Scan CT-FOREX ({len(forex_symbols)} pares, TF {self.timeframe})...")
+
+        for s in forex_symbols:
+            # Não abre contra-tendência se já há trade aberto nesse par
+            if any(t["symbol"] == s for t in self.active_trades):
+                continue
+
+            # Cooldown pós-loss
+            cd_rem = Config.ASSET_COOLDOWN - (time.time() - self.asset_cooldown.get(s, 0))
+            if cd_rem > 0:
+                continue
+
+            # Cooldown anti-spam para alertas de reversão
+            if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN:
+                continue
+
+            res = get_reversal_analysis(s, self.timeframe)
+            if not res:
+                continue
+
+            price = res["price"]
+            name  = res["name"]
+            atr   = res["atr"]
+
+            # Decide a direção do sinal de reversão
+            # Prioridade: se ambos ativos, escolhe o com mais fatores confirmados
+            dir_sell = "SELL" if res["signal_sell_ct"] else None
+            dir_buy  = "BUY"  if res["signal_buy_ct"]  else None
+
+            candidates = []
+            for d in [dir_sell, dir_buy]:
+                if d is None:
+                    continue
+                sc, tc, ch = calc_reversal_confluence(res, d)
+                candidates.append((sc, tc, ch, d))
+
+            if not candidates:
+                continue
+
+            # Escolhe a direção com maior score
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            score, total_c, checks, dir_simple = candidates[0]
+
+            if score < Config.MIN_CONFLUENCE_CT:
+                log(f"[CT] {s} {dir_simple} ignorado – {score}/{total_c}")
+                continue
+
+            bar      = confluence_bar(score, total_c)
+            conf_txt = "\n".join(
+                f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
+
+            # SL/TP via ATR (ratio 1:1.5 para contra-tendência — mais conservador)
+            ct_sl_mult = Config.ATR_MULT_SL
+            ct_tp_mult = Config.ATR_MULT_SL * 1.5   # ratio 1:1.5 (mais conservador)
+            if dir_simple == "BUY":
+                sl = price - ct_sl_mult * atr
+                tp = price + ct_tp_mult * atr
+            else:
+                sl = price + ct_sl_mult * atr
+                tp = price - ct_tp_mult * atr
+
+            sl_pct  = abs(price - sl) / price * 100
+            tp_pct  = abs(tp - price) / price * 100
+            ratio   = f"1:{ct_tp_mult / ct_sl_mult:.1f}"
+            dl      = "COMPRAR (BUY) 🟢" if dir_simple == "BUY" else "VENDER (SELL) 🔴"
+
+            # Monta resumo dos sinais detectados
+            sinais = []
+            if dir_simple == "SELL":
+                if res["rsi_overbought"]:  sinais.append(f"RSI sobrecomprado ({res['rsi']:.1f})")
+                if res["near_upper"]:      sinais.append(f"Preço na BB superior ({fmt(res['upper_band'])})")
+                if res["div_bear"]:        sinais.append("RSI divergência bearish")
+                if res["macd_div_bear"]:   sinais.append("MACD divergência bearish")
+                if res["wick_bear"]:       sinais.append("Wick de rejeição superior")
+                if res["pat_bear"] and res["pat_name"]: sinais.append(f"Padrão: {res['pat_name']}")
+            else:
+                if res["rsi_oversold"]:    sinais.append(f"RSI sobrevendido ({res['rsi']:.1f})")
+                if res["near_lower"]:      sinais.append(f"Preço na BB inferior ({fmt(res['lower_band'])})")
+                if res["div_bull"]:        sinais.append("RSI divergência bullish")
+                if res["macd_div_bull"]:   sinais.append("MACD divergência bullish")
+                if res["wick_bull"]:       sinais.append("Wick de rejeição inferior")
+                if res["pat_bull"] and res["pat_name"]: sinais.append(f"Padrão: {res['pat_name']}")
+
+            sinais_txt = "\n".join(f"   ⚡ {s_}" for s_ in sinais)
+
+            self.send(
+                f"⚡ <b>CONTRA-TENDÊNCIA FOREX – {s}</b> ({name})\n"
+                f"📈 FOREX  |  TF: <code>{self.timeframe}</code>\n\n"
+                f"🔄 <i>Sinal de reversão detectado — operação CONTRA a tendência</i>\n\n"
+                f"╔══════════════════════╗\n"
+                f"  ▶️  <b>{dl}</b>\n"
+                f"╚══════════════════════╝\n\n"
+                f"💰 <b>Entrada:</b>     <code>{fmt(price)}</code>\n"
+                f"🛡 <b>Stop Loss:</b>   <code>{fmt(sl)}</code>  ({-sl_pct:.2f}%)\n"
+                f"🎯 <b>Take Profit:</b> <code>{fmt(tp)}</code>  ({tp_pct:+.2f}%)\n"
+                f"⚖️ <b>Ratio:</b>       <b>{ratio}</b>\n\n"
+                f"──────────────────────\n"
+                f"<b>Sinais de exaustão detectados:</b>\n{sinais_txt}\n\n"
+                f"ADX: <code>{res['adx']:.1f}</code>  "
+                f"RSI: <code>{res['rsi']:.1f}</code>  "
+                f"ATR: <code>{fmt(atr)}</code>\n\n"
+                f"<b>Confluência: {score}/{total_c}  [{bar}]</b>\n"
+                f"{conf_txt}\n\n"
+                f"⚠️ <i>Operação contra a tendência — use gestão de risco reduzida.</i>"
+            )
+
+            self.reversal_list[s] = time.time()
+
+            self.active_trades.append({
+                "symbol":          s,
+                "name":            name,
+                "entry":           price,
+                "tp":              tp,
+                "sl":              sl,
+                "dir":             dir_simple,
+                "peak":            price,
+                "atr":             atr,
+                "tipo":            "CONTRA-TENDÊNCIA ⚡",
+                "opened_at":       datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "session_alerted": True,
+            })
+            self.reversal_list[s] = time.time()
+            save_state(self)
+
     # ══════════════════════════════════════════════════════════════
     # MONITOR + TRAILING STOP
     # ══════════════════════════════════════════════════════════════
@@ -943,7 +1354,7 @@ class TradingBot:
                 self.send(
                     f"🏁 <b>OPERAÇÃO ENCERRADA</b>\n"
                     f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')})\n"
-                    f"Ação: <b>{t['dir']}</b>  |  Aberto: {t.get('opened_at','?')}\n"
+                    f"Tipo: <b>{t.get('tipo', 'Tendência 📈')}</b>  |  {t['dir']}  |  Aberto: {t.get('opened_at','?')}\n"
                     f"Resultado: <b>{status}</b>\n\n"
                     f"💰 Entrada: <code>{fmt(t['entry'])}</code>\n"
                     f"🔚 Saída:   <code>{fmt(cur)}</code>\n"
@@ -969,25 +1380,14 @@ class TradingBot:
             save_state(self)
 
 
-# ══════════════════════════════════════════════════════════════════
-# LOOP PRINCIPAL
-# ══════════════════════════════════════════════════════════════════
-def main():
-    log("🔌 Iniciando Bot Sniper v6 – Fluxo de alertas completo...")
-    requests.get(
-        f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook",
-        timeout=8
-    )
-    bot = TradingBot()
-    load_state(bot)
-    bot.build_menu()
 
-    if bot._restore_msg:
-        bot.send(bot._restore_msg)
-        bot._restore_msg = None
 
+# ══════════════════════════════════════════════════════════════════
+# LOOP DO BOT (roda em thread separada)
+# ══════════════════════════════════════════════════════════════════
+def bot_loop(bot):
+    """Loop principal do bot em thread de background."""
     bot.send_news()
-
     while True:
         try:
             url = (f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
@@ -1026,12 +1426,153 @@ def main():
 
             bot.maybe_send_news()
             bot.scan()
+            bot.scan_reversal_forex()
             bot.monitor_trades()
             time.sleep(Config.SCAN_INTERVAL)
 
         except Exception as e:
             log(f"Erro no loop: {e}")
             time.sleep(10)
+
+
+# ══════════════════════════════════════════════════════════════════
+# API REST — Flask na thread principal (obrigatório para Railway)
+# ══════════════════════════════════════════════════════════════════
+def main():
+    log("🔌 Iniciando Bot Sniper v6.1 – Híbrido Tendência + Contra-Tendência FOREX...")
+    requests.get(
+        f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook",
+        timeout=8
+    )
+
+    bot = TradingBot()
+    load_state(bot)
+    bot.build_menu()
+
+    if bot._restore_msg:
+        bot.send(bot._restore_msg)
+        bot._restore_msg = None
+
+    # Bot loop em thread de background
+    t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
+    t.start()
+
+    # Flask na thread PRINCIPAL — Railway roteia para cá
+    try:
+        from flask import Flask, jsonify, request as freq
+        from flask_cors import CORS
+    except ImportError:
+        log("[API] Instale: pip install flask flask-cors")
+        # fallback: roda só o bot sem API
+        bot_loop(bot)
+        return
+
+    app = Flask(__name__)
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+    @app.after_request
+    def add_cors(response):
+        response.headers["Access-Control-Allow-Origin"]  = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
+    @app.route("/api/health")
+    def api_health():
+        return jsonify({"status": "ok", "version": "6.1"})
+
+    @app.route("/api/status")
+    def api_status():
+        total   = bot.wins + bot.losses
+        winrate = round(bot.wins / total * 100, 1) if total > 0 else 0
+        paused  = bot.is_paused()
+        trades  = []
+        for t_ in bot.active_trades:
+            try:
+                res = get_analysis(t_["symbol"], bot.timeframe)
+                cur = res["price"] if res else t_["entry"]
+            except:
+                cur = t_["entry"]
+            pnl = (cur - t_["entry"]) / t_["entry"] * 100
+            if t_["dir"] == "SELL":
+                pnl = -pnl
+            trades.append({
+                "symbol":    t_["symbol"],
+                "name":      t_.get("name", t_["symbol"]),
+                "dir":       t_["dir"],
+                "tipo":      t_.get("tipo", "Tendência 📈"),
+                "entry":     t_["entry"],
+                "current":   cur,
+                "tp":        t_["tp"],
+                "sl":        t_["sl"],
+                "pnl":       round(pnl, 2),
+                "opened_at": t_.get("opened_at", ""),
+            })
+        return jsonify({
+            "mode":               bot.mode,
+            "timeframe":          bot.timeframe,
+            "wins":               bot.wins,
+            "losses":             bot.losses,
+            "winrate":            winrate,
+            "consecutive_losses": bot.consecutive_losses,
+            "paused":             paused,
+            "cb_mins":            int((bot.paused_until - time.time()) / 60) if paused else 0,
+            "active_trades":      trades,
+            "markets": {
+                cat: market_open(cat)
+                for cat in list(Config.MARKET_CATEGORIES.keys()) + ["CRYPTO"]
+            },
+        })
+
+    @app.route("/api/history")
+    def api_history():
+        return jsonify(list(reversed(bot.history[-30:])))
+
+    @app.route("/api/config")
+    def api_config():
+        return jsonify({
+            "timeframes": list(Config.TIMEFRAMES.keys()),
+            "tf_labels":  {k: v[0] for k, v in Config.TIMEFRAMES.items()},
+            "modes":      list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"],
+            "atm_sl":     Config.ATR_MULT_SL,
+            "atr_tp":     Config.ATR_MULT_TP,
+            "max_trades": Config.MAX_TRADES,
+            "min_conf":   Config.MIN_CONFLUENCE,
+        })
+
+    @app.route("/api/mode", methods=["POST", "OPTIONS"])
+    def api_set_mode():
+        if freq.method == "OPTIONS":
+            return jsonify({}), 200
+        data = freq.get_json(force=True) or {}
+        mode = data.get("mode", "")
+        valid = list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]
+        if mode not in valid:
+            return jsonify({"error": "modo inválido"}), 400
+        bot.set_mode(mode)
+        return jsonify({"ok": True, "mode": mode})
+
+    @app.route("/api/timeframe", methods=["POST", "OPTIONS"])
+    def api_set_timeframe():
+        if freq.method == "OPTIONS":
+            return jsonify({}), 200
+        data = freq.get_json(force=True) or {}
+        tf   = data.get("timeframe", "")
+        if tf not in Config.TIMEFRAMES:
+            return jsonify({"error": "TF inválido"}), 400
+        bot.set_timeframe(tf)
+        return jsonify({"ok": True, "timeframe": tf})
+
+    @app.route("/api/resetpausa", methods=["POST", "OPTIONS"])
+    def api_reset_pausa():
+        if freq.method == "OPTIONS":
+            return jsonify({}), 200
+        bot.reset_pause()
+        return jsonify({"ok": True})
+
+    port = int(os.getenv("PORT", 8080))
+    log(f"[API] Flask rodando na porta {port} (thread principal)...")
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":
