@@ -1056,6 +1056,13 @@ def home():
         "endpoint": "/status"
     })
 
+@app.route("/api/status")
+def api_status():
+    return jsonify({
+        "status": "ok",
+        "bot": "running"
+    })
+
 
 @app.route("/status")
 def status():
