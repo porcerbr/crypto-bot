@@ -2,3 +2,5 @@ requests
 python-dotenv==1.2.2
 yfinance
 pandas
+flask
+flask-cors
