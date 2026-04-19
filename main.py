@@ -1024,10 +1024,10 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 
 /* Páginas */
 #pages { flex: 1; overflow: hidden; position: relative; }
-.page { position: absolute; inset: 0; display: none; overflow-y: auto; padding: 14px 14px calc(var(--nav-h) + var(--safe-bottom) + 12px); opacity: 0; transform: translateY(8px); transition: opacity var(--transition-slow), transform var(--transition-slow); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.page { position: absolute; inset: 0; display: none; overflow-y: auto; padding: 14px 14px calc(var(--nav-h) + var(--safe-bottom) + 12px); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .page::-webkit-scrollbar { width: 3px; }
 .page::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.page.active { display: block; opacity: 1; transform: translateY(0); }
+.page.active { display: block; }
 
 /* Navigation */
 #nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 520px; height: var(--nav-h); background: var(--bg2); border-top: 1px solid var(--border); display: flex; z-index: 200; padding-bottom: var(--safe-bottom); }
@@ -1790,9 +1790,32 @@ const UI = {
 /* WRAPPERS GLOBAIS — Ponte entre onclick HTML e objeto UI     */
 /* ═══════════════════════════════════════════════════════════ */
 
-// Wrapper global para navigate (chamado pelos botões <nav>)
+// Navigate — controle direto de pages sem depender de CSS transitions
 function navigate(page, btn) {
-  UI.navigate(page, btn);
+  // Esconder todas as pages
+  document.querySelectorAll('.page').forEach(function(p) {
+    p.classList.remove('active');
+    p.style.display = 'none';
+  });
+  // Desativar todos os botões nav
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    b.classList.remove('active');
+  });
+  // Mostrar a page destino
+  var target = document.getElementById('page-' + page);
+  if (target) {
+    target.style.display = 'block';
+    target.classList.add('active');
+  }
+  // Ativar o botão clicado
+  if (btn) btn.classList.add('active');
+  // Carregar dados da página
+  try {
+    if (page === 'scan') loadScanner();
+    if (page === 'sig') { loadSignals(); if(UI && UI.state) UI.state.newSignalIds.clear(); updateBadge(); }
+    if (page === 'ct')  { loadCT(); loadNews(); }
+    if (page === 'cfg') loadConfig();
+  } catch(e) { console.warn('navigate load error:', e); }
 }
 
 // Garantir que o container virtual-scroll existe antes de usar
@@ -2310,6 +2333,10 @@ function savePreferences(key, value) {
 
 // Init
 window.addEventListener('load', async () => {
+  // Garantir estado inicial correto — forçar display via JS
+  document.querySelectorAll('.page').forEach(function(p) {
+    p.style.display = p.classList.contains('active') ? 'block' : 'none';
+  });
   initServiceWorker();
   loadPreferences();
   
