@@ -15,8 +15,14 @@ MELHORIAS v7.2 (sobre v7.1):
   • Loading States: Skeleton screens para melhor percepção de carregamento
   • Mobile First: Toques maiores, gestos, layout adaptativo aprimorado
 """
-import os, time, json, math, threading, requests
-import pandas as pd, xml.etree.ElementTree as ET
+import os
+import time
+import json
+import math
+import threading
+import requests
+import pandas as pd
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
@@ -25,9 +31,9 @@ from flask_cors import CORS
 # CONFIGURAÇÕES (INALTERADAS - Lógica original preservada)
 # ═══════════════════════════════════════════════════════════════
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
-    CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
-    BR_TZ      = timezone(timedelta(hours=-3))
+    BOT_TOKEN = os.getenv("TELEGRAM_TOKEN", "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
+    CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
+    BR_TZ = timezone(timedelta(hours=-3))
 
     MARKET_CATEGORIES = {
         "FOREX": {
@@ -41,127 +47,138 @@ class Config:
             },
         },
         "CRYPTO": {
-            "label": "CRIPTO",
-            "assets": {
-                "BTC-USD":  "Bitcoin",   "ETH-USD":  "Ethereum",
-                "SOL-USD":  "Solana",    "BNB-USD":  "BNB",
-                "XRP-USD":  "XRP",       "ADA-USD":  "Cardano",
-                "DOGE-USD": "Dogecoin",  "AVAX-USD": "Avalanche",
-                "LINK-USD": "Chainlink", "DOT-USD":  "Polkadot",                "POL-USD":  "Polygon",   "LTC-USD":  "Litecoin",
+            "label": "CRIPTO",            "assets": {
+                "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum",
+                "SOL-USD": "Solana", "BNB-USD": "BNB",
+                "XRP-USD": "XRP", "ADA-USD": "Cardano",
+                "DOGE-USD": "Dogecoin", "AVAX-USD": "Avalanche",
+                "LINK-USD": "Chainlink", "DOT-USD": "Polkadot",
+                "POL-USD": "Polygon", "LTC-USD": "Litecoin",
             },
         },
         "COMMODITIES": {
             "label": "COMMODITIES",
             "assets": {
-                "GC=F": "Ouro",         "SI=F": "Prata",
+                "GC=F": "Ouro", "SI=F": "Prata",
                 "CL=F": "Petróleo WTI", "BZ=F": "Petróleo Brent",
-                "NG=F": "Gás Natural",  "HG=F": "Cobre",
-                "ZC=F": "Milho",        "ZW=F": "Trigo",
-                "ZS=F": "Soja",         "PL=F": "Platina",
+                "NG=F": "Gás Natural", "HG=F": "Cobre",
+                "ZC=F": "Milho", "ZW=F": "Trigo",
+                "ZS=F": "Soja", "PL=F": "Platina",
             },
         },
         "INDICES": {
             "label": "INDICES",
             "assets": {
-                "ES=F":      "S&P 500",     "NQ=F":      "Nasdaq 100",
-                "YM=F":      "Dow Jones",   "RTY=F":     "Russell 2000",
-                "^GDAXI":    "DAX",         "^FTSE":     "FTSE 100",
-                "^N225":     "Nikkei",      "^BVSP":     "IBOVESPA",
-                "^HSI":      "Hang Seng",   "^STOXX50E": "Euro Stoxx 50",
+                "ES=F": "S&P 500", "NQ=F": "Nasdaq 100",
+                "YM=F": "Dow Jones", "RTY=F": "Russell 2000",
+                "^GDAXI": "DAX", "^FTSE": "FTSE 100",
+                "^N225": "Nikkei", "^BVSP": "IBOVESPA",
+                "^HSI": "Hang Seng", "^STOXX50E": "Euro Stoxx 50",
             },
         },
     }
 
-    # Risco
-    ATR_MULT_SL    = 1.5
-    ATR_MULT_TP    = 3.0
+    ATR_MULT_SL = 1.5
+    ATR_MULT_TP = 3.0
     ATR_MULT_TRAIL = 1.2
-
-    # Circuit Breaker
     MAX_CONSECUTIVE_LOSSES = 2
-    PAUSE_DURATION         = 3600
-
-    # Filtros tendência
-    ADX_MIN        = 22
-    MAX_TRADES     = 3
+    PAUSE_DURATION = 3600
+    ADX_MIN = 22
+    MAX_TRADES = 3
     ASSET_COOLDOWN = 3600
     MIN_CONFLUENCE = 5
-
-    # Filtros CT
     MIN_CONFLUENCE_CT = 4
-    REVERSAL_COOLDOWN = 2700   # 45min entre alertas CT
-
-    # Timers
-    RADAR_COOLDOWN   = 1800
+    REVERSAL_COOLDOWN = 2700
+    RADAR_COOLDOWN = 1800
     GATILHO_COOLDOWN = 300
-    TRENDS_INTERVAL  = 120
-    NEWS_INTERVAL    = 7200
-    SCAN_INTERVAL    = 30
+    TRENDS_INTERVAL = 120
+    NEWS_INTERVAL = 7200
+    SCAN_INTERVAL = 30
+
     TIMEFRAMES = {
-        "1m":  ("Agressivo",    "7d"),
-        "5m":  ("Alto",         "5d"),
-        "15m": ("Moderado",     "5d"),
-        "30m": ("Conservador",  "5d"),
-        "1h":  ("Seguro",       "60d"),
-        "4h":  ("Muito Seguro", "60d"),
+        "1m": ("Agressivo", "7d"),        "5m": ("Alto", "5d"),
+        "15m": ("Moderado", "5d"),
+        "30m": ("Conservador", "5d"),
+        "1h": ("Seguro", "60d"),
+        "4h": ("Muito Seguro", "60d"),
     }
     TIMEFRAME = "15m"
 
-    FOREX_OPEN_UTC = 7;  FOREX_CLOSE_UTC = 17
-    COMM_OPEN_UTC  = 7;  COMM_CLOSE_UTC  = 21
-    IDX_OPEN_UTC   = 7;  IDX_CLOSE_UTC   = 21
+    FOREX_OPEN_UTC = 7
+    FOREX_CLOSE_UTC = 17
+    COMM_OPEN_UTC = 7
+    COMM_CLOSE_UTC = 21
+    IDX_OPEN_UTC = 7
+    IDX_CLOSE_UTC = 21
 
     STATE_FILE = "bot_state.json"
 
 
 def fmt(p: float) -> str:
-    if not p: return "0"
-    if p >= 10000: return f"{p:,.2f}"
-    if p >= 1000:  return f"{p:.2f}"
-    if p >= 10:    return f"{p:.4f}"
-    if p >= 1:     return f"{p:.5f}"
+    if not p:
+        return "0"
+    if p >= 10000:
+        return f"{p:,.2f}"
+    if p >= 1000:
+        return f"{p:.2f}"
+    if p >= 10:
+        return f"{p:.4f}"
+    if p >= 1:
+        return f"{p:.5f}"
     return f"{p:.6f}"
+
 
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-# ═══════════════════════════════════════════════════════════════
-# HELPERS DE MERCADO (INALTERADOS)
-# ═══════════════════════════════════════════════════════════════
 def to_yf(s):
-    if "-" in s or s.startswith("^") or s.endswith("=F"): return s
+    if "-" in s or s.startswith("^") or s.endswith("=F"):
+        return s
     return f"{s}=X"
+
 
 def asset_cat(s):
     for cat, info in Config.MARKET_CATEGORIES.items():
-        if s in info["assets"]: return cat
+        if s in info["assets"]:
+            return cat
     return "CRYPTO"
 
-def asset_name(s):
-    for info in Config.MARKET_CATEGORIES.values():
-        if s in info["assets"]: return info["assets"][s]
+
+def asset_name(s):    for info in Config.MARKET_CATEGORIES.values():
+        if s in info["assets"]:
+            return info["assets"][s]
     return s
 
-def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 
-def all_syms():    out = []
-    for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
+def vol_reliable(s):
+    return asset_cat(s) not in ("INDICES",)
+
+
+def all_syms():
+    out = []
+    for c in Config.MARKET_CATEGORIES.values():
+        out.extend(c["assets"].keys())
     return out
 
+
 def mkt_open(cat):
-    now = datetime.now(timezone.utc); h = now.hour; wd = now.weekday()
-    if cat == "CRYPTO": return True
-    if wd >= 5: return False
-    if cat == "FOREX":       return Config.FOREX_OPEN_UTC <= h < Config.FOREX_CLOSE_UTC
-    if cat == "COMMODITIES": return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
-    if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
+    now = datetime.now(timezone.utc)
+    h = now.hour
+    wd = now.weekday()
+    if cat == "CRYPTO":
+        return True
+    if wd >= 5:
+        return False
+    if cat == "FOREX":
+        return Config.FOREX_OPEN_UTC <= h < Config.FOREX_CLOSE_UTC
+    if cat == "COMMODITIES":
+        return Config.COMM_OPEN_UTC <= h < Config.COMM_CLOSE_UTC
+    if cat == "INDICES":
+        return Config.IDX_OPEN_UTC <= h < Config.IDX_CLOSE_UTC
     return True
 
 
-# ═══════════════════════════════════════════════════════════════
-# PERSISTÊNCIA (INALTERADA)
-# ═══════════════════════════════════════════════════════════════
 def save_state(bot):
     data = {
         "mode": bot.mode, "timeframe": bot.timeframe,
@@ -176,25 +193,31 @@ def save_state(bot):
         "history": bot.history,
     }
     try:
-        with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
-    except Exception as e: log(f"[STATE] {e}")
+        with open(Config.STATE_FILE, "w") as f:
+            json.dump(data, f, indent=2)    except Exception as e:
+        log(f"[STATE] {e}")
+
 
 def load_state(bot):
-    if not os.path.exists(Config.STATE_FILE): return
+    if not os.path.exists(Config.STATE_FILE):
+        return
     try:
-        with open(Config.STATE_FILE) as f: data = json.load(f)
-        bot.mode               = data.get("mode", "CRYPTO")
-        bot.timeframe          = data.get("timeframe", Config.TIMEFRAME)
-        bot.wins               = data.get("wins", 0)
-        bot.losses             = data.get("losses", 0)
+        with open(Config.STATE_FILE) as f:
+            data = json.load(f)
+        bot.mode = data.get("mode", "CRYPTO")
+        bot.timeframe = data.get("timeframe", Config.TIMEFRAME)
+        bot.wins = data.get("wins", 0)
+        bot.losses = data.get("losses", 0)
         bot.consecutive_losses = data.get("consecutive_losses", 0)
-        bot.paused_until       = data.get("paused_until", 0)
-        bot.active_trades      = data.get("active_trades", [])
-        bot.radar_list         = data.get("radar_list", {})
-        bot.gatilho_list       = data.get("gatilho_list", {})
-        bot.reversal_list      = data.get("reversal_list", {})
-        bot.asset_cooldown     = data.get("asset_cooldown", {})
-        bot.history            = data.get("history", [])        for t in bot.active_trades: t["session_alerted"] = False
+        bot.paused_until = data.get("paused_until", 0)
+        bot.active_trades = data.get("active_trades", [])
+        bot.radar_list = data.get("radar_list", {})
+        bot.gatilho_list = data.get("gatilho_list", {})
+        bot.reversal_list = data.get("reversal_list", {})
+        bot.asset_cooldown = data.get("asset_cooldown", {})
+        bot.history = data.get("history", [])
+        for t in bot.active_trades:
+            t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s)")
         if bot.active_trades:
             lines = ["♻️ <b>BOT REINICIADO – TRADES ATIVOS</b>\n"]
@@ -202,48 +225,57 @@ def load_state(bot):
                 dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
                 lines.append(f"📌 <b>{t['symbol']}</b> {dl} | Entrada: <code>{fmt(t['entry'])}</code> | TP: <code>{fmt(t['tp'])}</code> | SL: <code>{fmt(t['sl'])}</code>")
             bot._restore_msg = "\n".join(lines)
-        else: bot._restore_msg = None
-    except Exception as e: log(f"[STATE] Erro: {e}")
+        else:
+            bot._restore_msg = None
+    except Exception as e:
+        log(f"[STATE] Erro: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════
-# NOTÍCIAS / FEAR & GREED (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 RSS_FEEDS = [
-    ("CoinDesk",      "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
-    ("Decrypt",       "https://decrypt.co/feed"),
+    ("Decrypt", "https://decrypt.co/feed"),
     ("Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories"),
 ]
+
 
 def _parse_rss(url, src, mx=3):
     r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     r.raise_for_status()
-    root  = ET.fromstring(r.content)
-    items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
-    out = []
+    root = ET.fromstring(r.content)
+    items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")    out = []
     for item in items[:mx]:
         title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-        link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or "").strip()
-        if title and link: out.append({"title": title, "url": link, "source": src})
+        link = (item.findtext("link") or item.findtext("{http://www.w3.org/2005/Atom}link") or "").strip()
+        if title and link:
+            out.append({"title": title, "url": link, "source": src})
     return out
+
 
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
-        if len(arts) >= mx: break
-        try: arts.extend(_parse_rss(url, name, 4))
-        except Exception as e: log(f"[RSS] {name}: {e}")
+        if len(arts) >= mx:
+            break
+        try:
+            arts.extend(_parse_rss(url, name, 4))
+        except Exception as e:
+            log(f"[RSS] {name}: {e}")
     return arts[:mx]
+
 
 def get_fear_greed():
     try:
         d = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6).json()["data"][0]
         return {"value": d["value"], "label": d["value_classification"]}
-    except: return {"value": "N/D", "label": ""}
+    except:
+        return {"value": "N/D", "label": ""}
+
 
 def build_news_msg():
-    arts = get_news(5); fg = get_fear_greed()    lines = ["📰 <b>NOTÍCIAS</b>\n"]
+    arts = get_news(5)
+    fg = get_fear_greed()
+    lines = ["📰 <b>NOTÍCIAS</b>\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "")
         lines.append(f"{i}. <a href='{a['url']}'>{t}</a> <i>({a['source']})</i>")
@@ -251,58 +283,65 @@ def build_news_msg():
     return "\n".join(lines)
 
 
-# ═══════════════════════════════════════════════════════════════
-# MOTOR DE ANÁLISE PRINCIPAL (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 def get_analysis(symbol, timeframe=None):
     import yfinance as yf
-    timeframe  = timeframe or Config.TIMEFRAME
-    yf_symbol  = to_yf(symbol)
-    period     = Config.TIMEFRAMES.get(timeframe, ("", "5d"))[1]
-    use_vol    = vol_reliable(symbol)
+    timeframe = timeframe or Config.TIMEFRAME
+    yf_symbol = to_yf(symbol)
+    period = Config.TIMEFRAMES.get(timeframe, ("", "5d"))[1]
+    use_vol = vol_reliable(symbol)
     try:
         df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
-        if len(df) < 50: return None
-        closes = df["Close"]; highs = df["High"]; lows = df["Low"]; volume = df["Volume"]
-        ema9   = closes.ewm(span=9,  adjust=False).mean().iloc[-1]
-        ema21  = closes.ewm(span=21, adjust=False).mean().iloc[-1]
+        if len(df) < 50:
+            return None        closes = df["Close"]
+        highs = df["High"]
+        lows = df["Low"]
+        volume = df["Volume"]
+        ema9 = closes.ewm(span=9, adjust=False).mean().iloc[-1]
+        ema21 = closes.ewm(span=21, adjust=False).mean().iloc[-1]
         ema200 = closes.ewm(span=min(200, len(closes)-1), adjust=False).mean().iloc[-1]
         w = min(20, len(closes)-1)
         sma20 = closes.rolling(w).mean().iloc[-1]
         std20 = closes.rolling(w).std().iloc[-1]
-        upper = sma20 + std20*2; lower = sma20 - std20*2
+        upper = sma20 + std20*2
+        lower = sma20 - std20*2
         delta = closes.diff()
-        gain  = delta.where(delta>0, 0).rolling(14).mean()
-        loss  = (-delta.where(delta<0, 0)).rolling(14).mean()
-        rsi   = (100 - 100/(1 + gain/loss)).iloc[-1]
+        gain = delta.where(delta>0, 0).rolling(14).mean()
+        loss = (-delta.where(delta<0, 0)).rolling(14).mean()
+        rsi = (100 - 100/(1 + gain/loss)).iloc[-1]
         ema12 = closes.ewm(span=12, adjust=False).mean()
         ema26 = closes.ewm(span=26, adjust=False).mean()
-        ml    = ema12 - ema26
-        mh    = ml - ml.ewm(span=9, adjust=False).mean()
+        ml = ema12 - ema26
+        mh = ml - ml.ewm(span=9, adjust=False).mean()
         macd_bull = bool(mh.iloc[-1] > 0 and mh.iloc[-1] > mh.iloc[-2])
         macd_bear = bool(mh.iloc[-1] < 0 and mh.iloc[-1] < mh.iloc[-2])
         if use_vol and volume.sum() > 0:
-            va = volume.rolling(20).mean().iloc[-1]; vc = volume.iloc[-1]
+            va = volume.rolling(20).mean().iloc[-1]
+            vc = volume.iloc[-1]
             vol_ok = bool(vc > va) if va > 0 else False
             vol_ratio = float(vc/va) if va > 0 else 0
-        else: vol_ok = True; vol_ratio = 0
-        tr  = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()], axis=1).max(axis=1)
+        else:
+            vol_ok = True
+            vol_ratio = 0
+        tr = pd.concat([highs-lows, (highs-closes.shift()).abs(), (lows-closes.shift()).abs()], axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
-        hd = highs.diff(); ld = lows.diff()
+        hd = highs.diff()
+        ld = lows.diff()
         pdm = hd.where((hd>0)&(hd>-ld), 0.0)
         mdm = (-ld).where((-ld>0)&(-ld>hd), 0.0)
         as_ = tr.ewm(alpha=1/14, adjust=False).mean()
-        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
-        dx  = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
+        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
+        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
+        dx = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
         price = float(closes.iloc[-1])
-        chg   = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes)>=10 else 0
-        cen   = "NEUTRO"
-        if price > ema200 and ema9 > ema21:   cen = "ALTA"
-        elif price < ema200 and ema9 < ema21: cen = "BAIXA"
+        chg = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes)>=10 else 0
+        cen = "NEUTRO"
+        if price > ema200 and ema9 > ema21:
+            cen = "ALTA"
+        elif price < ema200 and ema9 < ema21:
+            cen = "BAIXA"
         h1b = h1r = False
-        sup_tf = "1h" if timeframe in ("1m","5m","15m","30m") else "1d"
-        sup_per = "60d" if sup_tf == "1h" else "2y"
+        sup_tf = "1h" if timeframe in ("1m","5m","15m","30m") else "1d"        sup_per = "60d" if sup_tf == "1h" else "2y"
         try:
             dh = yf.Ticker(yf_symbol).history(period=sup_per, interval=sup_tf)
             if len(dh) >= 50:
@@ -312,7 +351,8 @@ def get_analysis(symbol, timeframe=None):
                 ph = ch.iloc[-1]
                 h1b = bool(ph > e21h and e21h > e200h)
                 h1r = bool(ph < e21h and e21h < e200h)
-        except: pass
+        except:
+            pass
         return {
             "symbol": symbol, "name": asset_name(symbol), "price": price,
             "cenario": cen, "rsi": float(rsi), "atr": atr, "adx": adx,
@@ -324,31 +364,30 @@ def get_analysis(symbol, timeframe=None):
             "h1_bull": h1b, "h1_bear": h1r, "change_pct": chg,
         }
     except Exception as e:
-        log(f"[ANÁLISE] {symbol}: {e}"); return None
+        log(f"[ANÁLISE] {symbol}: {e}")
+        return None
 
 
-# ═══════════════════════════════════════════════════════════════
-# CONFLUÊNCIA (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 def calc_confluence(res, d):
     if d == "BUY":
         checks = [
-            ("EMA 200 acima",    res["price"]  > res["ema200"]),
-            ("EMA 9 > 21",       res["ema9"]   > res["ema21"]),
-            ("MACD Alta",        res["macd_bull"]),
-            ("Volume OK",        res["vol_ok"]),
-            ("RSI < 65",         res["rsi"] < 65),
+            ("EMA 200 acima", res["price"] > res["ema200"]),
+            ("EMA 9 > 21", res["ema9"] > res["ema21"]),
+            ("MACD Alta", res["macd_bull"]),
+            ("Volume OK", res["vol_ok"]),
+            ("RSI < 65", res["rsi"] < 65),
             ("TF Superior Alta", res["h1_bull"]),
-            ("ADX tendência",    res["adx"] > Config.ADX_MIN),
+            ("ADX tendência", res["adx"] > Config.ADX_MIN),
         ]
-    else:        checks = [
-            ("EMA 200 abaixo",   res["price"]  < res["ema200"]),
-            ("EMA 9 < 21",       res["ema9"]   < res["ema21"]),
-            ("MACD Baixa",       res["macd_bear"]),
-            ("Volume OK",        res["vol_ok"]),
-            ("RSI > 35",         res["rsi"] > 35),
-            ("TF Superior Baixa",res["h1_bear"]),
-            ("ADX tendência",    res["adx"] > Config.ADX_MIN),
+    else:
+        checks = [
+            ("EMA 200 abaixo", res["price"] < res["ema200"]),
+            ("EMA 9 < 21", res["ema9"] < res["ema21"]),
+            ("MACD Baixa", res["macd_bear"]),
+            ("Volume OK", res["vol_ok"]),
+            ("RSI > 35", res["rsi"] > 35),
+            ("TF Superior Baixa", res["h1_bear"]),
+            ("ADX tendência", res["adx"] > Config.ADX_MIN),
         ]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
@@ -358,56 +397,81 @@ def cbar(sc, tot):
     return "█"*f + "░"*(5-f)
 
 
-# ═══════════════════════════════════════════════════════════════
-# MOTOR DE CONTRA-TENDÊNCIA (FOREX) (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 def detect_candle_patterns(df):
-    if len(df) < 3: return False, False, ""
+    if len(df) < 3:
+        return False, False, ""
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
     o0,h0,l0,c0 = df["Open"].iloc[-1],df["High"].iloc[-1],df["Low"].iloc[-1],df["Close"].iloc[-1]
-    body0 = abs(c0-o0); rng0 = h0-l0 or 1e-10
-    uw = h0-max(c0,o0); lw = min(c0,o0)-l0
-    pb = pb2 = False; nm = ""
-    if (c0>o0) and (c1<o1) and c0>o1 and o0<c1:   pb = True;  nm = "Engolfo de Alta"
-    elif (c0<o0) and (c1>o1) and c0<o1 and o0>c1: pb2 = True; nm = "Engolfo de Baixa"
-    elif lw>body0*2 and uw<body0*0.5 and body0<rng0*0.4: pb = True; nm = "Martelo"
-    elif uw>body0*2 and lw<body0*0.5 and body0<rng0*0.4: pb2 = True; nm = "Estrela Cadente"
-    elif body0 < rng0*0.1: pb = pb2 = True; nm = "Doji"
-    elif lw>rng0*0.6 and body0<rng0*0.25: pb = True; nm = "Pin Bar Alta"
-    elif uw>rng0*0.6 and body0<rng0*0.25: pb2 = True; nm = "Pin Bar Baixa"
+    body0 = abs(c0-o0)
+    rng0 = h0-l0 or 1e-10
+    uw = h0-max(c0,o0)
+    lw = min(c0,o0)-l0
+    pb = pb2 = False
+    nm = ""
+    if (c0>o0) and (c1<o1) and c0>o1 and o0<c1:
+        pb = True
+        nm = "Engolfo de Alta"
+    elif (c0<o0) and (c1>o1) and c0<o1 and o0>c1:
+        pb2 = True
+        nm = "Engolfo de Baixa"
+    elif lw>body0*2 and uw<body0*0.5 and body0<rng0*0.4:
+        pb = True
+        nm = "Martelo"
+    elif uw>body0*2 and lw<body0*0.5 and body0<rng0*0.4:
+        pb2 = True
+        nm = "Estrela Cadente"
+    elif body0 < rng0*0.1:
+        pb = pb2 = True
+        nm = "Doji"
+    elif lw>rng0*0.6 and body0<rng0*0.25:
+        pb = True
+        nm = "Pin Bar Alta"
+    elif uw>rng0*0.6 and body0<rng0*0.25:
+        pb2 = True
+        nm = "Pin Bar Baixa"
     return pb, pb2, nm
+
 
 def get_reversal_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
     yf_symbol = to_yf(symbol)
-    period    = Config.TIMEFRAMES.get(timeframe, ("","5d"))[1]
+    period = Config.TIMEFRAMES.get(timeframe, ("","5d"))[1]
     try:
         df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
-        if len(df) < 30: return None
-        closes = df["Close"]; highs = df["High"]; lows = df["Low"]
+        if len(df) < 30:            return None
+        closes = df["Close"]
+        highs = df["High"]
+        lows = df["Low"]
         price = float(closes.iloc[-1])
         w = min(20, len(closes)-1)
-        sma = closes.rolling(w).mean(); std = closes.rolling(w).std()
-        ub = float((sma+std*2).iloc[-1]); lb = float((sma-std*2).iloc[-1])
-        delta = closes.diff()        gain  = delta.where(delta>0,0).rolling(14).mean()
-        loss  = (-delta.where(delta<0,0)).rolling(14).mean()
+        sma = closes.rolling(w).mean()
+        std = closes.rolling(w).std()
+        ub = float((sma+std*2).iloc[-1])
+        lb = float((sma-std*2).iloc[-1])
+        delta = closes.diff()
+        gain = delta.where(delta>0,0).rolling(14).mean()
+        loss = (-delta.where(delta<0,0)).rolling(14).mean()
         rsi_s = 100-100/(1+gain/loss)
-        rsi   = float(rsi_s.iloc[-1])
+        rsi = float(rsi_s.iloc[-1])
         ema12 = closes.ewm(span=12,adjust=False).mean()
         ema26 = closes.ewm(span=26,adjust=False).mean()
-        mh    = (ema12-ema26)-(ema12-ema26).ewm(span=9,adjust=False).mean()
-        tr    = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()],axis=1).max(axis=1)
-        atr   = float(tr.rolling(14).mean().iloc[-1])
-        hd = highs.diff(); ld = lows.diff()
-        pdm = hd.where((hd>0)&(hd>-ld),0.0); mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
+        mh = (ema12-ema26)-(ema12-ema26).ewm(span=9,adjust=False).mean()
+        tr = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()],axis=1).max(axis=1)
+        atr = float(tr.rolling(14).mean().iloc[-1])
+        hd = highs.diff()
+        ld = lows.diff()
+        pdm = hd.where((hd>0)&(hd>-ld),0.0)
+        mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
         as_ = tr.ewm(alpha=1/14,adjust=False).mean()
         pdi = 100*pdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
         mdi = 100*mdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
         adx = float((100*(pdi-mdi).abs()/(pdi+mdi+1e-10)).ewm(alpha=1/14,adjust=False).mean().iloc[-1])
         lb10 = 10
-        rh = closes.tail(lb10).max(); rl = closes.tail(lb10).min()
-        ph = closes.iloc[-lb10*2:-lb10].max(); pl = closes.iloc[-lb10*2:-lb10].min()
+        rh = closes.tail(lb10).max()
+        rl = closes.tail(lb10).min()
+        ph = closes.iloc[-lb10*2:-lb10].max()
+        pl = closes.iloc[-lb10*2:-lb10].min()
         div_bear = bool(rh > ph and rsi < rsi_s.iloc[-lb10*2:-lb10].max() and rsi > 55)
         div_bull = bool(rl < pl and rsi > rsi_s.iloc[-lb10*2:-lb10].min() and rsi < 45)
         mdiv_bear = bool(closes.iloc[-1]>closes.iloc[-3] and mh.iloc[-1]<mh.iloc[-3])
@@ -416,13 +480,15 @@ def get_reversal_analysis(symbol, timeframe=None):
         uw = highs.iloc[-1]-max(closes.iloc[-1],df["Open"].iloc[-1])
         lw = min(closes.iloc[-1],df["Open"].iloc[-1])-lows.iloc[-1]
         pb, pb2, pnm = detect_candle_patterns(df)
-        near_up = price >= ub*0.998; near_dn = price <= lb*1.002
-        rsi_ob  = rsi > 75;  rsi_os = rsi < 25
+        near_up = price >= ub*0.998
+        near_dn = price <= lb*1.002
+        rsi_ob = rsi > 75
+        rsi_os = rsi < 25
         sig_sell = near_up or rsi_ob or div_bear or mdiv_bear
-        sig_buy  = near_dn or rsi_os or div_bull or mdiv_bull
-        if not (sig_sell or sig_buy): return None
-        return {
-            "symbol": symbol, "name": asset_name(symbol), "price": price,
+        sig_buy = near_dn or rsi_os or div_bull or mdiv_bull
+        if not (sig_sell or sig_buy):
+            return None
+        return {            "symbol": symbol, "name": asset_name(symbol), "price": price,
             "rsi": rsi, "atr": atr, "adx": adx, "adx_mature": adx>30,
             "upper_band": ub, "lower_band": lb,
             "near_upper": near_up, "near_lower": near_dn,
@@ -434,65 +500,95 @@ def get_reversal_analysis(symbol, timeframe=None):
             "signal_sell_ct": sig_sell, "signal_buy_ct": sig_buy,
         }
     except Exception as e:
-        log(f"[CT] {symbol}: {e}"); return None
+        log(f"[CT] {symbol}: {e}")
+        return None
+
 
 def calc_reversal_conf(res, d):
     if d == "SELL":
         checks = [
-            ("RSI sobrecomprado",  res["rsi_overbought"]),            ("Banda Superior BB",  res["near_upper"]),
-            ("RSI div. bearish",   res["div_bear"]),
-            ("MACD div. bearish",  res["macd_div_bear"]),
-            ("Candle de baixa",    res["pat_bear"]),
-            ("Wick superior",      res["wick_bear"]),
-            ("ADX maduro",         res["adx_mature"]),
+            ("RSI sobrecomprado", res["rsi_overbought"]),
+            ("Banda Superior BB", res["near_upper"]),
+            ("RSI div. bearish", res["div_bear"]),
+            ("MACD div. bearish", res["macd_div_bear"]),
+            ("Candle de baixa", res["pat_bear"]),
+            ("Wick superior", res["wick_bear"]),
+            ("ADX maduro", res["adx_mature"]),
         ]
     else:
         checks = [
-            ("RSI sobrevendido",   res["rsi_oversold"]),
-            ("Banda Inferior BB",  res["near_lower"]),
-            ("RSI div. bullish",   res["div_bull"]),
-            ("MACD div. bullish",  res["macd_div_bull"]),
-            ("Candle de alta",     res["pat_bull"]),
-            ("Wick inferior",      res["wick_bull"]),
-            ("ADX maduro",         res["adx_mature"]),
+            ("RSI sobrevendido", res["rsi_oversold"]),
+            ("Banda Inferior BB", res["near_lower"]),
+            ("RSI div. bullish", res["div_bull"]),
+            ("MACD div. bullish", res["macd_div_bull"]),
+            ("Candle de alta", res["pat_bull"]),
+            ("Wick inferior", res["wick_bull"]),
+            ("ADX maduro", res["adx_mature"]),
         ]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
 
+
 def detect_reversal(res):
-    """Versão rápida de detecção CT para o cache de tendências."""
-    if not res: return (False, None, 0, [])
-    motivos = []; forca = 0; dir_rev = None
-    rsi = res["rsi"]; price = res["price"]; cen = res["cenario"]
-    if cen == "ALTA" or res["ema9"] > res["ema21"]:
-        if rsi >= 70:   motivos.append(f"RSI sobrecomprado ({rsi:.0f})"); forca += 30; dir_rev = "SELL"
-        if rsi >= 75:   motivos.append("RSI extremo"); forca += 15
-        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"
-        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
-        if res["adx"] < 20 and cen == "ALTA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
+    if not res:
+        return (False, None, 0, [])
+    motivos = []
+    forca = 0
+    dir_rev = None
+    rsi = res["rsi"]
+    price = res["price"]
+    cen = res["cenario"]    if cen == "ALTA" or res["ema9"] > res["ema21"]:
+        if rsi >= 70:
+            motivos.append(f"RSI sobrecomprado ({rsi:.0f})")
+            forca += 30
+            dir_rev = "SELL"
+        if rsi >= 75:
+            motivos.append("RSI extremo")
+            forca += 15
+        if price >= res["upper"]:
+            motivos.append("Banda superior BB")
+            forca += 25
+            dir_rev = "SELL"
+        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]:
+            motivos.append("Div. MACD baixista")
+            forca += 20
+            dir_rev = "SELL"
+        if res["adx"] < 20 and cen == "ALTA":
+            motivos.append(f"ADX fraco ({res['adx']:.0f})")
+            forca += 10
     if cen == "BAIXA" or res["ema9"] < res["ema21"]:
-        if rsi <= 30:   motivos.append(f"RSI sobrevendido ({rsi:.0f})"); forca += 30; dir_rev = "BUY"
-        if rsi <= 25:   motivos.append("RSI extremo"); forca += 15
-        if price <= res["lower"]: motivos.append("Banda inferior BB"); forca += 25; dir_rev = "BUY"
-        if res["macd_hist"] > 0 and res["ema9"] < res["ema21"]: motivos.append("Div. MACD altista"); forca += 20; dir_rev = "BUY"
-        if res["adx"] < 20 and cen == "BAIXA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
+        if rsi <= 30:
+            motivos.append(f"RSI sobrevendido ({rsi:.0f})")
+            forca += 30
+            dir_rev = "BUY"
+        if rsi <= 25:
+            motivos.append("RSI extremo")
+            forca += 15
+        if price <= res["lower"]:
+            motivos.append("Banda inferior BB")
+            forca += 25
+            dir_rev = "BUY"
+        if res["macd_hist"] > 0 and res["ema9"] < res["ema21"]:
+            motivos.append("Div. MACD altista")
+            forca += 20
+            dir_rev = "BUY"
+        if res["adx"] < 20 and cen == "BAIXA":
+            motivos.append(f"ADX fraco ({res['adx']:.0f})")
+            forca += 10
     forca = min(forca, 100)
     return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
 
 
-# ═══════════════════════════════════════════════════════════════
-# PUSH NOTIFICATIONS (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
-_push_subscriptions = []  # lista de subscription dicts
+_push_subscriptions = []
+
 
 def send_push(title, body, icon="/icon-192.png"):
-    """Envia push para todos os clientes inscritos via Web Push."""
     try:
-        from pywebpush import webpush, WebPushException        import os
+        from pywebpush import webpush, WebPushException
         priv_key = os.getenv("VAPID_PRIVATE_KEY", "")
-        pub_key  = os.getenv("VAPID_PUBLIC_KEY", "")
-        email    = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
-        if not priv_key or not pub_key: return
+        pub_key = os.getenv("VAPID_PUBLIC_KEY", "")        email = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
+        if not priv_key or not pub_key:
+            return
         data = json.dumps({"title": title, "body": body, "icon": icon})
         dead = []
         for sub in _push_subscriptions:
@@ -504,77 +600,97 @@ def send_push(title, body, icon="/icon-192.png"):
                     vapid_claims={"sub": email, "aud": sub["endpoint"].split("/")[0]+"//"+sub["endpoint"].split("/")[2]},
                 )
             except WebPushException as e:
-                if "410" in str(e) or "404" in str(e): dead.append(sub)
-            except Exception as e: log(f"[PUSH] {e}")
-        for d in dead: _push_subscriptions.remove(d)
-    except ImportError: pass
-    except Exception as e: log(f"[PUSH] {e}")
+                if "410" in str(e) or "404" in str(e):
+                    dead.append(sub)
+            except Exception as e:
+                log(f"[PUSH] {e}")
+        for d in dead:
+            _push_subscriptions.remove(d)
+    except ImportError:
+        pass
+    except Exception as e:
+        log(f"[PUSH] {e}")
 
 
-# ═══════════════════════════════════════════════════════════════
-# BOT PRINCIPAL (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 class TradingBot:
     def __init__(self):
-        self.mode = "CRYPTO"; self.timeframe = Config.TIMEFRAME
-        self.wins = 0; self.losses = 0; self.consecutive_losses = 0
+        self.mode = "CRYPTO"
+        self.timeframe = Config.TIMEFRAME
+        self.wins = 0
+        self.losses = 0
+        self.consecutive_losses = 0
         self.paused_until = 0
         self.active_trades = []
-        self.radar_list    = {}
-        self.gatilho_list  = {}
+        self.radar_list = {}
+        self.gatilho_list = {}
         self.reversal_list = {}
         self.asset_cooldown = {}
         self.history = []
-        self.last_id = 0; self.last_news_ts = 0
+        self.last_id = 0
+        self.last_news_ts = 0
         self._restore_msg = None
-        self.trend_cache = {}; self.last_trends_update = 0
-        self.signals_feed = []   # feed de sinais para o app
-        self.news_cache   = []; self.news_cache_ts = 0
+        self.trend_cache = {}
+        self.last_trends_update = 0
+        self.signals_feed = []
+        self.news_cache = []
+        self.news_cache_ts = 0
 
-    # ── Telegram + captura de sinais ──────────────────────────
-    def send(self, text, markup=None, disable_preview=False):
-        import re
+    def send(self, text, markup=None, disable_preview=False):        import re
         clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
-        if "RADAR" in text:            tipo = "radar";   push_title = "⚠ RADAR"
-        elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"        elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
-        elif "CONTRA-TENDÊNCIA" in text: tipo = "ct";      push_title = "⚡ Contra-Tendência!"
-        elif "CONFLUÊNCIA INSUF" in text: tipo = "insuf"
+        if "RADAR" in text:
+            tipo = "radar"
+            push_title = "⚠ RADAR"
+        elif "GATILHO ATINGIDO" in text:
+            tipo = "gatilho"
+            push_title = "🔔 GATILHO ATINGIDO!"
+        elif "SINAL CONFIRMADO" in text:
+            tipo = "sinal"
+            push_title = "🎯 SINAL CONFIRMADO!"
+        elif "CONTRA-TENDÊNCIA" in text:
+            tipo = "ct"
+            push_title = "⚡ Contra-Tendência!"
+        elif "CONFLUÊNCIA INSUF" in text:
+            tipo = "insuf"
         elif "OPERAÇÃO ENCERRADA" in text:
             tipo = "close"
             push_title = "🏁 Operação Encerrada"
-            push_body  = clean[:80]
-        elif "CIRCUIT BREAKER" in text: tipo = "cb"; push_title = "⛔ Circuit Breaker Ativado"
+            push_body = clean[:80]
+        elif "CIRCUIT BREAKER" in text:
+            tipo = "cb"
+            push_title = "⛔ Circuit Breaker Ativado"
         if tipo:
             self.signals_feed.append({
                 "tipo": tipo, "texto": clean[:300],
                 "ts": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
             })
             self.signals_feed = self.signals_feed[-50:]
-            # Push notification para sinais importantes
             if push_title:
                 body = push_body or clean[:100]
                 threading.Thread(target=send_push, args=(push_title, body), daemon=True).start()
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": text,
                    "parse_mode": "HTML", "disable_web_page_preview": disable_preview}
-        if markup: payload["reply_markup"] = json.dumps(markup)
-        try: requests.post(url, json=payload, timeout=8)
-        except Exception as e: log(f"[SEND] {e}")
+        if markup:
+            payload["reply_markup"] = json.dumps(markup)
+        try:
+            requests.post(url, json=payload, timeout=8)
+        except Exception as e:
+            log(f"[SEND] {e}")
 
     def build_menu(self):
         tfl = Config.TIMEFRAMES.get(self.timeframe, ("?",""))[0]
-        ml  = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
+        ml = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
         markup = {"inline_keyboard": [
             [{"text": f"Mercado: {ml}", "callback_data": "ignore"}],
             [{"text": "FOREX", "callback_data": "set_FOREX"}, {"text": "CRIPTO", "callback_data": "set_CRYPTO"}],
-            [{"text": "COMM.", "callback_data": "set_COMMODITIES"}, {"text": "INDICES", "callback_data": "set_INDICES"}],
-            [{"text": "TUDO", "callback_data": "set_TUDO"}],
+            [{"text": "COMM.", "callback_data": "set_COMMODITIES"}, {"text": "INDICES", "callback_data": "set_INDICES"}],            [{"text": "TUDO", "callback_data": "set_TUDO"}],
             [{"text": f"TF: {self.timeframe} {tfl}", "callback_data": "tf_menu"}],
             [{"text": "Status", "callback_data": "status"}, {"text": "Placar", "callback_data": "placar"}],
             [{"text": "Noticias", "callback_data": "news"}],
         ]}
-        tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
+        tot = self.wins + self.losses
+        wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min" if self.is_paused() else ""
         self.send(f"<b>BOT SNIPER v7.1</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}", markup)
 
@@ -585,43 +701,59 @@ class TradingBot:
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
 
     def set_timeframe(self, tf):
-        if tf not in Config.TIMEFRAMES: return
-        old = self.timeframe; self.timeframe = tf; save_state(self)        self.send(f"✅ TF: {old} → {tf}")
+        if tf not in Config.TIMEFRAMES:
+            return
+        old = self.timeframe
+        self.timeframe = tf
+        save_state(self)
+        self.send(f"✅ TF: {old} → {tf}")
 
     def set_mode(self, mode):
-        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
-        self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]:
+            return
+        self.mode = mode
+        save_state(self)
+        self.send(f"✅ Modo: {mode}")
 
     def send_news(self):
-        self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
+        self.send(build_news_msg(), disable_preview=True)
+        self.last_news_ts = time.time()
 
     def maybe_send_news(self):
-        if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
+        if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL:
+            self.send_news()
 
     def send_status(self):
         lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
-        if not self.active_trades: lines.append("Nenhuma."); self.send("\n".join(lines)); return
+        if not self.active_trades:
+            lines.append("Nenhuma.")
+            self.send("\n".join(lines))
+            return
         for t in self.active_trades:
             res = get_analysis(t["symbol"], self.timeframe)
             cur = res["price"] if res else t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
-            if t["dir"] == "SELL": pnl = -pnl
+            if t["dir"] == "SELL":                pnl = -pnl
             lines.append(f"{'🟢' if pnl>=0 else '🔴'} {t['symbol']} {t['dir']} P&L: {pnl:+.2f}%")
         self.send("\n".join(lines))
 
     def send_placar(self):
-        tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
+        tot = self.wins+self.losses
+        wr = (self.wins/tot*100) if tot>0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
 
-    def is_paused(self): return time.time() < self.paused_until
+    def is_paused(self):
+        return time.time() < self.paused_until
 
     def reset_pause(self):
-        self.paused_until = 0; self.consecutive_losses = 0
-        save_state(self); self.send("✅ Circuit Breaker resetado.")
+        self.paused_until = 0
+        self.consecutive_losses = 0
+        save_state(self)
+        self.send("✅ Circuit Breaker resetado.")
 
-    # ── Cache de tendências ───────────────────────────────────
     def update_trends_cache(self):
-        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
+        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL:
+            return
         log("📡 Atualizando cache tendências...")
         for s in all_syms():
             try:
@@ -633,50 +765,53 @@ class TradingBot:
                         "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
                         "ts": time.time(),
                     }
-            except Exception as e: log(f"[TRENDS] {s}: {e}")
+            except Exception as e:
+                log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
-    # ── SCAN — 4 fases ───────────────────────────────────────
+
     def scan(self):
-        if self.is_paused(): return
-        if len(self.active_trades) >= Config.MAX_TRADES: return
+        if self.is_paused():
+            return
+        if len(self.active_trades) >= Config.MAX_TRADES:
+            return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
         log(f"🔎 Scan {self.mode} ({len(universe)} ativos, TF {self.timeframe})")
         for s in universe:
             cat = asset_cat(s)
-            if not mkt_open(cat): continue
-            if any(t["symbol"] == s for t in self.active_trades): continue
-            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
-
+            if not mkt_open(cat):
+                continue
+            if any(t["symbol"] == s for t in self.active_trades):
+                continue            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN:
+                continue
             res = self.trend_cache.get(s, {}).get("data") or get_analysis(s, self.timeframe)
-            if not res: continue
-            # Atualiza cache
+            if not res:
+                continue
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
                 self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
-
             if res["cenario"] == "NEUTRO":
-                # FASE 1 – Radar (só se não NEUTRO após filtro)
                 continue
-
-            price = res["price"]; atr = res["atr"]; cen = res["cenario"]
-            cl = asset_cat(s); cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
+            price = res["price"]
+            atr = res["atr"]
+            cen = res["cenario"]
+            cl = asset_cat(s)
+            cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
             if cen == "ALTA":
-                gatilho = res["t_buy"]; dir_s = "BUY"
+                gatilho = res["t_buy"]
+                dir_s = "BUY"
                 sl_est = gatilho - Config.ATR_MULT_SL * atr
                 tp_est = gatilho + Config.ATR_MULT_TP * atr
                 preco_ok = price >= gatilho and price < res["upper"] and res["rsi"] < 70
             else:
-                gatilho = res["t_sell"]; dir_s = "SELL"
+                gatilho = res["t_sell"]
+                dir_s = "SELL"
                 sl_est = gatilho + Config.ATR_MULT_SL * atr
                 tp_est = gatilho - Config.ATR_MULT_TP * atr
                 preco_ok = price <= gatilho and price > res["lower"] and res["rsi"] > 30
-
             sl_p = abs(gatilho-sl_est)/gatilho*100
             tp_p = abs(tp_est-gatilho)/gatilho*100
             ratio = f"1:{Config.ATR_MULT_TP/Config.ATR_MULT_SL:.1f}"
-
-            # FASE 1 — RADAR (preço ainda não chegou no gatilho)
             if not preco_ok:
                 if time.time() - self.radar_list.get(s, 0) > Config.RADAR_COOLDOWN:
                     dist = abs(price-gatilho)/price*100
@@ -684,7 +819,8 @@ class TradingBot:
                     self.send(
                         f"⚠️ <b>RADAR – {s}</b> ({res['name']})\n"
                         f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
-                        f"Tendência de <b>{cen}</b> detectada\n"                        f"Aguardando gatilho de <b>{dl}</b>\n\n"
+                        f"Tendência de <b>{cen}</b> detectada\n"
+                        f"Aguardando gatilho de <b>{dl}</b>\n\n"
                         f"🎯 Gatilho: <code>{fmt(gatilho)}</code>\n"
                         f"📍 Atual:   <code>{fmt(price)}</code> ({dist:.2f}% de distância)\n"
                         f"🛡 SL est.: <code>{fmt(sl_est)}</code> ({-sl_p:.2f}%)\n"
@@ -694,11 +830,8 @@ class TradingBot:
                     )
                     self.radar_list[s] = time.time()
                 continue
-
-            # FASE 2 — GATILHO ATINGIDO
             if time.time() - self.gatilho_list.get(s, 0) > Config.GATILHO_COOLDOWN:
-                dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-                self.send(
+                dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"                self.send(
                     f"🔔 <b>GATILHO ATINGIDO – {s}</b> ({res['name']})\n"
                     f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
                     f"✅ Preço chegou no nível de entrada!\n\n"
@@ -710,13 +843,9 @@ class TradingBot:
                     f"⏳ <i>Verificando confluência…</i>"
                 )
                 self.gatilho_list[s] = time.time()
-
-            # FASE 3 — Confluência
             sc, tot_c, checks = calc_confluence(res, dir_s)
             bar = cbar(sc, tot_c)
             conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
-
-            # FASE 4A — Insuficiente
             if sc < Config.MIN_CONFLUENCE:
                 log(f"[SINAL] {s} {dir_s} – {sc}/{tot_c}")
                 falhou = [nm for nm, ok in checks if not ok]
@@ -726,15 +855,16 @@ class TradingBot:
                     f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
                     f"<b>Filtros que falharam:</b>\n"
                     + "\n".join(f"   ❌ {nm}" for nm in falhou)
-                ); continue
-
-            # FASE 4B — SINAL CONFIRMADO
+                )
+                continue
             if dir_s == "BUY":
                 sl = price - Config.ATR_MULT_SL * atr
                 tp = price + Config.ATR_MULT_TP * atr
             else:
-                sl = price + Config.ATR_MULT_SL * atr                tp = price - Config.ATR_MULT_TP * atr
-            sl_pct = abs(price-sl)/price*100; tp_pct = abs(tp-price)/price*100
+                sl = price + Config.ATR_MULT_SL * atr
+                tp = price - Config.ATR_MULT_TP * atr
+            sl_pct = abs(price-sl)/price*100
+            tp_pct = abs(tp-price)/price*100
             dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"]>0 else "N/A"
             self.send(
@@ -750,8 +880,7 @@ class TradingBot:
                 f"ATR: <code>{fmt(atr)}</code> | ADX: <code>{res['adx']:.1f}</code> | RSI: <code>{res['rsi']:.1f}</code>\n"
                 f"Volume: <code>{vol_txt}</code>\n\n"
                 f"<b>Confluência: {sc}/{tot_c} [{bar}]</b>\n{conf_txt}"
-            )
-            self.active_trades.append({
+            )            self.active_trades.append({
                 "symbol": s, "name": res["name"], "entry": price,
                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
@@ -760,48 +889,72 @@ class TradingBot:
             self.radar_list[s] = self.gatilho_list[s] = time.time()
             save_state(self)
 
-    # ── Scan Contra-Tendência FOREX ───────────────────────────
     def scan_reversal_forex(self):
-        if self.is_paused(): return
-        if not mkt_open("FOREX"): return
-        if len(self.active_trades) >= Config.MAX_TRADES: return
+        if self.is_paused():
+            return
+        if not mkt_open("FOREX"):
+            return
+        if len(self.active_trades) >= Config.MAX_TRADES:
+            return
         for s in Config.MARKET_CATEGORIES["FOREX"]["assets"].keys():
-            if any(t["symbol"] == s for t in self.active_trades): continue
-            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
-            if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN: continue
+            if any(t["symbol"] == s for t in self.active_trades):
+                continue
+            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN:
+                continue
+            if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN:
+                continue
             res = get_reversal_analysis(s, self.timeframe)
-            if not res: continue
-            price = res["price"]; atr = res["atr"]
+            if not res:
+                continue
+            price = res["price"]
+            atr = res["atr"]
             cands = []
             for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
                 sc, tc, ch = calc_reversal_conf(res, d)
                 if sc >= Config.MIN_CONFLUENCE_CT:
                     sinais = []
                     if d == "SELL":
-                        if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
-                        if res["near_upper"]:     sinais.append("BB Superior atingida")
-                        if res["div_bear"]:       sinais.append("RSI divergência bearish")
-                        if res["macd_div_bear"]:  sinais.append("MACD divergência bearish")
-                        if res["wick_bear"]:      sinais.append("Wick de rejeição")                        if res["pat_bear"] and res["pat_name"]: sinais.append(res["pat_name"])
+                        if res["rsi_overbought"]:
+                            sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
+                        if res["near_upper"]:
+                            sinais.append("BB Superior atingida")
+                        if res["div_bear"]:
+                            sinais.append("RSI divergência bearish")
+                        if res["macd_div_bear"]:
+                            sinais.append("MACD divergência bearish")
+                        if res["wick_bear"]:
+                            sinais.append("Wick de rejeição")
+                        if res["pat_bear"] and res["pat_name"]:
+                            sinais.append(res["pat_name"])
                     else:
-                        if res["rsi_oversold"]:   sinais.append(f"RSI {res['rsi']:.0f} sobrevendido")
-                        if res["near_lower"]:     sinais.append("BB Inferior atingida")
-                        if res["div_bull"]:       sinais.append("RSI divergência bullish")
-                        if res["macd_div_bull"]:  sinais.append("MACD divergência bullish")
-                        if res["wick_bull"]:      sinais.append("Wick de rejeição")
-                        if res["pat_bull"] and res["pat_name"]: sinais.append(res["pat_name"])
+                        if res["rsi_oversold"]:
+                            sinais.append(f"RSI {res['rsi']:.0f} sobrevendido")
+                        if res["near_lower"]:                            sinais.append("BB Inferior atingida")
+                        if res["div_bull"]:
+                            sinais.append("RSI divergência bullish")
+                        if res["macd_div_bull"]:
+                            sinais.append("MACD divergência bullish")
+                        if res["wick_bull"]:
+                            sinais.append("Wick de rejeição")
+                        if res["pat_bull"] and res["pat_name"]:
+                            sinais.append(res["pat_name"])
                     cands.append((sc, tc, ch, d, sinais))
-            if not cands: continue
+            if not cands:
+                continue
             cands.sort(key=lambda x: x[0], reverse=True)
             sc, tc, ch, dir_s, sinais = cands[0]
             bar = cbar(sc, tc)
             conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
-            sl_m = Config.ATR_MULT_SL; tp_m = Config.ATR_MULT_SL * 1.5
+            sl_m = Config.ATR_MULT_SL
+            tp_m = Config.ATR_MULT_SL * 1.5
             if dir_s == "BUY":
-                sl = price - sl_m*atr; tp = price + tp_m*atr
+                sl = price - sl_m*atr
+                tp = price + tp_m*atr
             else:
-                sl = price + sl_m*atr; tp = price - tp_m*atr
-            sl_p = abs(price-sl)/price*100; tp_p = abs(tp-price)/price*100
+                sl = price + sl_m*atr
+                tp = price - tp_m*atr
+            sl_p = abs(price-sl)/price*100
+            tp_p = abs(tp-price)/price*100
             ratio = f"1:{tp_m/sl_m:.1f}"
             dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
@@ -825,20 +978,19 @@ class TradingBot:
             self.active_trades.append({
                 "symbol": s, "name": res["name"], "entry": price,
                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
-                "tipo": "CONTRA-TENDÊNCIA ⚡",
-                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "tipo": "CONTRA-TENDÊNCIA ⚡",                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
                 "session_alerted": True,
             })
             save_state(self)
 
-    # ── Monitor + Trailing Stop ───────────────────────────────    def monitor_trades(self):
+    def monitor_trades(self):
         changed = False
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
-            if not res: continue
-            cur = res["price"]; atr = res["atr"]
-
-            # Reanunciar trade restaurado
+            if not res:
+                continue
+            cur = res["price"]
+            atr = res["atr"]
             if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100
@@ -850,25 +1002,34 @@ class TradingBot:
                     f"🎯 TP: <code>{fmt(t['tp'])}</code> ({tp_p:+.2f}%)\n"
                     f"🛡 SL: <code>{fmt(t['sl'])}</code> ({-sl_p:.2f}%)"
                 )
-                t["session_alerted"] = True; changed = True
-
-            # Trailing Stop
+                t["session_alerted"] = True
+                changed = True
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
-                t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
-                if nsl > t["sl"]: t["sl"] = nsl; changed = True
+                t["peak"] = cur
+                nsl = cur - Config.ATR_MULT_TRAIL*atr
+                if nsl > t["sl"]:
+                    t["sl"] = nsl
+                    changed = True
             elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):
-                t["peak"] = cur; nsl = cur + Config.ATR_MULT_TRAIL*atr
-                if nsl < t["sl"]: t["sl"] = nsl; changed = True
-
-            is_win  = (t["dir"]=="BUY" and cur>=t["tp"]) or (t["dir"]=="SELL" and cur<=t["tp"])
+                t["peak"] = cur
+                nsl = cur + Config.ATR_MULT_TRAIL*atr
+                if nsl < t["sl"]:
+                    t["sl"] = nsl
+                    changed = True
+            is_win = (t["dir"]=="BUY" and cur>=t["tp"]) or (t["dir"]=="SELL" and cur<=t["tp"])
             is_loss = (t["dir"]=="BUY" and cur<=t["sl"]) or (t["dir"]=="SELL" and cur>=t["sl"])
             if is_win or is_loss:
                 pnl = (cur-t["entry"])/t["entry"]*100
-                if t["dir"] == "SELL": pnl = -pnl
+                if t["dir"] == "SELL":
+                    pnl = -pnl
                 st = "✅ TAKE PROFIT (WIN)" if is_win else "❌ STOP LOSS (LOSS)"
                 closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
-                if is_win:  self.wins += 1; self.consecutive_losses = 0
-                else:       self.losses += 1; self.consecutive_losses += 1; self.asset_cooldown[t["symbol"]] = time.time()
+                if is_win:
+                    self.wins += 1
+                    self.consecutive_losses = 0
+                else:                    self.losses += 1
+                    self.consecutive_losses += 1
+                    self.asset_cooldown[t["symbol"]] = time.time()
                 self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl,2), "closed_at": closed_at})
                 self.send(
                     f"🏁 <b>OPERAÇÃO ENCERRADA</b>\n"
@@ -878,29 +1039,26 @@ class TradingBot:
                     f"🔚 Saída:   <code>{fmt(cur)}</code>\n"
                     f"P&amp;L:   <code>{pnl:+.2f}%</code>"
                 )
-                self.active_trades.remove(t); changed = True
+                self.active_trades.remove(t)
+                changed = True
                 if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
-                    self.paused_until = time.time() + Config.PAUSE_DURATION                    mins = Config.PAUSE_DURATION // 60
+                    self.paused_until = time.time() + Config.PAUSE_DURATION
+                    mins = Config.PAUSE_DURATION // 60
                     self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\nPausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
-        if changed: save_state(self)
+        if changed:
+            save_state(self)
 
 
-# ═══════════════════════════════════════════════════════════════
-# SERVICE WORKER JS (OTIMIZADO)
-# ═══════════════════════════════════════════════════════════════
 SW_JS = """
 const CACHE_NAME = 'sniper-v7.2';
 const STATIC_ASSETS = ['/', '/sw.js', '/icon-192.png', '/icon-512.png'];
-
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(STATIC_ASSETS)));
   self.skipWaiting();
 });
 self.addEventListener('activate', e => { e.waitUntil(clients.claim()); });
-
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  // Estratégia: Cache First para estáticos, Network First para API
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(e.request).then(res => {
@@ -913,14 +1071,12 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
   }
 });
-
 self.addEventListener('push', e => {
   let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
   try { data = JSON.parse(e.data.text()); } catch(_) {}
   e.waitUntil(self.registration.showNotification(data.title, {
     body: data.body, icon: data.icon || '/icon-192.png',
-    badge: '/icon-192.png', vibrate: [200, 100, 200],
-     { url: '/' }
+    badge: '/icon-192.png', vibrate: [200, 100, 200],     { url: '/' }
   }));
 });
 self.addEventListener('notificationclick', e => {
@@ -929,11 +1085,9 @@ self.addEventListener('notificationclick', e => {
     if (cs.length) cs[0].focus();
     else clients.openWindow('/');
   }));
-});"""
+});
+"""
 
-# ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML — VERSÃO OTIMIZADA v7.2
-# ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -951,44 +1105,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 /* DESIGN SYSTEM — Variáveis CSS para consistência visual */
 /* ═══════════════════════════════════════════════════════════ */
 :root {
-  /* Cores base */
   --bg: #06090f; --bg2: #0b1018; --bg3: #111827; --bg4: #192032;
   --border: #1e2d45; --border-soft: #2a3a52;
   --text: #e6f1ff; --text-muted: #6b84a3; --text-dim: #4a607d;
-  
-  /* Cores de estado */
   --green: #00e676; --green-soft: rgba(0,230,118,0.12); --green-border: rgba(0,230,118,0.3);
   --red: #ff5252; --red-soft: rgba(255,82,82,0.12); --red-border: rgba(255,82,82,0.3);
   --gold: #ffc107; --gold-soft: rgba(255,193,7,0.12); --gold-border: rgba(255,193,7,0.3);
   --blue: #4da6ff; --blue-soft: rgba(77,166,255,0.12); --blue-border: rgba(77,166,255,0.3);
   --cyan: #00d4ff; --cyan-soft: rgba(0,212,255,0.12);
   --orange: #ff9800; --purple: #ab47bc;
-  
-  /* Tipografia */
   --font-mono: 'JetBrains Mono', monospace;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  
-  /* Espaçamento e bordas */
   --radius: 14px; --radius-sm: 8px; --radius-lg: 20px;
   --nav-h: 64px; --header-h: 60px; --safe-bottom: env(safe-area-inset-bottom, 0);
-  
-  /* Animações */
   --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-/* Reset e base */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(ellipse at top, rgba(77,166,255,0.03), transparent 60%); }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* LAYOUT PRINCIPAL */
-/* ═══════════════════════════════════════════════════════════ */
 #app { display: flex; flex-direction: column; height: 100%; max-width: 520px; margin: 0 auto; position: relative; z-index: 1; }
-
-/* Header */
-#hdr { height: var(--header-h); flex-shrink: 0; background: linear-gradient(135deg, var(--bg2), #0a0f18); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; position: relative; z-index: 100; }
-.hdr-left { display: flex; align-items: center; gap: 12px; }
+#hdr { height: var(--header-h); flex-shrink: 0; background: linear-gradient(135deg, var(--bg2), #0a0f18); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; position: relative; z-index: 100; }.hdr-left { display: flex; align-items: center; gap: 12px; }
 .logo { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, var(--green), var(--cyan)); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: #000; box-shadow: 0 0 24px rgba(0,230,118,0.25); }
 .app-title { display: flex; flex-direction: column; }
 .app-title .main { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
@@ -1001,15 +1138,11 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .icon-btn:hover, .icon-btn:active { background: var(--border); color: var(--text); transform: scale(0.96); }
 .icon-btn.refreshing { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* Páginas */
 #pages { flex: 1; overflow: hidden; position: relative; }
 .page { position: absolute; inset: 0; display: none; overflow-y: auto; padding: 14px 14px calc(var(--nav-h) + var(--safe-bottom) + 12px); opacity: 0; transform: translateY(8px); transition: opacity var(--transition-slow), transform var(--transition-slow); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .page::-webkit-scrollbar { width: 3px; }
 .page::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .page.active { display: block; opacity: 1; transform: translateY(0); }
-
-/* Navigation */
 #nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 520px; height: var(--nav-h); background: var(--bg2); border-top: 1px solid var(--border); display: flex; z-index: 200; padding-bottom: var(--safe-bottom); }
 .nav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: none; background: none; cursor: pointer; font-size: 10px; color: var(--text-muted); letter-spacing: 0.3px; text-transform: uppercase; padding: 0; transition: var(--transition); position: relative; }
 .nav-btn .icon { font-size: 19px; transition: var(--transition); }
@@ -1017,17 +1150,12 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .nav-btn.active .icon { transform: scale(1.1); }
 .nav-btn:active { opacity: 0.7; }
 .nav-badge { position: absolute; top: 8px; right: calc(50% - 18px); min-width: 16px; height: 16px; border-radius: 8px; background: var(--red); color: #fff; font-size: 9px; font-family: var(--font-mono); font-weight: 700; display: none; align-items: center; justify-content: center; padding: 0 4px; }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* COMPONENTES UI */
-/* ═══════════════════════════════════════════════════════════ */
 .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; transition: var(--transition); }
 .card:hover { border-color: var(--border-soft); }
 .card-header { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
-
-/* Stats Grid */
 .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
-.stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 10px; text-align: center; transition: var(--transition); }.stat-box:hover { transform: translateY(-2px); border-color: var(--border-soft); }
+.stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 10px; text-align: center; transition: var(--transition); }
+.stat-box:hover { transform: translateY(-2px); border-color: var(--border-soft); }
 .stat-label { font-size: 8px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
 .stat-value { font-size: 20px; font-weight: 700; font-family: var(--font-mono); line-height: 1; margin-bottom: 2px; }
 .stat-value.green { color: var(--green); }
@@ -1035,8 +1163,6 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .stat-value.cyan { color: var(--cyan); }
 .stat-value.gold { color: var(--gold); }
 .stat-sub { font-size: 9px; color: var(--text-dim); }
-
-/* Trade Card */
 .trade-card { border-radius: var(--radius); padding: 14px; margin-bottom: 10px; border-left: 4px solid var(--border); background: var(--bg2); transition: var(--transition); }
 .trade-card:hover { transform: translateX(2px); }
 .trade-card.buy { border-left-color: var(--green); }
@@ -1048,8 +1174,7 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .trade-name { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 .trade-badge { font-size: 10px; font-weight: 700; font-family: var(--font-mono); padding: 5px 10px; border-radius: 20px; }
 .trade-badge.buy { background: var(--green-soft); color: var(--green); border: 1px solid var(--green-border); }
-.trade-badge.sell { background: var(--red-soft); color: var(--red); border: 1px solid var(--red-border); }
-.trade-levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.trade-badge.sell { background: var(--red-soft); color: var(--red); border: 1px solid var(--red-border); }.trade-levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
 .level-box { background: var(--bg3); border-radius: var(--radius-sm); padding: 8px 6px; text-align: center; }
 .level-label { font-size: 8px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px; }
 .level-value { font-size: 11px; font-family: var(--font-mono); font-weight: 600; }
@@ -1064,19 +1189,16 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 .progress-fill.pos { background: linear-gradient(90deg, var(--green), #00c853); }
 .progress-fill.neg { background: linear-gradient(90deg, var(--red), #d50000); }
-
-/* Sparkline CSS-only */
 .sparkline { height: 24px; display: flex; align-items: flex-end; gap: 1px; margin: 4px 0; }
 .spark-bar { flex: 1; background: var(--border); border-radius: 1px; min-width: 2px; transition: height 0.3s ease; }
 .spark-bar.up { background: var(--green); }
 .spark-bar.down { background: var(--red); }
-
-/* Signal Item */
 .signal-item { display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); animation: fadeIn 0.2s ease; }
 .signal-item:last-child { border-bottom: none; }
 .signal-item.new { animation: pulseNew 0.6s ease; }
 @keyframes pulseNew { 0% { background: transparent; } 50% { background: var(--blue-soft); } 100% { background: transparent; } }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }.signal-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.signal-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
 .signal-icon.radar { background: var(--blue-soft); color: var(--blue); }
 .signal-icon.gatilho { background: var(--cyan-soft); color: var(--cyan); }
 .signal-icon.sinal { background: var(--green-soft); color: var(--green); }
@@ -1095,16 +1217,13 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .signal-type.cb { color: var(--red); }
 .signal-text { font-size: 11px; color: var(--text-muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .signal-time { font-size: 9px; color: var(--text-dim); margin-top: 4px; font-family: var(--font-mono); }
-
-/* Asset Row (Scanner) */
 .asset-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); transition: var(--transition); }
 .asset-row:hover { background: var(--bg3); margin: 0 -14px; padding: 10px 14px; border-radius: var(--radius-sm); }
 .asset-icon { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; font-family: var(--font-mono); flex-shrink: 0; }
 .asset-icon.up { background: var(--green-soft); color: var(--green); }
 .asset-icon.down { background: var(--red-soft); color: var(--red); }
 .asset-icon.neutral { background: var(--bg4); color: var(--text-muted); }
-.asset-info { flex: 1; min-width: 0; }
-.asset-symbol { font-size: 13px; font-weight: 600; font-family: var(--font-mono); display: flex; align-items: center; gap: 5px; }
+.asset-info { flex: 1; min-width: 0; }.asset-symbol { font-size: 13px; font-weight: 600; font-family: var(--font-mono); display: flex; align-items: center; gap: 5px; }
 .asset-name { font-size: 9px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .asset-meta { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
 .asset-tag { font-size: 8px; font-family: var(--font-mono); padding: 2px 6px; border-radius: 4px; }
@@ -1123,33 +1242,24 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .indicator-dot.rsi-bad { background: var(--red); }
 .indicator-dot.adx-strong { background: var(--green); }
 .indicator-dot.adx-weak { background: var(--text-dim); }
-
-/* Chips/Filters */
-.chip-group { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }.chip-group::-webkit-scrollbar { display: none; }
+.chip-group { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.chip-group::-webkit-scrollbar { display: none; }
 .chip { flex-shrink: 0; padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg3); font-size: 11px; cursor: pointer; transition: var(--transition); color: var(--text-muted); white-space: nowrap; }
 .chip:hover { background: var(--border); }
 .chip.active { background: var(--green-soft); border-color: var(--green-border); color: var(--green); font-weight: 500; }
 .chip:active { transform: scale(0.97); }
-
-/* Search Box */
 .search-box { display: flex; align-items: center; gap: 8px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 12px; }
 .search-box input { flex: 1; background: none; border: none; color: var(--text); font-size: 13px; outline: none; }
 .search-box input::placeholder { color: var(--text-dim); }
 .search-icon { color: var(--text-muted); font-size: 14px; }
-
-/* Section Header */
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .section-title { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
 .refresh-btn { font-size: 10px; color: var(--text-muted); cursor: pointer; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); transition: var(--transition); }
 .refresh-btn:hover { background: var(--border); color: var(--text); }
-
-/* Fear & Greed Card */
 .fg-card { background: linear-gradient(135deg, var(--bg3), var(--bg4)); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
 .fg-label { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
 .fg-value { font-size: 17px; font-weight: 700; }
 .fg-score { font-size: 32px; font-weight: 700; font-family: var(--font-mono); opacity: 0.15; }
-
-/* Config Section */
 .config-section { margin-bottom: 18px; }
 .config-label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
 .mode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
@@ -1162,47 +1272,27 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .tf-btn:active { transform: scale(0.97); }
 .tf-btn.active { background: rgba(0,212,255,0.1); border: 1px solid var(--cyan); color: var(--cyan); }
 .tf-value { font-size: 13px; font-weight: 600; display: block; margin-bottom: 2px; }
-.tf-label { font-size: 8px; color: var(--text-dim); }
-
-/* Action Buttons */
-.action-btn { width: 100%; padding: 14px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; transition: var(--transition); letter-spacing: 0.3px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.tf-label { font-size: 8px; color: var(--text-dim); }.action-btn { width: 100%; padding: 14px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; transition: var(--transition); letter-spacing: 0.3px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .action-btn:active { transform: scale(0.98); }
 .action-btn.danger { background: var(--red-soft); color: var(--red); border: 1px solid var(--red-border); }
 .action-btn.success { background: var(--green-soft); color: var(--green); border: 1px solid var(--green-border); }
 .action-btn.primary { background: var(--blue-soft); color: var(--blue); border: 1px solid var(--blue-border); }
-
-/* Empty State */
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
 .empty-icon { font-size: 42px; margin-bottom: 12px; display: block; opacity: 0.6; }
 .empty-text { font-size: 12px; line-height: 1.6; }
-/* Circuit Breaker Banner */
 .cb-banner { background: var(--red-soft); border: 1px solid var(--red-border); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 12px; display: none; align-items: center; justify-content: space-between; }
 .cb-text { font-size: 11px; color: var(--red); font-weight: 600; }
 .cb-timer { font-size: 18px; font-family: var(--font-mono); font-weight: 700; color: var(--red); }
-
-/* Error Banner */
 .error-banner { background: var(--red-soft); border: 1px solid var(--red-border); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 12px; font-size: 11px; color: var(--red); display: none; }
-
-/* Timestamp */
 .timestamp { font-size: 9px; color: var(--text-dim); text-align: center; padding: 8px 0; letter-spacing: 0.5px; font-family: var(--font-mono); }
-
-/* Divider */
 .divider { height: 1px; background: var(--border); margin: 14px 0; }
-
-/* Highlight for search */
 .highlight { background: rgba(255,193,7,0.2); padding: 0 2px; border-radius: 2px; }
-
-/* Virtual scroll container */
 .virtual-container { position: relative; }
 .virtual-content { position: absolute; top: 0; left: 0; right: 0; }
-
-/* Loading skeleton */
 .skeleton { background: linear-gradient(90deg, var(--bg3) 25%, var(--bg4) 50%, var(--bg3) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 .skeleton-row { height: 48px; margin-bottom: 8px; border-radius: var(--radius-sm); }
 .skeleton-card { height: 120px; margin-bottom: 10px; border-radius: var(--radius); }
-
-/* Toggle Switch */
 .toggle { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
 .toggle-label { font-size: 12px; color: var(--text); flex: 1; }
 .toggle-switch { position: relative; width: 44px; height: 24px; }
@@ -1211,40 +1301,29 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 2px; background: var(--text-muted); border-radius: 50%; transition: var(--transition); }
 input:checked + .toggle-slider { background: var(--green-soft); border-color: var(--green-border); }
 input:checked + .toggle-slider:before { transform: translateX(20px); background: var(--green); }
-
-/* Sub-tab navigation */
 .sub-tabs { display: flex; gap: 0; margin-bottom: 14px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .sub-tab { flex: 1; padding: 10px; border: none; background: none; color: var(--text-muted); font-size: 12px; font-weight: 600; cursor: pointer; transition: var(--transition); font-family: var(--font-sans); }
 .sub-tab.active { color: var(--green); background: var(--green-soft); }
 .sub-tab:active { opacity: 0.8; }
-
-/* Market status */
 .market-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 7px; }
 .market-name { font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
 .market-status { font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 10px; border-radius: 20px; font-family: var(--font-mono); font-weight: 600; }
 .market-status.open { background: var(--green-soft); color: var(--green); }
 .market-status.closed { background: var(--red-soft); color: var(--red); }
-/* Confluence bar */
 .confluence-bar { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
 .confluence-label { font-size: 9px; color: var(--text-muted); min-width: 80px; }
 .confluence-track { flex: 1; height: 6px; background: var(--bg4); border-radius: 3px; overflow: hidden; }
 .confluence-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; background: linear-gradient(90deg, var(--gold), var(--green)); }
 .confluence-value { font-size: 10px; font-family: var(--font-mono); font-weight: 600; min-width: 32px; text-align: right; }
-
-/* Price movement indicator */
 .price-movement { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-family: var(--font-mono); font-weight: 600; }
 .price-movement.up { color: var(--green); }
 .price-movement.down { color: var(--red); }
 .price-arrow { font-size: 8px; }
-
-/* New signal pulse animation */
 @keyframes newSignal { 0% { box-shadow: 0 0 0 0 rgba(77,166,255,0.4); } 70% { box-shadow: 0 0 0 8px rgba(77,166,255,0); } 100% { box-shadow: 0 0 0 0 rgba(77,166,255,0); } }
 .signal-item.new-signal { animation: newSignal 0.8s ease-out; }
-</style>
-</head>
+</style></head>
 <body>
 <div id="app">
-<!-- Header -->
 <div id="hdr">
   <div class="hdr-left">
     <div class="logo">S</div>
@@ -1258,238 +1337,58 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
     <button class="icon-btn" id="refreshBtn" onclick="refreshAll()" title="Atualizar">↻</button>
   </div>
 </div>
-
-<!-- Pages Container -->
 <div id="pages">
-
-<!-- ═══ DASHBOARD ═══ -->
 <div class="page active" id="page-dash">
   <div class="error-banner" id="errorBanner">⚠ Erro de conexão. Verifique sua internet.</div>
   <div class="cb-banner" id="cbBanner">
     <span class="cb-text">⛔ CIRCUIT BREAKER ATIVO</span>
     <span class="cb-timer" id="cbTimer">--m</span>
   </div>
-  
-  <!-- Stats -->
   <div class="stats-grid">
-    <div class="stat-box">      <div class="stat-label">Wins</div>
-      <div class="stat-value green" id="statWins">--</div>
-      <div class="stat-sub" id="statWR">--% WR</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Losses</div>
-      <div class="stat-value red" id="statLosses">--</div>
-      <div class="stat-sub" id="statSeq">Seq: --</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Trades</div>
-      <div class="stat-value cyan" id="statActive">--/3</div>
-      <div class="stat-sub" id="statMode">--</div>
-    </div>
+    <div class="stat-box"><div class="stat-label">Wins</div><div class="stat-value green" id="statWins">--</div><div class="stat-sub" id="statWR">--% WR</div></div>
+    <div class="stat-box"><div class="stat-label">Losses</div><div class="stat-value red" id="statLosses">--</div><div class="stat-sub" id="statSeq">Seq: --</div></div>
+    <div class="stat-box"><div class="stat-label">Trades</div><div class="stat-value cyan" id="statActive">--/3</div><div class="stat-sub" id="statMode">--</div></div>
   </div>
-  
-  <!-- Active Trades -->
-  <div class="section-header">
-    <span class="section-title">💼 Trades Abertos</span>
-    <label class="toggle">
-      <span class="toggle-label" style="font-size:10px">Mostrar fechados</span>
-      <label class="toggle-switch">
-        <input type="checkbox" id="toggleClosed" onchange="toggleClosedTrades()">
-        <span class="toggle-slider"></span>
-      </label>
-    </label>
-  </div>
-  <div id="tradesContainer">
-    <div class="empty-state"><span class="empty-icon">📭</span><div class="empty-text">Nenhum trade aberto no momento</div></div>
-  </div>
-  
-  <!-- Markets -->
-  <div class="section-header" style="margin-top:16px">
-    <span class="section-title">🌐 Status dos Mercados</span>
-  </div>
+  <div class="section-header"><span class="section-title">💼 Trades Abertos</span><label class="toggle"><span class="toggle-label" style="font-size:10px">Mostrar fechados</span><label class="toggle-switch"><input type="checkbox" id="toggleClosed" onchange="toggleClosedTrades()"><span class="toggle-slider"></span></label></label></div>
+  <div id="tradesContainer"><div class="empty-state"><span class="empty-icon">📭</span><div class="empty-text">Nenhum trade aberto no momento</div></div></div>
+  <div class="section-header" style="margin-top:16px"><span class="section-title">🌐 Status dos Mercados</span></div>
   <div id="marketsContainer"></div>
-  
   <div class="timestamp" id="lastUpdate">--:--:--</div>
 </div>
-
-<!-- ═══ SCANNER ═══ -->
 <div class="page" id="page-scan">
-  <div class="section-header">
-    <span class="section-title">📡 Scanner em Tempo Real</span>
-    <button class="refresh-btn" onclick="loadScanner()">↻ Atualizar</button>
-  </div>
-  
-  <!-- Trend Summary -->
-  <div class="card" style="padding:10px 14px;margin-bottom:12px">
-    <div style="display:flex;justify-content:space-around;text-align:center">      <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🟢 Alta</div><div class="stat-value green" id="trendUp" style="font-size:18px">--</div></div>
-      <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🔴 Baixa</div><div class="stat-value red" id="trendDown" style="font-size:18px">--</div></div>
-      <div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">⚪ Neutro</div><div class="stat-value" id="trendNeutral" style="font-size:18px;color:var(--text-muted)">--</div></div>
-    </div>
-  </div>
-  
-  <!-- Search -->
-  <div class="search-box">
-    <span class="search-icon">🔍</span>
-    <input type="text" id="searchInput" placeholder="Buscar ativo ou nome..." oninput="debouncedSearch()">
-  </div>
-  
-  <!-- Filters -->
-  <div class="chip-group" id="scanFilters">
-    <button class="chip active" data-filter="all" onclick="setScanFilter('all',this)">Todos</button>
-    <button class="chip" data-filter="up" onclick="setScanFilter('up',this)">🟢 Alta</button>
-    <button class="chip" data-filter="down" onclick="setScanFilter('down',this)">🔴 Baixa</button>
-    <button class="chip" data-filter="forex" onclick="setScanFilter('forex',this)">📈 Forex</button>
-    <button class="chip" data-filter="crypto" onclick="setScanFilter('crypto',this)">₿ Cripto</button>
-    <button class="chip" data-filter="comm" onclick="setScanFilter('comm',this)">🏅 Comm</button>
-    <button class="chip" data-filter="idx" onclick="setScanFilter('idx',this)">📊 Índices</button>
-  </div>
-  
-  <!-- Asset List with Virtual Scroll -->
-  <div class="card" style="padding:4px 14px">
-    <div id="scannerList" class="virtual-container">
-      <div class="virtual-content" id="scannerContent">
-        <!-- Skeleton loading -->
-        <div class="skeleton skeleton-row"></div>
-        <div class="skeleton skeleton-row"></div>
-        <div class="skeleton skeleton-row"></div>
-      </div>
-    </div>
-  </div>
+  <div class="section-header"><span class="section-title">📡 Scanner em Tempo Real</span><button class="refresh-btn" onclick="loadScanner()">↻ Atualizar</button></div>
+  <div class="card" style="padding:10px 14px;margin-bottom:12px"><div style="display:flex;justify-content:space-around;text-align:center"><div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🟢 Alta</div><div class="stat-value green" id="trendUp" style="font-size:18px">--</div></div><div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🔴 Baixa</div><div class="stat-value red" id="trendDown" style="font-size:18px">--</div></div><div><div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">⚪ Neutro</div><div class="stat-value" id="trendNeutral" style="font-size:18px;color:var(--text-muted)">--</div></div></div></div>
+  <div class="search-box"><span class="search-icon">🔍</span><input type="text" id="searchInput" placeholder="Buscar ativo ou nome..." oninput="debouncedSearch()"></div>
+  <div class="chip-group" id="scanFilters"><button class="chip active" data-filter="all" onclick="setScanFilter('all',this)">Todos</button><button class="chip" data-filter="up" onclick="setScanFilter('up',this)">🟢 Alta</button><button class="chip" data-filter="down" onclick="setScanFilter('down',this)">🔴 Baixa</button><button class="chip" data-filter="forex" onclick="setScanFilter('forex',this)">📈 Forex</button><button class="chip" data-filter="crypto" onclick="setScanFilter('crypto',this)">₿ Cripto</button><button class="chip" data-filter="comm" onclick="setScanFilter('comm',this)">🏅 Comm</button><button class="chip" data-filter="idx" onclick="setScanFilter('idx',this)">📊 Índices</button></div>
+  <div class="card" style="padding:4px 14px"><div id="scannerList" class="virtual-container"><div class="virtual-content" id="scannerContent"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div></div></div>
 </div>
-
-<!-- ═══ SINAIS ═══ -->
 <div class="page" id="page-sig">
-  <div class="section-header">
-    <span class="section-title">🔔 Feed de Sinais</span>
-    <button class="refresh-btn" onclick="loadSignals()">↻ Atualizar</button>
-  </div>
-  
-  <!-- Signal Filters -->
-  <div class="chip-group" id="signalFilters">
-    <button class="chip active" data-type="all" onclick="setSignalFilter('all',this)">Todos</button>
-    <button class="chip" data-type="sinal" onclick="setSignalFilter('sinal',this)">🎯 Sinal</button>
-    <button class="chip" data-type="gatilho" onclick="setSignalFilter('gatilho',this)">🔔 Gatilho</button>
-    <button class="chip" data-type="radar" onclick="setSignalFilter('radar',this)">⚠ Radar</button>
-    <button class="chip" data-type="ct" onclick="setSignalFilter('ct',this)">⚡ CT</button>    <button class="chip" data-type="close" onclick="setSignalFilter('close',this)">🏁 Fechados</button>
-  </div>
-  
-  <!-- Signals List -->
-  <div class="card" style="padding:0 14px">
-    <div id="signalsList">
-      <div class="empty-state"><span class="empty-icon">🔔</span><div class="empty-text">Nenhum sinal ainda.<br>Os sinais aparecerão aqui em tempo real.</div></div>
-    </div>
-  </div>
+  <div class="section-header"><span class="section-title">🔔 Feed de Sinais</span><button class="refresh-btn" onclick="loadSignals()">↻ Atualizar</button></div>
+  <div class="chip-group" id="signalFilters"><button class="chip active" data-type="all" onclick="setSignalFilter('all',this)">Todos</button><button class="chip" data-type="sinal" onclick="setSignalFilter('sinal',this)">🎯 Sinal</button><button class="chip" data-type="gatilho" onclick="setSignalFilter('gatilho',this)">🔔 Gatilho</button><button class="chip" data-type="radar" onclick="setSignalFilter('radar',this)">⚠ Radar</button><button class="chip" data-type="ct" onclick="setSignalFilter('ct',this)">⚡ CT</button><button class="chip" data-type="close" onclick="setSignalFilter('close',this)">🏁 Fechados</button></div>
+  <div class="card" style="padding:0 14px"><div id="signalsList"><div class="empty-state"><span class="empty-icon">🔔</span><div class="empty-text">Nenhum sinal ainda.<br>Os sinais aparecerão aqui em tempo real.</div></div></div></div>
 </div>
-
-<!-- ═══ CT / NEWS ═══ -->
 <div class="page" id="page-ct">
-  <div class="sub-tabs">
-    <button class="sub-tab active" id="tabCT" onclick="showSubPage('ct')">⚡ Contra-Tendência</button>
-    <button class="sub-tab" id="tabNews" onclick="showSubPage('news')">📰 Notícias</button>
-  </div>
-  
-  <!-- Contra-Tendência -->
+  <div class="sub-tabs"><button class="sub-tab active" id="tabCT" onclick="showSubPage('ct')">⚡ Contra-Tendência</button><button class="sub-tab" id="tabNews" onclick="showSubPage('news')">📰 Notícias</button></div>
   <div id="subCT">
-    <div class="section-header">
-      <span class="section-title">⚡ Oportunidades CT (FOREX)</span>
-      <button class="refresh-btn" onclick="loadCT()">↻</button>
-    </div>
-    <div class="card" style="background:var(--gold-soft);border-color:var(--gold-border);margin-bottom:12px;padding:10px 14px;font-size:11px;color:var(--gold);line-height:1.5">
-      ⚠️ Sinais <b>contra tendência</b> no FOREX. Use gestão de risco reduzida e confirme com análise própria.
-    </div>
-    <div id="ctList">
-      <div class="empty-state"><span class="empty-icon">⚡</span><div class="empty-text">Nenhuma oportunidade CT detectada no momento.</div></div>
-    </div>
+    <div class="section-header"><span class="section-title">⚡ Oportunidades CT (FOREX)</span><button class="refresh-btn" onclick="loadCT()">↻</button></div>    <div class="card" style="background:var(--gold-soft);border-color:var(--gold-border);margin-bottom:12px;padding:10px 14px;font-size:11px;color:var(--gold);line-height:1.5">⚠️ Sinais <b>contra tendência</b> no FOREX. Use gestão de risco reduzida e confirme com análise própria.</div>
+    <div id="ctList"><div class="empty-state"><span class="empty-icon">⚡</span><div class="empty-text">Nenhuma oportunidade CT detectada no momento.</div></div></div>
   </div>
-  
-  <!-- Notícias -->
   <div id="subNews" style="display:none">
-    <div class="section-header">
-      <span class="section-title">📰 Notícias do Mercado</span>
-      <button class="refresh-btn" onclick="loadNews()">↻</button>
-    </div>
-    <div class="fg-card" id="fgCard">
-      <div><div class="fg-label">Fear & Greed Index</div><div class="fg-value" id="fgValue">--</div></div>
-      <div class="fg-score" id="fgScore">--</div>
-    </div>
-    <div class="card" style="padding:0 14px">
-      <div id="newsList">
-        <div class="empty-state"><span class="empty-icon">📰</span><div class="empty-text">Carregando notícias...</div></div>
-      </div>
-    </div>
+    <div class="section-header"><span class="section-title">📰 Notícias do Mercado</span><button class="refresh-btn" onclick="loadNews()">↻</button></div>
+    <div class="fg-card" id="fgCard"><div><div class="fg-label">Fear & Greed Index</div><div class="fg-value" id="fgValue">--</div></div><div class="fg-score" id="fgScore">--</div></div>
+    <div class="card" style="padding:0 14px"><div id="newsList"><div class="empty-state"><span class="empty-icon">📰</span><div class="empty-text">Carregando notícias...</div></div></div></div>
   </div>
 </div>
-<!-- ═══ CONFIG ═══ -->
 <div class="page" id="page-cfg">
-  <!-- Market Selection -->
-  <div class="config-section">
-    <div class="config-label">Mercado Ativo</div>
-    <div class="mode-grid">
-      <button class="mode-btn" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mode-icon">📈</span>FOREX</button>
-      <button class="mode-btn" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mode-icon">₿</span>CRIPTO</button>
-      <button class="mode-btn" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mode-icon">🏅</span>COMMODITIES</button>
-      <button class="mode-btn" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mode-icon">📊</span>ÍNDICES</button>
-    </div>
-    <button class="mode-btn" style="width:100%;margin-top:7px;padding:12px" data-mode="TUDO" onclick="setMode('TUDO')">🌍 TUDO (42 ativos)</button>
-  </div>
-  
-  <!-- Timeframe Selection -->
-  <div class="config-section">
-    <div class="config-label">Timeframe</div>
-    <div class="tf-grid">
-      <button class="tf-btn" data-tf="1m" onclick="setTimeframe('1m')"><span class="tf-value red">●</span>1m<div class="tf-label">Agressivo</div></button>
-      <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')"><span class="tf-value orange">●</span>5m<div class="tf-label">Alto</div></button>
-      <button class="tf-btn" data-tf="15m" onclick="setTimeframe('15m')"><span class="tf-value gold">●</span>15m<div class="tf-label">Moderado</div></button>
-      <button class="tf-btn" data-tf="30m" onclick="setTimeframe('30m')"><span class="tf-value green">●</span>30m<div class="tf-label">Conservador</div></button>
-      <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')"><span class="tf-value cyan">●</span>1h<div class="tf-label">Seguro</div></button>
-      <button class="tf-btn" data-tf="4h" onclick="setTimeframe('4h')"><span class="tf-value blue">●</span>4h<div class="tf-label">Muito Seg.</div></button>
-    </div>
-  </div>
-  
+  <div class="config-section"><div class="config-label">Mercado Ativo</div><div class="mode-grid"><button class="mode-btn" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mode-icon">📈</span>FOREX</button><button class="mode-btn" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mode-icon">₿</span>CRIPTO</button><button class="mode-btn" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mode-icon">🏅</span>COMMODITIES</button><button class="mode-btn" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mode-icon">📊</span>ÍNDICES</button></div><button class="mode-btn" style="width:100%;margin-top:7px;padding:12px" data-mode="TUDO" onclick="setMode('TUDO')">🌍 TUDO (42 ativos)</button></div>
+  <div class="config-section"><div class="config-label">Timeframe</div><div class="tf-grid"><button class="tf-btn" data-tf="1m" onclick="setTimeframe('1m')"><span class="tf-value red">●</span>1m<div class="tf-label">Agressivo</div></button><button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')"><span class="tf-value orange">●</span>5m<div class="tf-label">Alto</div></button><button class="tf-btn" data-tf="15m" onclick="setTimeframe('15m')"><span class="tf-value gold">●</span>15m<div class="tf-label">Moderado</div></button><button class="tf-btn" data-tf="30m" onclick="setTimeframe('30m')"><span class="tf-value green">●</span>30m<div class="tf-label">Conservador</div></button><button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')"><span class="tf-value cyan">●</span>1h<div class="tf-label">Seguro</div></button><button class="tf-btn" data-tf="4h" onclick="setTimeframe('4h')"><span class="tf-value blue">●</span>4h<div class="tf-label">Muito Seg.</div></button></div></div>
   <div class="divider"></div>
-  
-  <!-- Notifications -->
-  <div class="config-section">
-    <div class="config-label">Notificações Push</div>
-    <div class="card" style="background:var(--blue-soft);border-color:var(--blue-border);margin-bottom:12px;padding:12px 14px">
-      <div style="font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px">🔔 Alertas em tempo real</div>
-      <div style="font-size:10px;color:var(--text-muted);line-height:1.5">Receba sinais, gatilhos e encerramentos diretamente no seu dispositivo, mesmo com o app em segundo plano.</div>
-    </div>
-    <button class="action-btn primary" id="notifBtn" onclick="toggleNotifications()">🔔 Ativar Notificações</button>
-    <div id="notifStatus" style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:6px"></div>
-  </div>
-  
-  <!-- Actions -->
-  <div class="config-section">
-    <div class="config-label">Ações Rápidas</div>
-    <button class="action-btn danger" onclick="resetCircuitBreaker()">⛔ Resetar Circuit Breaker</button>
-    <button class="action-btn success" onclick="refreshAll()">↻ Atualizar Tudo Agora</button>
-  </div>
-  
-  <!-- Risk Parameters -->
-  <div class="config-section">
-    <div class="config-label">Parâmetros de Risco</div>    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div class="stat-box"><div class="stat-label">Stop Loss</div><div class="stat-value red" id="paramSL">--</div></div>
-      <div class="stat-box"><div class="stat-label">Take Profit</div><div class="stat-value green" id="paramTP">--</div></div>
-      <div class="stat-box"><div class="stat-label">Max Trades</div><div class="stat-value cyan" id="paramMax">--</div></div>
-      <div class="stat-box"><div class="stat-label">Confluência</div><div class="stat-value gold" id="paramConf">--</div></div>
-    </div>
-  </div>
-  
-  <!-- PWA Install Hint -->
-  <div class="card" style="background:rgba(0,212,255,0.04);border-color:rgba(0,212,255,0.15)">
-    <div class="card-header" style="color:var(--cyan)">📱 Instalar como App</div>
-    <div style="font-size:11px;color:var(--text-muted);line-height:1.7">
-      <b style="color:var(--text)">Android Chrome:</b> ⋮ → "Adicionar à tela inicial"<br>
-      <b style="color:var(--text)">iOS Safari:</b> 📤 → "Adicionar à Tela de Início"<br>
-      <b style="color:var(--cyan)">Dica:</b> Ative notificações após instalar para alertas offline.
-    </div>
-  </div>
+  <div class="config-section"><div class="config-label">Notificações Push</div><div class="card" style="background:var(--blue-soft);border-color:var(--blue-border);margin-bottom:12px;padding:12px 14px"><div style="font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px">🔔 Alertas em tempo real</div><div style="font-size:10px;color:var(--text-muted);line-height:1.5">Receba sinais, gatilhos e encerramentos diretamente no seu dispositivo, mesmo com o app em segundo plano.</div></div><button class="action-btn primary" id="notifBtn" onclick="toggleNotifications()">🔔 Ativar Notificações</button><div id="notifStatus" style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:6px"></div></div>
+  <div class="config-section"><div class="config-label">Ações Rápidas</div><button class="action-btn danger" onclick="resetCircuitBreaker()">⛔ Resetar Circuit Breaker</button><button class="action-btn success" onclick="refreshAll()">↻ Atualizar Tudo Agora</button></div>
+  <div class="config-section"><div class="config-label">Parâmetros de Risco</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="stat-box"><div class="stat-label">Stop Loss</div><div class="stat-value red" id="paramSL">--</div></div><div class="stat-box"><div class="stat-label">Take Profit</div><div class="stat-value green" id="paramTP">--</div></div><div class="stat-box"><div class="stat-label">Max Trades</div><div class="stat-value cyan" id="paramMax">--</div></div><div class="stat-box"><div class="stat-label">Confluência</div><div class="stat-value gold" id="paramConf">--</div></div></div></div>
+  <div class="card" style="background:rgba(0,212,255,0.04);border-color:rgba(0,212,255,0.15)"><div class="card-header" style="color:var(--cyan)">📱 Instalar como App</div><div style="font-size:11px;color:var(--text-muted);line-height:1.7"><b style="color:var(--text)">Android Chrome:</b> ⋮ → "Adicionar à tela inicial"<br><b style="color:var(--text)">iOS Safari:</b> 📤 → "Adicionar à Tela de Início"<br><b style="color:var(--cyan)">Dica:</b> Ative notificações após instalar para alertas offline.</div></div>
 </div>
-
 </div>
-
-<!-- Navigation -->
 <nav id="nav">
   <button class="nav-btn active" onclick="navigate('dash',this)"><span class="icon">⬡</span>Dashboard</button>
   <button class="nav-btn" onclick="navigate('scan',this)"><span class="icon">📡</span>Scanner</button>
@@ -1498,13 +1397,10 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
   <button class="nav-btn" onclick="navigate('cfg',this)"><span class="icon">⚙</span>Config</button>
 </nav>
 </div>
-
 <script>
 /* ═══════════════════════════════════════════════════════════ */
 /* UTILITÁRIOS — Performance e UX */
 /* ═══════════════════════════════════════════════════════════ */
-
-// Formatador de preços inteligente
 function fmtPrice(p) {
   if (p === undefined || p === null) return '--';
   if (p >= 10000) return p.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -1513,43 +1409,30 @@ function fmtPrice(p) {
   if (p >= 1) return p.toFixed(5);
   return p.toFixed(6);
 }
-
-// Debounce para evitar chamadas excessivas
 function debounce(fn, delay) {
   let timeout;
-  return function(...args) {    clearTimeout(timeout);
+  return function(...args) {
+    clearTimeout(timeout);
     timeout = setTimeout(() => fn.apply(this, args), delay);
   };
 }
-
-// RequestAnimationFrame para updates suaves
 function smoothUpdate(fn) {
   requestAnimationFrame(() => {
     if (document.visibilityState === 'visible') fn();
-  });
-}
-
-// Highlight de texto para busca
+  });}
 function highlightText(text, query) {
   if (!query) return text;
   const regex = new RegExp(`(${query})`, 'gi');
   return text.replace(regex, '<span class="highlight">$1</span>');
 }
-
-// Cache inteligente no frontend
 const FrontendCache = {
   data: {},
-  ttl: 30000, // 30 segundos
-  set(key, value) {
-    this.data[key] = { value, ts: Date.now() };
-  },
+  ttl: 30000,
+  set(key, value) { this.data[key] = { value, ts: Date.now() }; },
   get(key) {
     const entry = this.data[key];
     if (!entry) return null;
-    if (Date.now() - entry.ts > this.ttl) {
-      delete this.data[key];
-      return null;
-    }
+    if (Date.now() - entry.ts > this.ttl) { delete this.data[key]; return null; }
     return entry.value;
   },
   clear() { this.data = {}; }
@@ -1558,33 +1441,23 @@ const FrontendCache = {
 /* ═══════════════════════════════════════════════════════════ */
 /* API CLIENT — Comunicação com backend */
 /* ═══════════════════════════════════════════════════════════ */
-
 const API = {
   async fetch(path, options = {}) {
     try {
-      const response = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'same-origin',
-        ...options
-      });      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, mode: 'same-origin', ...options });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
-    } catch (err) {
-      console.error(`API Error [${path}]:`, err);
-      throw err;
-    }
+    } catch (err) { console.error(`API Error [${path}]:`, err); throw err; }
   },
-  
   getStatus: () => API.fetch('/api/status'),
   getConfig: () => API.fetch('/api/config'),
   getSignals: () => API.fetch('/api/signals'),
   getTrends: () => API.fetch('/api/trends'),
   getReversals: () => API.fetch('/api/reversals'),
   getNews: () => API.fetch('/api/news'),
-  
   setMode: (mode) => API.fetch('/api/mode', { method:'POST', body:JSON.stringify({mode}) }),
   setTimeframe: (tf) => API.fetch('/api/timeframe', { method:'POST', body:JSON.stringify({timeframe:tf}) }),
   resetPause: () => API.fetch('/api/resetpausa', { method:'POST' }),
-  
   getVapidKey: () => API.fetch('/api/vapid-public-key'),
   subscribePush: (sub) => API.fetch('/api/subscribe', { method:'POST', body:JSON.stringify(sub) })
 };
@@ -1592,32 +1465,17 @@ const API = {
 /* ═══════════════════════════════════════════════════════════ */
 /* UI MANAGER — Renderização otimizada */
 /* ═══════════════════════════════════════════════════════════ */
-
 const UI = {
-  // Estado da aplicação
-  state: {
-    currentFilter: 'all',
-    signalFilter: 'all',
-    showClosed: false,
-    searchQuery: '',
-    lastSignals: [],
-    newSignalIds: new Set()
-  },
-  
-  // Navegação entre páginas
+  state: { currentFilter: 'all', signalFilter: 'all', showClosed: false, searchQuery: '', lastSignals: [], newSignalIds: new Set() },
   navigate(page, btn) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('page-' + page).classList.add('active');
     if (btn) btn.classList.add('active');
-    
-    // Carregar dados sob demanda
     if (page === 'scan') loadScanner();
     if (page === 'sig') { loadSignals(); this.state.newSignalIds.clear(); updateBadge(); }
     if (page === 'ct') { loadCT(); loadNews(); }
-    if (page === 'cfg') loadConfig();  },
-  
-  // Renderizar trade card com sparkline visual
+    if (page === 'cfg') loadConfig();
+  },
   renderTrade(trade) {
     const isCT = (trade.tipo || '').includes('CONTRA');
     const isBuy = trade.dir === 'BUY';
@@ -1625,82 +1483,25 @@ const UI = {
     const cardClass = isCT ? 'ct' : (isBuy ? 'buy' : 'sell');
     const badgeClass = isBuy ? 'buy' : 'sell';
     const progress = Math.min(Math.abs(trade.pnl) / 3 * 100, 100);
-    
-    // Sparkline simples baseada no P&L
     const sparkBars = Array.from({length: 12}, (_, i) => {
       const h = 4 + Math.random() * 16;
       const cls = isPos ? 'up' : 'down';
       return `<div class="spark-bar ${cls}" style="height:${h}%"></div>`;
     }).join('');
-    
-    return `
-      <div class="trade-card ${cardClass}">
-        <div class="trade-header">
-          <div>
-            <div class="trade-symbol">
-              ${trade.symbol}
-              ${isCT ? '<span class="ct-badge">CT</span>' : ''}
-            </div>
-            <div class="trade-name">${trade.name || ''} · ${trade.opened_at || ''}</div>
-          </div>
-          <span class="trade-badge ${badgeClass}">${isBuy ? '▲ BUY' : '▼ SELL'}</span>
-        </div>
-        <div class="sparkline">${sparkBars}</div>
-        <div class="trade-levels">
-          <div class="level-box"><div class="level-label">Entrada</div><div class="level-value">${fmtPrice(trade.entry)}</div></div>
-          <div class="level-box"><div class="level-label">SL 🛡</div><div class="level-value sl">${fmtPrice(trade.sl)}</div></div>
-          <div class="level-box"><div class="level-label">TP 🎯</div><div class="level-value tp">${fmtPrice(trade.tp)}</div></div>
-        </div>
-        <div class="trade-footer">
-          <span class="trade-pnl ${isPos ? 'pos' : 'neg'}">${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}%</span>
-          <span class="trade-current">Atual: ${fmtPrice(trade.current)}</span>
-        </div>
-        <div class="progress-bar"><div class="progress-fill ${isPos ? 'pos' : 'neg'}" style="width:${progress}%"></div></div>
-      </div>
-    `;
+    return `<div class="trade-card ${cardClass}"><div class="trade-header"><div><div class="trade-symbol">${trade.symbol}${isCT ? '<span class="ct-badge">CT</span>' : ''}</div><div class="trade-name">${trade.name || ''} · ${trade.opened_at || ''}</div></div><span class="trade-badge ${badgeClass}">${isBuy ? '▲ BUY' : '▼ SELL'}</span></div><div class="sparkline">${sparkBars}</div><div class="trade-levels"><div class="level-box"><div class="level-label">Entrada</div><div class="level-value">${fmtPrice(trade.entry)}</div></div><div class="level-box"><div class="level-label">SL 🛡</div><div class="level-value sl">${fmtPrice(trade.sl)}</div></div><div class="level-box"><div class="level-label">TP 🎯</div><div class="level-value tp">${fmtPrice(trade.tp)}</div></div></div><div class="trade-footer"><span class="trade-pnl ${isPos ? 'pos' : 'neg'}">${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}%</span><span class="trade-current">Atual: ${fmtPrice(trade.current)}</span></div><div class="progress-bar"><div class="progress-fill ${isPos ? 'pos' : 'neg'}" style="width:${progress}%"></div></div></div>`;
   },
-  
-  // Renderizar ativo no scanner com indicadores visuais
   renderAsset(asset) {
     const trend = asset.cenario || 'NEUTRO';
     const icon = trend === 'ALTA' ? '↑' : trend === 'BAIXA' ? '↓' : '–';
-    const iconClass = trend === 'ALTA' ? 'up' : trend === 'BAIXA' ? 'down' : 'neutral';    const changeClass = asset.change_pct >= 0 ? 'pos' : 'neg';
+    const iconClass = trend === 'ALTA' ? 'up' : trend === 'BAIXA' ? 'down' : 'neutral';
+    const changeClass = asset.change_pct >= 0 ? 'pos' : 'neg';
     const rsiClass = asset.rsi > 70 ? 'rsi-bad' : asset.rsi < 30 ? 'rsi-ok' : 'rsi-warn';
     const adxClass = asset.adx > 25 ? 'adx-strong' : 'adx-weak';
     const catMap = { FOREX:'📈', CRYPTO:'₿', COMMODITIES:'🏅', INDICES:'📊' };
-    
-    // Destaque para busca
     const symbolHtml = UI.state.searchQuery ? highlightText(asset.symbol, UI.state.searchQuery) : asset.symbol;
     const nameHtml = UI.state.searchQuery ? highlightText(asset.name || '', UI.state.searchQuery) : (asset.name || '');
-    
-    return `
-      <div class="asset-row" data-symbol="${asset.symbol}" data-category="${asset.category}">
-        <div class="asset-icon ${iconClass}">${icon}</div>
-        <div class="asset-info">
-          <div class="asset-symbol">${symbolHtml}</div>
-          <div class="asset-name">${nameHtml} · ${catMap[asset.category] || ''} ${asset.category || ''}</div>
-          <div class="asset-meta">
-            <span class="asset-tag ${changeClass}">${asset.change_pct >= 0 ? '+' : ''}${asset.change_pct.toFixed(2)}%</span>
-            <span class="asset-tag gray">RSI: ${asset.rsi.toFixed(0)}</span>
-            <span class="asset-tag gray">ADX: ${asset.adx.toFixed(0)}</span>
-          </div>
-          <div class="asset-indicators">
-            <span class="indicator-dot ${rsiClass}" title="RSI"></span>
-            <span class="indicator-dot ${adxClass}" title="ADX"></span>
-            <span class="price-movement ${changeClass}">
-              <span class="price-arrow">${asset.change_pct >= 0 ? '▲' : '▼'}</span>
-              ${Math.abs(asset.change_pct).toFixed(2)}%
-            </span>
-          </div>
-        </div>
-        <div class="asset-price">
-          <div class="asset-price-value">${fmtPrice(asset.price)}</div>
-        </div>
-      </div>
-    `;
+    return `<div class="asset-row" data-symbol="${asset.symbol}" data-category="${asset.category}"><div class="asset-icon ${iconClass}">${icon}</div><div class="asset-info"><div class="asset-symbol">${symbolHtml}</div><div class="asset-name">${nameHtml} · ${catMap[asset.category] || ''} ${asset.category || ''}</div><div class="asset-meta"><span class="asset-tag ${changeClass}">${asset.change_pct >= 0 ? '+' : ''}${asset.change_pct.toFixed(2)}%</span><span class="asset-tag gray">RSI: ${asset.rsi.toFixed(0)}</span><span class="asset-tag gray">ADX: ${asset.adx.toFixed(0)}</span></div><div class="asset-indicators"><span class="indicator-dot ${rsiClass}" title="RSI"></span><span class="indicator-dot ${adxClass}" title="ADX"></span><span class="price-movement ${changeClass}"><span class="price-arrow">${asset.change_pct >= 0 ? '▲' : '▼'}</span>${Math.abs(asset.change_pct).toFixed(2)}%</span></div></div><div class="asset-price"><div class="asset-price-value">${fmtPrice(asset.price)}</div></div></div>`;
   },
-  
-  // Renderizar sinal com animação de novo
   renderSignal(signal, isNew = false) {
     const types = {
       radar: { icon:'⚠', cls:'radar', label:'RADAR', color:'var(--blue)' },
@@ -1713,39 +1514,23 @@ const UI = {
     };
     const t = types[signal.tipo] || types.radar;
     const newClass = isNew ? 'new-signal' : '';
-        return `
-      <div class="signal-item ${newClass}" data-id="${signal.id || ''}">
-        <div class="signal-icon ${t.cls}">${t.icon}</div>
-        <div class="signal-body">
-          <div class="signal-type ${signal.tipo}" style="color:${t.color}">${t.label}</div>
-          <div class="signal-text">${signal.texto}</div>
-          <div class="signal-time">${signal.ts}</div>
-        </div>
-      </div>
-    `;
+    return `<div class="signal-item ${newClass}" data-id="${signal.id || ''}"><div class="signal-icon ${t.cls}">${t.icon}</div><div class="signal-body"><div class="signal-type ${signal.tipo}" style="color:${t.color}">${t.label}</div><div class="signal-text">${signal.texto}</div><div class="signal-time">${signal.ts}</div></div></div>`;
   },
-  
-  // Virtual scroll para listas longas (otimização de performance)
   virtualScroll(containerId, items, renderItem, itemHeight = 56) {
-    const container = document.getElementById(containerId);
-    const content = container.querySelector('.virtual-content');
+    const container = document.getElementById(containerId);    const content = container.querySelector('.virtual-content');
     if (!container || !content) return;
-    
     const visibleCount = Math.ceil(container.clientHeight / itemHeight) + 4;
     const scrollTop = container.scrollTop;
     const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - 2);
     const endIndex = Math.min(items.length, startIndex + visibleCount);
-    
     content.style.height = `${items.length * itemHeight}px`;
     content.style.transform = `translateY(${startIndex * itemHeight}px)`;
-    
     const fragment = document.createDocumentFragment();
     for (let i = startIndex; i < endIndex; i++) {
       const div = document.createElement('div');
       div.innerHTML = renderItem(items[i], i);
       fragment.appendChild(div.firstElementChild || div);
     }
-    
     content.innerHTML = '';
     content.appendChild(fragment);
   }
@@ -1759,21 +1544,16 @@ function navigate(page, btn) { UI.navigate(page, btn); }
 /* ═══════════════════════════════════════════════════════════ */
 /* LÓGICA PRINCIPAL DO APP */
 /* ═══════════════════════════════════════════════════════════ */
-
-// Carregar dashboard principal
 async function loadDashboard() {
-  try {    document.getElementById('errorBanner').style.display = 'none';
+  try {
+    document.getElementById('errorBanner').style.display = 'none';
     const status = await API.getStatus();
-    
-    // Stats
     document.getElementById('statWins').textContent = status.wins;
     document.getElementById('statLosses').textContent = status.losses;
     document.getElementById('statWR').textContent = `${status.winrate}% WR`;
     document.getElementById('statSeq').textContent = `Seq: ${status.consecutive_losses}`;
     document.getElementById('statActive').textContent = `${status.active_trades.length}/3`;
     document.getElementById('statMode').textContent = `${status.mode} ${status.timeframe}`;
-    
-    // Circuit breaker
     const cbBanner = document.getElementById('cbBanner');
     if (status.paused) {
       cbBanner.style.display = 'flex';
@@ -1781,56 +1561,31 @@ async function loadDashboard() {
     } else {
       cbBanner.style.display = 'none';
     }
-    
-    // Trades ativos
     const tradesContainer = document.getElementById('tradesContainer');
     const trades = UI.state.showClosed ? status.active_trades : status.active_trades.filter(t => !t.closed);
     if (trades.length) {
       tradesContainer.innerHTML = trades.map(UI.renderTrade).join('');
     } else {
-      tradesContainer.innerHTML = '<div class="empty-state"><span class="empty-icon">📭</span><div class="empty-text">Nenhum trade aberto</div></div>';
-    }
-    
-    // Mercados
+      tradesContainer.innerHTML = '<div class="empty-state"><span class="empty-icon">📭</span><div class="empty-text">Nenhum trade aberto</div></div>';    }
     const markets = { FOREX:'📈 FOREX', CRYPTO:'₿ Cripto', COMMODITIES:'🏅 Commodities', INDICES:'📊 Índices' };
-    document.getElementById('marketsContainer').innerHTML = 
-      Object.entries(status.markets).map(([k, v]) => `
-        <div class="market-item">
-          <span class="market-name">${markets[k] || k}</span>
-          <span class="market-status ${v ? 'open' : 'closed'}">${v ? 'Aberto' : 'Fechado'}</span>
-        </div>
-      `).join('');
-    
-    // Timestamp
+    document.getElementById('marketsContainer').innerHTML = Object.entries(status.markets).map(([k, v]) => `<div class="market-item"><span class="market-name">${markets[k] || k}</span><span class="market-status ${v ? 'open' : 'closed'}">${v ? 'Aberto' : 'Fechado'}</span></div>`).join('');
     document.getElementById('lastUpdate').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
-    
-    // Atualizar botões de config
     updateConfigButtons();
-    
   } catch (e) {
     document.getElementById('errorBanner').style.display = 'block';
     console.error('Dashboard load error:', e);
   }
 }
-// Carregar scanner com filtros e busca
 async function loadScanner() {
   try {
-    // Usar cache se disponível e recente
     let trends = FrontendCache.get('trends');
-    if (!trends) {
-      trends = await API.getTrends();
-      FrontendCache.set('trends', trends);
-    }
-    
-    // Contadores de tendência
+    if (!trends) { trends = await API.getTrends(); FrontendCache.set('trends', trends); }
     const up = trends.filter(x => x.cenario === 'ALTA').length;
     const down = trends.filter(x => x.cenario === 'BAIXA').length;
     const neutral = trends.filter(x => !x.cenario || x.cenario === 'NEUTRO').length;
     document.getElementById('trendUp').textContent = up;
     document.getElementById('trendDown').textContent = down;
     document.getElementById('trendNeutral').textContent = neutral;
-    
-    // Aplicar filtros
     let filtered = [...trends];
     const f = UI.state.currentFilter;
     if (f === 'up') filtered = filtered.filter(x => x.cenario === 'ALTA');
@@ -1839,193 +1594,92 @@ async function loadScanner() {
     else if (f === 'crypto') filtered = filtered.filter(x => x.category === 'CRYPTO');
     else if (f === 'comm') filtered = filtered.filter(x => x.category === 'COMMODITIES');
     else if (f === 'idx') filtered = filtered.filter(x => x.category === 'INDICES');
-    
-    // Aplicar busca
     if (UI.state.searchQuery) {
       const q = UI.state.searchQuery.toLowerCase();
-      filtered = filtered.filter(x => 
-        x.symbol.toLowerCase().includes(q) || 
-        (x.name || '').toLowerCase().includes(q)
-      );
+      filtered = filtered.filter(x => x.symbol.toLowerCase().includes(q) || (x.name || '').toLowerCase().includes(q));
     }
-    
-    // Ordenar: tendência primeiro, depois por variação
     filtered.sort((a, b) => {
       const order = { ALTA: 0, BAIXA: 1, NEUTRO: 2 };
       return (order[a.cenario] ?? 2) - (order[b.cenario] ?? 2) || Math.abs(b.change_pct) - Math.abs(a.change_pct);
     });
-    
-    // Renderizar com virtual scroll
     const list = document.getElementById('scannerList');
     if (!filtered.length) {
       list.innerHTML = '<div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-text">Nenhum ativo neste filtro.</div></div>';
     } else {
-      UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64);      // Re-renderizar no scroll
+      UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64);
       list.onscroll = debounce(() => UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64), 16);
     }
-    
   } catch (e) {
     document.getElementById('scannerList').innerHTML = '<div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar dados</div></div>';
   }
 }
-
-// Debounced search para scanner
-const debouncedSearch = debounce(() => {
-  UI.state.searchQuery = document.getElementById('searchInput').value.trim();
-  loadScanner();
-}, 200);
-
-// Filtros do scanner
+const debouncedSearch = debounce(() => { UI.state.searchQuery = document.getElementById('searchInput').value.trim(); loadScanner(); }, 200);
 function setScanFilter(filter, btn) {
-  document.querySelectorAll('#scanFilters .chip').forEach(c => c.classList.remove('active'));
-  btn.classList.add('active');
+  document.querySelectorAll('#scanFilters .chip').forEach(c => c.classList.remove('active'));  btn.classList.add('active');
   UI.state.currentFilter = filter;
   UI.state.searchQuery = '';
   document.getElementById('searchInput').value = '';
   loadScanner();
 }
-
-// Carregar sinais
 async function loadSignals() {
   try {
     const signals = await API.getSignals();
-    
-    // Detectar novos sinais para animação
     const currentIds = signals.map(s => s.texto + s.ts).slice(0, 20);
-    signals.forEach((s, i) => {
-      const id = s.texto + s.ts;
-      if (!UI.state.lastSignals.includes(id) && i < 5) {
-        UI.state.newSignalIds.add(id);
-      }
-    });
+    signals.forEach((s, i) => { const id = s.texto + s.ts; if (!UI.state.lastSignals.includes(id) && i < 5) { UI.state.newSignalIds.add(id); } });
     UI.state.lastSignals = currentIds;
-    
-    // Filtrar
     let filtered = [...signals];
-    if (UI.state.signalFilter !== 'all') {
-      filtered = filtered.filter(s => s.tipo === UI.state.signalFilter);
-    }
-    
-    // Renderizar
+    if (UI.state.signalFilter !== 'all') { filtered = filtered.filter(s => s.tipo === UI.state.signalFilter); }
     const container = document.getElementById('signalsList');
     if (!filtered.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-icon">🔔</span><div class="empty-text">Nenhum sinal neste filtro.</div></div>';    } else {
-      container.innerHTML = filtered.map(s => {
-        const id = s.texto + s.ts;
-        return UI.renderSignal(s, UI.state.newSignalIds.has(id));
-      }).reverse().join('');
-      
-      // Remover marcação de novo após animação
+      container.innerHTML = '<div class="empty-state"><span class="empty-icon">🔔</span><div class="empty-text">Nenhum sinal neste filtro.</div></div>';
+    } else {
+      container.innerHTML = filtered.map(s => { const id = s.texto + s.ts; return UI.renderSignal(s, UI.state.newSignalIds.has(id)); }).reverse().join('');
       setTimeout(() => UI.state.newSignalIds.clear(), 1000);
     }
-    
-    // Atualizar badge
     updateBadge();
-    
-  } catch (e) {
-    console.error('Signals load error:', e);
-  }
+  } catch (e) { console.error('Signals load error:', e); }
 }
-
-// Filtros de sinais
 function setSignalFilter(type, btn) {
   document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
   UI.state.signalFilter = type;
   loadSignals();
 }
-
-// Atualizar badge de notificação
 function updateBadge() {
   const badge = document.getElementById('sigBadge');
   const unread = UI.state.newSignalIds.size;
-  if (unread > 0) {
-    badge.style.display = 'flex';
-    badge.textContent = unread > 9 ? '9+' : unread;
-  } else {
-    badge.style.display = 'none';
-  }
+  if (unread > 0) { badge.style.display = 'flex'; badge.textContent = unread > 9 ? '9+' : unread; }
+  else { badge.style.display = 'none'; }
 }
-
-// Carregar oportunidades CT
 async function loadCT() {
   const container = document.getElementById('ctList');
   container.innerHTML = '<div class="empty-state"><span class="empty-icon spin">⚡</span><div class="empty-text">Analisando oportunidades...</div></div>';
-  
   try {
     const reversals = await API.getReversals();
-    if (!reversals.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚡</span><div class="empty-text">Nenhuma oportunidade CT detectada.</div></div>';
-      return;
-    }
-        container.innerHTML = reversals.map(r => {
+    if (!reversals.length) { container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚡</span><div class="empty-text">Nenhuma oportunidade CT detectada.</div></div>'; return; }
+    container.innerHTML = reversals.map(r => {
       const isBuy = r.direction === 'BUY';
       const reasons = (r.reasons || []).slice(0, 4).map(s => `<span class="asset-tag gray">${s}</span>`).join('');
       const rsiClass = r.rsi > 70 ? 'red' : r.rsi < 30 ? 'green' : '';
-      
-      return `
-        <div class="trade-card ct">
-          <div class="trade-header">
-            <div>
-              <div class="trade-symbol">${r.symbol} <span style="font-size:10px;color:var(--text-muted)">${r.name}</span></div>
-            </div>
-            <span class="trade-badge" style="background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold-border)">${r.strength}%</span>
-          </div>
-          <div style="font-size:11px;font-weight:600;margin:8px 0;color:${isBuy ? 'var(--green)' : 'var(--red)'}">
-            ${isBuy ? '▲ COMPRAR' : '▼ VENDER'} — ${isBuy ? 'Baixa→Alta' : 'Alta→Baixa'}
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${reasons}</div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-            <div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">Preço</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700">${fmtPrice(r.price)}</div></div>
-            <div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">RSI</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700" class="${rsiClass}">${r.rsi.toFixed(1)}</div></div>
-            <div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">Força</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700;color:var(--gold)">${r.strength}%</div></div>
-          </div>
-        </div>
-      `;
+      return `<div class="trade-card ct"><div class="trade-header"><div><div class="trade-symbol">${r.symbol} <span style="font-size:10px;color:var(--text-muted)">${r.name}</span></div></div><span class="trade-badge" style="background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold-border)">${r.strength}%</span></div><div style="font-size:11px;font-weight:600;margin:8px 0;color:${isBuy ? 'var(--green)' : 'var(--red)'}">${isBuy ? '▲ COMPRAR' : '▼ VENDER'} — ${isBuy ? 'Baixa→Alta' : 'Alta→Baixa'}</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${reasons}</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"><div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">Preço</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700">${fmtPrice(r.price)}</div></div><div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">RSI</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700" class="${rsiClass}">${r.rsi.toFixed(1)}</div></div><div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">Força</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700;color:var(--gold)">${r.strength}%</div></div></div></div>`;
     }).join('');
-    
-  } catch (e) {
-    container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar</div></div>';
-  }
-}
-
-// Carregar notícias
-async function loadNews() {
+  } catch (e) { container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar</div></div>'; }
+}async function loadNews() {
   const container = document.getElementById('newsList');
   try {
     const data = await API.getNews();
     const fg = data.fg;
-    
-    // Fear & Greed
     if (fg && fg.value) {
       const val = parseInt(fg.value) || 0;
       document.getElementById('fgValue').textContent = `${fg.value} – ${fg.label}`;
       document.getElementById('fgScore').textContent = fg.value;
       document.getElementById('fgValue').style.color = val > 60 ? 'var(--green)' : val < 40 ? 'var(--red)' : 'var(--gold)';
     }
-    
-    // Notícias
     const articles = data.articles || [];
-    if (!articles.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-icon">📰</span><div class="empty-text">Sem notícias no momento.</div></div>';      return;
-    }
-    
-    container.innerHTML = articles.map((a, i) => `
-      <div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)${i === articles.length-1 ? ';border-bottom:none' : ''}">
-        <div style="width:24px;height:24px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);flex-shrink:0;margin-top:2px">${i+1}</div>
-        <div style="flex:1;min-width:0">
-          <a href="${a.url || '#'}" target="_blank" style="font-size:12px;line-height:1.5;color:var(--text);text-decoration:none;display:block">${a.title || ''}</a>
-          <div style="font-size:9px;color:var(--text-muted);margin-top:4px">${a.source || ''}</div>
-        </div>
-      </div>
-    `).join('');
-    
-  } catch (e) {
-    container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar notícias</div></div>';
-  }
+    if (!articles.length) { container.innerHTML = '<div class="empty-state"><span class="empty-icon">📰</span><div class="empty-text">Sem notícias no momento.</div></div>'; return; }
+    container.innerHTML = articles.map((a, i) => `<div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)${i === articles.length-1 ? ';border-bottom:none' : ''}"><div style="width:24px;height:24px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);flex-shrink:0;margin-top:2px">${i+1}</div><div style="flex:1;min-width:0"><a href="${a.url || '#'}" target="_blank" style="font-size:12px;line-height:1.5;color:var(--text);text-decoration:none;display:block">${a.title || ''}</a><div style="font-size:9px;color:var(--text-muted);margin-top:4px">${a.source || ''}</div></div></div>`).join('');
+  } catch (e) { container.innerHTML = '<div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar notícias</div></div>'; }
 }
-
-// Sub-páginas (CT/News)
 function showSubPage(page) {
   document.getElementById('subCT').style.display = page === 'ct' ? '' : 'none';
   document.getElementById('subNews').style.display = page === 'news' ? '' : 'none';
@@ -2033,8 +1687,6 @@ function showSubPage(page) {
   document.getElementById('tabNews').classList.toggle('active', page === 'news');
   if (page === 'news') loadNews();
 }
-
-// Carregar config
 async function loadConfig() {
   try {
     const cfg = await API.getConfig();
@@ -2046,280 +1698,142 @@ async function loadConfig() {
   updateConfigButtons();
   updateNotificationButton();
 }
-
-// Atualizar botões de config
 function updateConfigButtons() {
-  // Modo
-  document.querySelectorAll('[data-mode]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === window._status?.mode);
-  });
-  // Timeframe
-  document.querySelectorAll('[data-tf]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tf === window._status?.timeframe);
-  });}
-
-// Setar modo
-async function setMode(mode) {
-  try {
-    await API.setMode(mode);
-    await loadDashboard();
-  } catch (e) { alert('Erro: ' + e.message); }
+  document.querySelectorAll('[data-mode]').forEach(btn => { btn.classList.toggle('active', btn.dataset.mode === window._status?.mode); });
+  document.querySelectorAll('[data-tf]').forEach(btn => { btn.classList.toggle('active', btn.dataset.tf === window._status?.timeframe); });
 }
-
-// Setar timeframe
-async function setTimeframe(tf) {
-  try {
-    await API.setTimeframe(tf);
-    await loadDashboard();
-  } catch (e) { alert('Erro: ' + e.message); }
-}
-
-// Reset circuit breaker
-async function resetCircuitBreaker() {
-  if (!confirm('Resetar Circuit Breaker?')) return;
-  try {
-    await API.resetPause();
-    await loadDashboard();
-  } catch (e) { alert('Erro: ' + e.message); }
-}
-
-// Toggle trades fechados
-function toggleClosedTrades() {
-  UI.state.showClosed = document.getElementById('toggleClosed').checked;
-  loadDashboard();
-}
-
-// Refresh global
+async function setMode(mode) { try { await API.setMode(mode); await loadDashboard(); } catch (e) { alert('Erro: ' + e.message); } }
+async function setTimeframe(tf) { try { await API.setTimeframe(tf); await loadDashboard(); } catch (e) { alert('Erro: ' + e.message); } }
+async function resetCircuitBreaker() { if (!confirm('Resetar Circuit Breaker?')) return; try { await API.resetPause(); await loadDashboard(); } catch (e) { alert('Erro: ' + e.message); } }
+function toggleClosedTrades() { UI.state.showClosed = document.getElementById('toggleClosed').checked; loadDashboard(); }
 async function refreshAll() {
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('refreshing');
   FrontendCache.clear();
-  
   try {
     await loadDashboard();
     const activePage = document.querySelector('.page.active').id;
-    if (activePage === 'page-scan') await loadScanner();
-    if (activePage === 'page-sig') await loadSignals();
-  } finally {
-    btn.classList.remove('refreshing');
-  }
+    if (activePage === 'page-scan') await loadScanner();    if (activePage === 'page-sig') await loadSignals();
+  } finally { btn.classList.remove('refreshing'); }
 }
-
-/* ═══════════════════════════════════════════════════════════ *//* NOTIFICAÇÕES PUSH */
-/* ═══════════════════════════════════════════════════════════ */
-
 let swRegistration = null;
-
-async function initServiceWorker() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-  try {
-    swRegistration = await navigator.serviceWorker.register('/sw.js');
-    console.log('[SniperBot] SW registrado');
-  } catch (e) { console.warn('[SniperBot] SW error:', e); }
-}
-
+async function initServiceWorker() { if (!('serviceWorker' in navigator) || !('PushManager' in window)) return; try { swRegistration = await navigator.serviceWorker.register('/sw.js'); console.log('[SniperBot] SW registrado'); } catch (e) { console.warn('[SniperBot] SW error:', e); } }
 async function toggleNotifications() {
-  if (!('Notification' in window)) {
-    alert('Seu navegador não suporta notificações push.');
-    return;
-  }
-  
-  if (Notification.permission === 'denied') {
-    alert('Notificações bloqueadas. Habilite nas configurações do navegador.');
-    return;
-  }
-  
-  if (Notification.permission === 'granted') {
-    await subscribeUser();
-    return;
-  }
-  
+  if (!('Notification' in window)) { alert('Seu navegador não suporta notificações push.'); return; }
+  if (Notification.permission === 'denied') { alert('Notificações bloqueadas. Habilite nas configurações do navegador.'); return; }
+  if (Notification.permission === 'granted') { await subscribeUser(); return; }
   const perm = await Notification.requestPermission();
   if (perm === 'granted') await subscribeUser();
   updateNotificationButton();
 }
-
 async function subscribeUser() {
-  if (!swRegistration) {
-    alert('Service worker não disponível. Recarregue a página.');
-    return;
-  }
-  
+  if (!swRegistration) { alert('Service worker não disponível. Recarregue a página.'); return; }
   try {
     const vapid = await API.getVapidKey();
-    if (!vapid.key) {
-      alert('VAPID não configurado no servidor.\nAdicione VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY nas variáveis de ambiente.');
-      return;
-    }
-    
-    const subscription = await swRegistration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapid.key)    });
-    
+    if (!vapid.key) { alert('VAPID não configurado no servidor.\nAdicione VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY nas variáveis de ambiente.'); return; }
+    const subscription = await swRegistration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid.key) });
     await API.subscribePush(subscription);
     document.getElementById('notifStatus').textContent = '✅ Notificações ativadas!';
     document.getElementById('notifBtn').textContent = '🔕 Gerenciar Notificações';
-    
-  } catch (e) {
-    document.getElementById('notifStatus').textContent = 'Erro: ' + e.message;
-  }
+  } catch (e) { document.getElementById('notifStatus').textContent = 'Erro: ' + e.message; }
   updateNotificationButton();
 }
-
 function updateNotificationButton() {
   const btn = document.getElementById('notifBtn');
-  const status = document.getElementById('notifStatus');
-  
-  if (!('Notification' in window) || !('PushManager' in window)) {
-    btn.textContent = '❌ Push não suportado';
-    btn.disabled = true;
-    return;
-  }
-  
-  if (Notification.permission === 'denied') {
-    btn.textContent = '🚫 Notificações bloqueadas';
-    btn.disabled = true;
-    return;
-  }
-  
-  if (Notification.permission === 'granted') {
-    btn.textContent = '✅ Notificações Ativas';
-  } else {
-    btn.textContent = '🔔 Ativar Notificações Push';
-  }
+  if (!('Notification' in window) || !('PushManager' in window)) { btn.textContent = '❌ Push não suportado'; btn.disabled = true; return; }
+  if (Notification.permission === 'denied') { btn.textContent = '🚫 Notificações bloqueadas'; btn.disabled = true; return; }
+  if (Notification.permission === 'granted') { btn.textContent = '✅ Notificações Ativas'; } else { btn.textContent = '🔔 Ativar Notificações Push'; }
   btn.disabled = false;
 }
-
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
+  for (let i = 0; i < rawData.length; ++i) { outputArray[i] = rawData.charCodeAt(i); }
   return outputArray;
 }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* INICIALIZAÇÃO */
-/* ═══════════════════════════════════════════════════════════ */
-// Manifest dinâmico para PWA
-const manifest = {
-  name: 'Sniper Bot',
-  short_name: 'SniperBot',
-  start_url: '/',
-  display: 'standalone',
-  orientation: 'portrait',
-  background_color: '#06090f',
-  theme_color: '#06090f',
-  icons: [
-    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
-  ]
-};
+const manifest = { name: 'Sniper Bot', short_name: 'SniperBot', start_url: '/', display: 'standalone', orientation: 'portrait', background_color: '#06090f', theme_color: '#06090f', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] };
 const manifestBlob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
 const manifestLink = document.createElement('link');
 manifestLink.rel = 'manifest';
 manifestLink.href = URL.createObjectURL(manifestBlob);
 document.head.appendChild(manifestLink);
-
-// Carregar preferências salvas
 function loadPreferences() {
   const saved = localStorage.getItem('sniper_prefs');
   if (saved) {
-    try {
-      const prefs = JSON.parse(saved);
+    try {      const prefs = JSON.parse(saved);
       if (prefs.theme) document.documentElement.setAttribute('data-theme', prefs.theme);
       if (prefs.signalFilter) {
         UI.state.signalFilter = prefs.signalFilter;
         const btn = document.querySelector(`#signalFilters .chip[data-type="${prefs.signalFilter}"]`);
-        if (btn) {
-          document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
-          btn.classList.add('active');
-        }
+        if (btn) { document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active')); btn.classList.add('active'); }
       }
     } catch (_) {}
   }
 }
-
-function savePreferences(key, value) {
-  const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}');
-  prefs[key] = value;
-  localStorage.setItem('sniper_prefs', JSON.stringify(prefs));
-}
-
-// Init
+function savePreferences(key, value) { const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}'); prefs[key] = value; localStorage.setItem('sniper_prefs', JSON.stringify(prefs)); }
 window.addEventListener('load', async () => {
   initServiceWorker();
-  loadPreferences();  
-  // Carregar dados iniciais
+  loadPreferences();
   await loadDashboard();
-  window._status = await API.getStatus(); // Para referência nos botões
-  
-  // Auto-refresh a cada 30s (otimizado com visibilidade)
-  setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      loadDashboard();
-      if (document.querySelector('.page.active')?.id === 'page-sig') loadSignals();
-    }
-  }, 30000);
-  
-  // Listener para visibilidade (economiza recursos quando app está em background)
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      loadDashboard();
-      loadSignals();
-    }
-  });
+  window._status = await API.getStatus();
+  setInterval(() => { if (document.visibilityState === 'visible') { loadDashboard(); if (document.querySelector('.page.active')?.id === 'page-sig') loadSignals(); } }, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { loadDashboard(); loadSignals(); } });
 });
 </script>
 </body>
 </html>"""
 
 
-# ═══════════════════════════════════════════════════════════════
-# FLASK API (INALTERADA - Estrutura preservada)
-# ═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
 
     @app.after_request
     def cors_headers(resp):
-        resp.headers["Access-Control-Allow-Origin"]  = "*"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
 
     @app.route("/")
-    def index(): return Response(DASHBOARD_HTML, mimetype="text/html")
+    def index():
+        return Response(DASHBOARD_HTML, mimetype="text/html")
 
     @app.route("/sw.js")
-    def sw(): return Response(SW_JS, mimetype="application/javascript")
+    def sw():
+        return Response(SW_JS, mimetype="application/javascript")
 
     @app.route("/icon-192.png")
     @app.route("/icon-512.png")
     def icon():
-        size = 192 if "192" in request.path else 512        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
+        size = 192 if "192" in request.path else 512
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
-
     @app.route("/api/health")
-    def api_health(): return jsonify({"status": "ok", "version": "7.2"})
+    def api_health():
+        return jsonify({"status": "ok", "version": "7.2"})
 
     @app.route("/api/status")
     def api_status():
         total = bot.wins + bot.losses
-        wr    = round(bot.wins/total*100, 1) if total > 0 else 0
+        wr = round(bot.wins/total*100, 1) if total > 0 else 0
         trades_out = []
         for t in bot.active_trades:
-            try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
-            except: cur = t["entry"]
+            try:
+                res = get_analysis(t["symbol"], bot.timeframe)
+                cur = res["price"] if res else t["entry"]
+            except:
+                cur = t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
-            if t["dir"] == "SELL": pnl = -pnl
-            trades_out.append({"symbol": t["symbol"], "name": t.get("name",""), "dir": t["dir"],
+            if t["dir"] == "SELL":
+                pnl = -pnl
+            trades_out.append({
+                "symbol": t["symbol"], "name": t.get("name",""), "dir": t["dir"],
                 "tipo": t.get("tipo",""), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
-                "current": cur, "pnl": round(pnl,2), "opened_at": t.get("opened_at","")})
+                "current": cur, "pnl": round(pnl,2), "opened_at": t.get("opened_at","")
+            })
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
             "consecutive_losses": bot.consecutive_losses, "mode": bot.mode, "timeframe": bot.timeframe,
@@ -2334,23 +1848,26 @@ def create_api(bot):
                         "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE})
 
     @app.route("/api/history")
-    def api_history(): return jsonify(list(reversed(bot.history[-50:])))
+    def api_history():
+        return jsonify(list(reversed(bot.history[-50:])))
 
     @app.route("/api/signals")
-    def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
+    def api_signals():
+        return jsonify(list(reversed(bot.signals_feed)))
 
     @app.route("/api/news")
     def api_news():
         now = time.time()
         if now - bot.news_cache_ts > 600 or not bot.news_cache:
             try:
-                bot.news_cache    = {"fg": get_fear_greed(), "articles": get_news(15)}
-                bot.news_cache_ts = now
-            except Exception as e: log(f"[NEWS] {e}")
+                bot.news_cache = {"fg": get_fear_greed(), "articles": get_news(15)}                bot.news_cache_ts = now
+            except Exception as e:
+                log(f"[NEWS] {e}")
         return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
 
     @app.route("/api/trends")
-    def api_trends():        bot.update_trends_cache()
+    def api_trends():
+        bot.update_trends_cache()
         out = []
         for sym, entry in bot.trend_cache.items():
             d = entry["data"]
@@ -2378,32 +1895,41 @@ def create_api(bot):
 
     @app.route("/api/mode", methods=["POST","OPTIONS"])
     def api_mode():
-        if request.method == "OPTIONS": return jsonify({}), 200
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
         data = request.get_json(force=True) or {}
         mode = data.get("mode","")
-        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return jsonify({"error":"inválido"}),400
-        bot.set_mode(mode); return jsonify({"ok": True})
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]:
+            return jsonify({"error":"inválido"}),400
+        bot.set_mode(mode)
+        return jsonify({"ok": True})
 
     @app.route("/api/timeframe", methods=["POST","OPTIONS"])
     def api_timeframe():
-        if request.method == "OPTIONS": return jsonify({}), 200
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
         data = request.get_json(force=True) or {}
-        tf = data.get("timeframe","")
-        if tf not in Config.TIMEFRAMES: return jsonify({"error":"inválido"}),400
-        bot.set_timeframe(tf); return jsonify({"ok": True})
+        tf = data.get("timeframe","")        if tf not in Config.TIMEFRAMES:
+            return jsonify({"error":"inválido"}),400
+        bot.set_timeframe(tf)
+        return jsonify({"ok": True})
 
     @app.route("/api/resetpausa", methods=["POST","OPTIONS"])
     def api_reset():
-        if request.method == "OPTIONS": return jsonify({}), 200
-        bot.reset_pause(); return jsonify({"ok": True})
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        bot.reset_pause()
+        return jsonify({"ok": True})
 
     @app.route("/api/vapid-public-key")
     def api_vapid_key():
-        key = os.getenv("VAPID_PUBLIC_KEY","")        return jsonify({"key": key})
+        key = os.getenv("VAPID_PUBLIC_KEY","")
+        return jsonify({"key": key})
 
     @app.route("/api/subscribe", methods=["POST","OPTIONS"])
     def api_subscribe():
-        if request.method == "OPTIONS": return jsonify({}), 200
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
         sub = request.get_json(force=True)
         if sub and sub not in _push_subscriptions:
             _push_subscriptions.append(sub)
@@ -2415,44 +1941,57 @@ def create_api(bot):
 
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
-    app  = create_api(bot)
+    app = create_api(bot)
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
 
-# ═══════════════════════════════════════════════════════════════
-# LOOP DO BOT (thread separada - INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 def bot_loop(bot):
     bot.build_menu()
-    if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
-    try: bot.send_news()
-    except: pass
-
+    if bot._restore_msg:
+        bot.send(bot._restore_msg)
+        bot._restore_msg = None
+    try:
+        bot.send_news()
+    except:
+        pass
     while True:
         try:
             url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates?offset={bot.last_id+1}&timeout=5"
-            r = requests.get(url, timeout=12).json()
-            if "result" in r:
+            r = requests.get(url, timeout=12).json()            if "result" in r:
                 for u in r["result"]:
                     bot.last_id = u["update_id"]
                     if "message" in u:
                         txt = u["message"].get("text","").strip().lower()
-                        if txt in ("/noticias","/news"): bot.send_news()
-                        elif txt == "/status":           bot.send_status()
-                        elif txt in ("/placar","/score"):bot.send_placar()
-                        elif txt in ("/menu","/start"):  bot.build_menu()
-                        elif txt == "/resetpausa":       bot.reset_pause()
+                        if txt in ("/noticias","/news"):
+                            bot.send_news()
+                        elif txt == "/status":
+                            bot.send_status()
+                        elif txt in ("/placar","/score"):
+                            bot.send_placar()
+                        elif txt in ("/menu","/start"):
+                            bot.build_menu()
+                        elif txt == "/resetpausa":
+                            bot.reset_pause()
                     if "callback_query" in u:
-                        cb = u["callback_query"]["data"]; cid = u["callback_query"]["id"]
+                        cb = u["callback_query"]["data"]
+                        cid = u["callback_query"]["id"]
                         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/answerCallbackQuery",
                                       json={"callback_query_id": cid}, timeout=5)
-                        if cb.startswith("set_tf_"):  bot.set_timeframe(cb.replace("set_tf_",""))
-                        elif cb.startswith("set_"):   bot.set_mode(cb.replace("set_",""))                        elif cb == "tf_menu":         bot.build_tf_menu()
-                        elif cb == "main_menu":       bot.build_menu()
-                        elif cb == "news":            bot.send_news()
-                        elif cb == "status":          bot.send_status()
-                        elif cb == "placar":          bot.send_placar()
+                        if cb.startswith("set_tf_"):
+                            bot.set_timeframe(cb.replace("set_tf_",""))
+                        elif cb.startswith("set_"):
+                            bot.set_mode(cb.replace("set_",""))
+                        elif cb == "tf_menu":
+                            bot.build_tf_menu()
+                        elif cb == "main_menu":
+                            bot.build_menu()
+                        elif cb == "news":
+                            bot.send_news()
+                        elif cb == "status":
+                            bot.send_status()
+                        elif cb == "placar":
+                            bot.send_placar()
             bot.update_trends_cache()
             bot.maybe_send_news()
             bot.scan()
@@ -2460,23 +1999,19 @@ def bot_loop(bot):
             bot.monitor_trades()
             time.sleep(Config.SCAN_INTERVAL)
         except Exception as e:
-            log(f"Erro loop: {e}"); time.sleep(10)
+            log(f"Erro loop: {e}")
+            time.sleep(10)
 
 
-# ═══════════════════════════════════════════════════════════════
-# MAIN (INALTERADO)
-# ═══════════════════════════════════════════════════════════════
 def main():
     log("🔌 Bot Sniper v7.2 — Visual + Performance + Real-Time Optimized")
-    try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
-    except: pass
-
+    try:
+        requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
+    except:        pass
     bot = TradingBot()
     load_state(bot)
-
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
     t.start()
-
     run_api(bot)
 
 
