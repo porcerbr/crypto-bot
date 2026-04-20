@@ -2337,18 +2337,45 @@ function copySignalData(btn, texto) {
 function toggleSignalsOnly(enabled) {
   const app = document.getElementById('app');
   const toggle = document.getElementById('signalsOnlyToggle');
+  
   if (enabled) {
     app.classList.add('signals-only-mode');
+    // Salvar página atual antes de entrar no modo
+    const currentActive = document.querySelector('.page.active');
+    if (currentActive) {
+      localStorage.setItem('last_page_before_signals', currentActive.id.replace('page-', ''));
+    }
     // Navegar para sinais
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-sig').classList.add('active');
+    // Atualizar botão nav ativo
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('navSig')?.classList.add('active');
     loadSignals();
   } else {
     app.classList.remove('signals-only-mode');
+    // RESTAURAR navegação anterior
+    const lastPage = localStorage.getItem('last_page_before_signals') || 'dash';
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + lastPage)?.classList.add('active');
+    // Restaurar botão nav correspondente
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    const navMap = {dash:0, scan:1, sig:2, ct:3, cfg:4};
+    const navBtns = document.querySelectorAll('.nav-btn');
+    if (navMap[lastPage] !== undefined && navBtns[navMap[lastPage]]) {
+      navBtns[navMap[lastPage]].classList.add('active');
+    }
+    // Recarregar dados da página restaurada
+    if (lastPage === 'dash') loadDashboard();
+    if (lastPage === 'scan') loadScanner();
+    if (lastPage === 'sig') loadSignals();
+    if (lastPage === 'ct') { loadCT(); loadNews(); }
+    if (lastPage === 'cfg') loadConfig();
   }
   if (toggle) toggle.checked = enabled;
   savePreferences('signalsOnly', enabled);
 }
+
 
 // MELHORIA 4: Descartar sinal (swipe left)
 function discardSignal(unixTs) {
