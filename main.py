@@ -251,7 +251,9 @@ def get_fear_greed():
     except: return {"value": "N/D", "label": ""}
 
 def build_news_msg():
-    arts = get_news(5); fg = get_fear_greed()    lines = ["📰 <b>NOTÍCIAS</b>\n"]
+    arts = get_news(5)
+    fg = get_fear_greed()
+    lines = ["📰 <b>NOTÍCIAS</b>\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "")
         lines.append(f"{i}. <a href='{a['url']}'>{t}</a> <i>({a['source']})</i>")
@@ -300,7 +302,8 @@ def get_analysis(symbol, timeframe=None):
         pdm = hd.where((hd>0)&(hd>-ld), 0.0)
         mdm = (-ld).where((-ld>0)&(-ld>hd), 0.0)
         as_ = tr.ewm(alpha=1/14, adjust=False).mean()
-        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
+        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
+        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
         dx  = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
         price = float(closes.iloc[-1])
@@ -398,7 +401,8 @@ def get_reversal_analysis(symbol, timeframe=None):
         w = min(20, len(closes)-1)
         sma = closes.rolling(w).mean(); std = closes.rolling(w).std()
         ub = float((sma+std*2).iloc[-1]); lb = float((sma-std*2).iloc[-1])
-        delta = closes.diff()        gain  = delta.where(delta>0,0).rolling(14).mean()
+        delta = closes.diff()
+        gain  = delta.where(delta>0,0).rolling(14).mean()
         loss  = (-delta.where(delta<0,0)).rolling(14).mean()
         rsi_s = 100-100/(1+gain/loss)
         rsi   = float(rsi_s.iloc[-1])
@@ -496,7 +500,8 @@ _push_subscriptions = []  # lista de subscription dicts
 def send_push(title, body, icon="/icon-192.png"):
     """Envia push para todos os clientes inscritos via Web Push."""
     try:
-        from pywebpush import webpush, WebPushException        import os
+        from pywebpush import webpush, WebPushException
+        import os
         priv_key = os.getenv("VAPID_PRIVATE_KEY", "")
         pub_key  = os.getenv("VAPID_PUBLIC_KEY", "")
         email    = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
@@ -545,7 +550,8 @@ class TradingBot:
         clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text:            tipo = "radar";   push_title = "⚠ RADAR"
-        elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"        elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
+        elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"
+        elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
         elif "CONTRA-TENDÊNCIA" in text: tipo = "ct";      push_title = "⚡ Contra-Tendência!"
         elif "CONFLUÊNCIA INSUF" in text: tipo = "insuf"
         elif "OPERAÇÃO ENCERRADA" in text:
@@ -594,7 +600,8 @@ class TradingBot:
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
 
-    def set_timeframe(self, tf):        if tf not in Config.TIMEFRAMES: return
+    def set_timeframe(self, tf):
+        if tf not in Config.TIMEFRAMES: return
         old = self.timeframe; self.timeframe = tf; save_state(self)
         self.send(f"✅ TF: {old} → {tf}")
 
@@ -643,7 +650,8 @@ class TradingBot:
                         "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
                         "ts": time.time(),
                     }
-            except Exception as e: log(f"[TRENDS] {s}: {e}")        self.last_trends_update = time.time()
+            except Exception as e: log(f"[TRENDS] {s}: {e}")
+        self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
 
     # ── SCAN — 4 fases ───────────────────────────────────────
@@ -741,10 +749,10 @@ class TradingBot:
             # FASE 4B — SINAL CONFIRMADO
             if dir_s == "BUY":
                 sl = price - Config.ATR_MULT_SL * atr
-                tp = price + Config.ATR_MULT_TP * atr            else:
+                tp = price + Config.ATR_MULT_TP * atr
+            else:
                 sl = price + Config.ATR_MULT_SL * atr
                 tp = price - Config.ATR_MULT_TP * atr
-            sl_pct = abs(price-sl)/price*100; tp_pct = abs(tp-price)/price*100
             dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"]>0 else "N/A"
             self.send(
@@ -790,7 +798,8 @@ class TradingBot:
                     if d == "SELL":
                         if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
                         if res["near_upper"]:     sinais.append("BB Superior atingida")
-                        if res["div_bear"]:       sinais.append("RSI divergência bearish")                        if res["macd_div_bear"]:  sinais.append("MACD divergência bearish")
+                        if res["div_bear"]:       sinais.append("RSI divergência bearish")
+                        if res["macd_div_bear"]:  sinais.append("MACD divergência bearish")
                         if res["wick_bear"]:      sinais.append("Wick de rejeição")
                         if res["pat_bear"] and res["pat_name"]: sinais.append(res["pat_name"])
                     else:
@@ -888,7 +897,8 @@ class TradingBot:
                     f"🔚 Saída:   <code>{fmt(cur)}</code>\n"
                     f"P&amp;L:   <code>{pnl:+.2f}%</code>"
                 )
-                self.active_trades.remove(t); changed = True                if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
+                self.active_trades.remove(t); changed = True
+                if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                     self.paused_until = time.time() + Config.PAUSE_DURATION
                     mins = Config.PAUSE_DURATION // 60
                     self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\nPausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
@@ -2554,7 +2564,8 @@ def create_api(bot):
                 "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2),
                 "macd_bull": d["macd_bull"], "macd_bear": d["macd_bear"],
                 "h1_bull": d["h1_bull"], "h1_bear": d["h1_bear"]})
-        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))        return jsonify(out)
+        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))
+        return jsonify(out)
 
     @app.route("/api/reversals")
     def api_reversals():
@@ -2652,7 +2663,8 @@ def bot_loop(bot):
             bot.maybe_send_news()
             bot.scan()
             bot.scan_reversal_forex()
-            bot.monitor_trades()            time.sleep(Config.SCAN_INTERVAL)
+            bot.monitor_trades()
+            time.sleep(Config.SCAN_INTERVAL)
         except Exception as e:
             log(f"Erro loop: {e}"); time.sleep(10)
 
