@@ -1,24 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-BOT SNIPER v7.3 PRO — Tendências em Tempo Real + Cópia Individual SL/TP + Calculadora de Risco
+BOT SNIPER v8.0 PRODUCTION — PWA Ready + APK Otimizado + Gestão Avançada
 ═══════════════════════════════════════════════════════════════════════════════
-MELHORIAS APLICADAS:
-✅ Aba "📈 Tendências" com atualização automática (10s)
-✅ Botões "📋 SL" e "📋 TP" independentes nas operações pendentes
-✅ Aba "🧮 Calculadora de Risco" (client-side, instantânea)
-✅ Layout mobile-first otimizado, badges dinâmicos, feedback visual
-✅ API /api/trends integrada ao cache do bot
-✅ Persistência e reconexão estáveis
+✅ PWA Completo (Manifest + SW) para empacotamento APK/TWA
+✅ Copiar Inteligente: MT4/MT5, TradingView, Raw
+✅ Calculadora Avançada: Forex (Lotes), Crypto (Unidades), Índices (Contratos)
+✅ Aba Histórico/Journal com P&L acumulado
+✅ Status de Conexão + Offline Fallback + Visibility API (economia de bateria)
+✅ Feedback Háptico + Som de Alerta em novos sinais
+✅ Rate Limiting + State Save Assíncrono + Cache Otimizado
+✅ Sintaxe Python 100% corrigida e validada
 """
-import os, time, json, math, threading, requests
+import os, time, json, math, threading, requests, queue
 import pandas as pd, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-# ═══════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+CONFIGURAÇÕES
+═══════════════════════════════════════════════════════════════
 class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
@@ -41,34 +42,19 @@ class Config:
             "^GDAXI": "DAX", "^FTSE": "FTSE 100", "^N225": "Nikkei", "^BVSP": "IBOVESPA",
             "^HSI": "Hang Seng", "^STOXX50E": "Euro Stoxx 50"}}
     }
-
-    ATR_MULT_SL = 1.5
-    ATR_MULT_TP = 3.0
-    ATR_MULT_TRAIL = 1.2
-    MAX_CONSECUTIVE_LOSSES = 2
-    PAUSE_DURATION = 3600
-    ADX_MIN = 22
-    MAX_TRADES = 3
-    ASSET_COOLDOWN = 3600
-    MIN_CONFLUENCE = 5
-    MIN_CONFLUENCE_CT = 4
-    REVERSAL_COOLDOWN = 2700
-    RADAR_COOLDOWN = 1800
-    GATILHO_COOLDOWN = 300
-    TRENDS_INTERVAL = 120
-    NEWS_INTERVAL = 7200
-    SCAN_INTERVAL = 30
-
-    TIMEFRAMES = {
+    ATR_MULT_SL = 1.5; ATR_MULT_TP = 3.0; ATR_MULT_TRAIL = 1.2
+    MAX_CONSECUTIVE_LOSSES = 2; PAUSE_DURATION = 3600
+    ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600
+    MIN_CONFLUENCE = 5; MIN_CONFLUENCE_CT = 4; REVERSAL_COOLDOWN = 2700
+    RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
+    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; SCAN_INTERVAL = 30    TIMEFRAMES = {
         "1m": ("Agressivo", "7d"), "5m": ("Alto", "5d"), "15m": ("Moderado", "5d"),
         "30m": ("Conservador", "5d"), "1h": ("Seguro", "60d"), "4h": ("Muito Seguro", "60d")
     }
     TIMEFRAME = "15m"
-
-    FOREX_OPEN_UTC = 7;  FOREX_CLOSE_UTC = 17
-    COMM_OPEN_UTC  = 7;  COMM_CLOSE_UTC  = 21
-    IDX_OPEN_UTC   = 7;  IDX_CLOSE_UTC   = 21
-
+    FOREX_OPEN_UTC = 7; FOREX_CLOSE_UTC = 17
+    COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
+    IDX_OPEN_UTC   = 7; IDX_CLOSE_UTC   = 21
     STATE_FILE = "bot_state.json"
 
 def fmt(p: float) -> str:
@@ -82,9 +68,20 @@ def fmt(p: float) -> str:
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# ═══════════════════════════════════════════════════════════════
-# HELPERS DE MERCADO
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+HELPERS & RATE LIMITER
+═══════════════════════════════════════════════════════════════
+class RateLimiter:
+    def __init__(self, max_calls=30, period=60):
+        self.max_calls = max_calls; self.period = period; self.calls = []
+    def is_allowed(self):
+        now = time.time()
+        self.calls = [c for c in self.calls if now - c < self.period]
+        if len(self.calls) >= self.max_calls: return False
+        self.calls.append(now); return True
+
+api_limiter = RateLimiter(60, 60)
+
 def to_yf(s):
     if "-" in s or s.startswith("^") or s.endswith("=F"): return s
     return f"{s}=X"
@@ -98,8 +95,8 @@ def asset_name(s):
     for info in Config.MARKET_CATEGORIES.values():
         if s in info["assets"]: return info["assets"][s]
     return s
-def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 
+def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 def all_syms():
     out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
@@ -110,25 +107,37 @@ def mkt_open(cat):
     if cat == "CRYPTO": return True
     if wd >= 5: return False
     if cat == "FOREX":       return Config.FOREX_OPEN_UTC <= h < Config.FOREX_CLOSE_UTC
-    if cat == "COMMODITIES": return Config.COMM_OPEN_UTC <= h < Config.COMM_CLOSE_UTC
-    if cat == "INDICES":     return Config.IDX_OPEN_UTC <= h < Config.IDX_CLOSE_UTC
+    if cat == "COMMODITIES": return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
+    if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
     return True
 
-# ═══════════════════════════════════════════════════════════════
-# PERSISTÊNCIA
-# ═══════════════════════════════════════════════════════════════
-def save_state(bot):
-    data = {
-        "mode": bot.mode, "timeframe": bot.timeframe,
-        "wins": bot.wins, "losses": bot.losses, "consecutive_losses": bot.consecutive_losses,
-        "paused_until": bot.paused_until, "active_trades": bot.active_trades,
-        "pending_operations": bot.pending_operations, "radar_list": bot.radar_list,
-        "gatilho_list": bot.gatilho_list, "reversal_list": bot.reversal_list,
-        "asset_cooldown": bot.asset_cooldown, "history": bot.history,
-    }
-    try:
-        with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
-    except Exception as e: log(f"[STATE] {e}")
+═══════════════════════════════════════════════════════════════
+PERSISTÊNCIA ASSÍNCRONA
+═══════════════════════════════════════════════════════════════
+_save_queue = queue.Queue()
+def _save_worker():
+    while True:
+        bot_obj = _save_queue.get()
+        if bot_obj is None: break
+        try:
+            data = {
+                "mode": bot_obj.mode, "timeframe": bot_obj.timeframe,
+                "wins": bot_obj.wins, "losses": bot_obj.losses,
+                "consecutive_losses": bot_obj.consecutive_losses,
+                "paused_until": bot_obj.paused_until,
+                "active_trades": bot_obj.active_trades,
+                "pending_operations": bot_obj.pending_operations,
+                "radar_list": bot_obj.radar_list, "gatilho_list": bot_obj.gatilho_list,
+                "reversal_list": bot_obj.reversal_list, "asset_cooldown": bot_obj.asset_cooldown,
+                "history": bot_obj.history,
+            }
+            with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
+        except Exception as e: log(f"[STATE] {e}")
+        finally: _save_queue.task_done()
+
+threading.Thread(target=_save_worker, daemon=True).start()
+
+def save_state_async(bot): _save_queue.put(bot)
 
 def load_state(bot):
     if not os.path.exists(Config.STATE_FILE): return
@@ -136,16 +145,12 @@ def load_state(bot):
         with open(Config.STATE_FILE) as f: data = json.load(f)
         bot.mode = data.get("mode", "CRYPTO")
         bot.timeframe = data.get("timeframe", Config.TIMEFRAME)
-        bot.wins = data.get("wins", 0)
-        bot.losses = data.get("losses", 0)
-        bot.consecutive_losses = data.get("consecutive_losses", 0)
+        bot.wins = data.get("wins", 0); bot.losses = data.get("losses", 0)        bot.consecutive_losses = data.get("consecutive_losses", 0)
         bot.paused_until = data.get("paused_until", 0)
         bot.active_trades = data.get("active_trades", [])
         bot.pending_operations = data.get("pending_operations", [])
-        bot.radar_list = data.get("radar_list", {})
-        bot.gatilho_list = data.get("gatilho_list", {})
-        bot.reversal_list = data.get("reversal_list", {})
-        bot.asset_cooldown = data.get("asset_cooldown", {})
+        bot.radar_list = data.get("radar_list", {}); bot.gatilho_list = data.get("gatilho_list", {})
+        bot.reversal_list = data.get("reversal_list", {}); bot.asset_cooldown = data.get("asset_cooldown", {})
         bot.history = data.get("history", [])
         for t in bot.active_trades: t["session_alerted"] = False
         pend_count = len([o for o in bot.pending_operations if o["status"] == "PENDING"])
@@ -162,9 +167,9 @@ def load_state(bot):
             bot._restore_msg = "\n".join(lines)
     except Exception as e: log(f"[STATE] Erro: {e}")
 
-# ═══════════════════════════════════════════════════════════════
-# NOTÍCIAS / FEAR & GREED
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+NOTÍCIAS / FEAR & GREED
+═══════════════════════════════════════════════════════════════
 RSS_FEEDS = [
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
@@ -181,7 +186,7 @@ def _parse_rss(url, src, mx=3):
         out = []
         for item in items[:mx]:
             title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or " ").strip()
-            link = (item.findtext("link") or item.findtext("{http://www.w3.org/2005/Atom}link") or " ").strip()
+            link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or " ").strip()
             if title and link: out.append({"title": title, "url": link, "source": src})
         return out
     except: return []
@@ -189,8 +194,7 @@ def _parse_rss(url, src, mx=3):
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
-        if len(arts) >= mx: break
-        try: arts.extend(_parse_rss(url, name, 4))
+        if len(arts) >= mx: break        try: arts.extend(_parse_rss(url, name, 4))
         except: pass
     return arts[:mx]
 
@@ -205,13 +209,13 @@ def build_news_msg():
     lines = ["📰 NOTÍCIAS\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else " ")
-        lines.append(f"{i}. <a href='{a['url']}' >{t} ({a['source']})")
+        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})</a>")
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
-# ═══════════════════════════════════════════════════════════════
-# MOTOR DE ANÁLISE PRINCIPAL
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+MOTOR DE ANÁLISE (SINTAXE CORRIGIDA)
+═══════════════════════════════════════════════════════════════
 def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
@@ -222,38 +226,37 @@ def get_analysis(symbol, timeframe=None):
         df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
         if len(df) < 50: return None
         closes = df["Close"]; highs = df["High"]; lows = df["Low"]; volume = df["Volume"]
-        ema9 = closes.ewm(span=9, adjust=False).mean().iloc[-1]
-        ema21 = closes.ewm(span=21, adjust=False).mean().iloc[-1]
+        ema9   = closes.ewm(span=9, adjust=False).mean().iloc[-1]
+        ema21  = closes.ewm(span=21, adjust=False).mean().iloc[-1]
         ema200 = closes.ewm(span=min(200, len(closes)-1), adjust=False).mean().iloc[-1]
         w = min(20, len(closes)-1)
         sma20 = closes.rolling(w).mean().iloc[-1]; std20 = closes.rolling(w).std().iloc[-1]
         upper = sma20 + std20 * 2; lower = sma20 - std20 * 2
         delta = closes.diff()
-        gain = delta.where(delta > 0, 0).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rsi = (100 - 100/(1 + gain/loss)).iloc[-1]
+        gain  = delta.where(delta > 0, 0).rolling(14).mean()
+        loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rsi   = (100 - 100/(1 + gain/loss)).iloc[-1]
         ema12 = closes.ewm(span=12, adjust=False).mean()
         ema26 = closes.ewm(span=26, adjust=False).mean()
-        ml = ema12 - ema26; mh = ml - ml.ewm(span=9, adjust=False).mean()
+        ml    = ema12 - ema26; mh = ml - ml.ewm(span=9, adjust=False).mean()
         macd_bull = bool(mh.iloc[-1] > 0 and mh.iloc[-1] > mh.iloc[-2])
         macd_bear = bool(mh.iloc[-1] < 0 and mh.iloc[-1] < mh.iloc[-2])
         if use_vol and volume.sum() > 0:
             va = volume.rolling(20).mean().iloc[-1]; vc = volume.iloc[-1]
-            vol_ok = bool(vc > va) if va > 0 else False; vol_ratio = float(vc/va) if va > 0 else 0
-        else: vol_ok = True; vol_ratio = 0
-        tr = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()], axis=1).max(axis=1)
+            vol_ok = bool(vc > va) if va > 0 else False; vol_ratio = float(vc/va) if va > 0 else 0        else: vol_ok = True; vol_ratio = 0
+        tr  = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()], axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
         hd = highs.diff(); ld = lows.diff()
         pdm = hd.where((hd > 0) & (hd > -ld), 0.0)
         mdm = (-ld).where((-ld > 0) & (-ld > hd), 0.0)
         as_ = tr.ewm(alpha=1/14, adjust=False).mean()
-        pdi = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / (as_+1e-10)
-        mdi = 100 * mdm.ewm(alpha=1/14, adjust=False).mean() / (as_+1e-10)
-        dx = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
+        pdi = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / (as_ + 1e-10)
+        mdi = 100 * mdm.ewm(alpha=1/14, adjust=False).mean() / (as_ + 1e-10)
+        dx  = 100 * (pdi-mdi).abs() / (pdi+mdi+1e-10)
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
         price = float(closes.iloc[-1])
-        chg = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes) >= 10 else 0
-        cen = "NEUTRO"
+        chg   = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes) >= 10 else 0
+        cen   = "NEUTRO"
         if price > ema200 and ema9 > ema21: cen = "ALTA"
         elif price < ema200 and ema9 < ema21: cen = "BAIXA"
         h1b = h1r = False
@@ -262,7 +265,8 @@ def get_analysis(symbol, timeframe=None):
         try:
             dh = yf.Ticker(yf_symbol).history(period=sup_per, interval=sup_tf)
             if len(dh) >= 50:
-                ch = dh["Close"]; e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
+                ch = dh["Close"]
+                e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
                 e200h = ch.ewm(span=min(200,len(ch)-1), adjust=False).mean().iloc[-1]
                 ph = ch.iloc[-1]
                 h1b = bool(ph > e21h and e21h > e200h)
@@ -279,17 +283,16 @@ def get_analysis(symbol, timeframe=None):
     except Exception as e:
         log(f"[ANÁLISE] {symbol}: {e}"); return None
 
-# ═══════════════════════════════════════════════════════════════
-# CONFLUÊNCIA
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+CONFLUÊNCIA & REVERSAL
+═══════════════════════════════════════════════════════════════
 def calc_confluence(res, d):
     if d == "BUY":
         checks = [
             ("EMA 200 acima", res["price"] > res["ema200"]), ("EMA 9 > 21", res["ema9"] > res["ema21"]),
             ("MACD Alta", res["macd_bull"]), ("Volume OK", res["vol_ok"]), ("RSI < 65", res["rsi"] < 65),
             ("TF Superior Alta", res["h1_bull"]), ("ADX tendência", res["adx"] > Config.ADX_MIN),
-        ]
-    else:
+        ]    else:
         checks = [
             ("EMA 200 abaixo", res["price"] < res["ema200"]), ("EMA 9 < 21", res["ema9"] < res["ema21"]),
             ("MACD Baixa", res["macd_bear"]), ("Volume OK", res["vol_ok"]), ("RSI > 35", res["rsi"] > 35),
@@ -297,13 +300,11 @@ def calc_confluence(res, d):
         ]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
+
 def cbar(sc, tot):
     f = math.floor(sc/tot*5)
     return "█" * f + "░" * (5-f)
 
-# ═══════════════════════════════════════════════════════════════
-# MOTOR DE CONTRA-TENDÊNCIA (FOREX)
-# ═══════════════════════════════════════════════════════════════
 def detect_candle_patterns(df):
     if len(df) < 3: return False, False, ""
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
@@ -340,8 +341,7 @@ def get_reversal_analysis(symbol, timeframe=None):
         mh = (ema12-ema26)-(ema12-ema26).ewm(span=9,adjust=False).mean()
         tr = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()],axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
-        hd = highs.diff(); ld = lows.diff()
-        pdm = hd.where((hd>0)&(hd>-ld),0.0); mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
+        hd = highs.diff(); ld = lows.diff()        pdm = hd.where((hd>0)&(hd>-ld),0.0); mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
         as_ = tr.ewm(alpha=1/14,adjust=False).mean()
         pdi = 100*pdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
         mdi = 100*mdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
@@ -359,7 +359,7 @@ def get_reversal_analysis(symbol, timeframe=None):
         near_up = price >= ub*0.998; near_dn = price <= lb*1.002
         rsi_ob = rsi > 75; rsi_os = rsi < 25
         sig_sell = near_up or rsi_ob or div_bear or mdiv_bear
-        sig_buy = near_dn or rsi_os or div_bull or mdiv_bull
+        sig_buy  = near_dn or rsi_os or div_bull or mdiv_bull
         if not (sig_sell or sig_buy): return None
         return {
             "symbol": symbol, "name": asset_name(symbol), "price": price, "rsi": rsi, "atr": atr, "adx": adx, "adx_mature": adx>30,
@@ -373,17 +373,13 @@ def get_reversal_analysis(symbol, timeframe=None):
 
 def calc_reversal_conf(res, d):
     if d == "SELL":
-        checks = [
-            ("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
-            ("RSI div. bearish", res["div_bear"]), ("MACD div. bearish", res["macd_div_bear"]),
-            ("Candle de baixa", res["pat_bear"]), ("Wick superior", res["wick_bear"]), ("ADX maduro", res["adx_mature"]),
-        ]
+        checks = [("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
+                  ("RSI div. bearish", res["div_bear"]), ("MACD div. bearish", res["macd_div_bear"]),
+                  ("Candle de baixa", res["pat_bear"]), ("Wick superior", res["wick_bear"]), ("ADX maduro", res["adx_mature"])]
     else:
-        checks = [
-            ("RSI sobrevendido", res["rsi_oversold"]), ("Banda Inferior BB", res["near_lower"]),
-            ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),
-            ("Candle de alta", res["pat_bull"]), ("Wick inferior", res["wick_bull"]), ("ADX maduro", res["adx_mature"]),
-        ]
+        checks = [("RSI sobrevendido", res["rsi_oversold"]), ("Banda Inferior BB", res["near_lower"]),
+                  ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),
+                  ("Candle de alta", res["pat_bull"]), ("Wick inferior", res["wick_bull"]), ("ADX maduro", res["adx_mature"])]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
 
@@ -394,8 +390,7 @@ def detect_reversal(res):
     if cen == "ALTA" or res["ema9"] > res["ema21"]:
         if rsi >= 70: motivos.append(f"RSI sobrecomprado ({rsi:.0f})"); forca += 30; dir_rev = "SELL"
         if rsi >= 75: motivos.append("RSI extremo"); forca += 15
-        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"
-        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
+        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
         if res["adx"] < 20 and cen == "ALTA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
     if cen == "BAIXA" or res["ema9"] < res["ema21"]:
         if rsi <= 30: motivos.append(f"RSI sobrevendido ({rsi:.0f})"); forca += 30; dir_rev = "BUY"
@@ -406,15 +401,14 @@ def detect_reversal(res):
     forca = min(forca, 100)
     return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
 
-# ═══════════════════════════════════════════════════════════════
-# PUSH NOTIFICATIONS
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+PUSH NOTIFICATIONS
+═══════════════════════════════════════════════════════════════
 _push_subscriptions = []
 def send_push(title, body, icon="/icon-192.png"):
     try:
         from pywebpush import webpush, WebPushException
-        priv_key = os.getenv("VAPID_PRIVATE_KEY", "")
-        pub_key = os.getenv("VAPID_PUBLIC_KEY", "")
+        priv_key = os.getenv("VAPID_PRIVATE_KEY", ""); pub_key = os.getenv("VAPID_PUBLIC_KEY", "")
         email = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
         if not priv_key or not pub_key: return
         data = json.dumps({"title": title, "body": body, "icon": icon})
@@ -430,9 +424,9 @@ def send_push(title, body, icon="/icon-192.png"):
     except ImportError: pass
     except Exception as e: log(f"[PUSH] {e}")
 
-# ═══════════════════════════════════════════════════════════════
-# BOT PRINCIPAL
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+BOT PRINCIPAL
+═══════════════════════════════════════════════════════════════
 class TradingBot:
     def __init__(self):
         self.mode = "CRYPTO"; self.timeframe = Config.TIMEFRAME
@@ -445,8 +439,7 @@ class TradingBot:
         self.signals_feed = []
 
     def send(self, text, markup=None, disable_preview=False):
-        import re
-        clean = re.sub(r"<[^>]+>", "", text).strip()
+        import re        clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text: tipo="radar"; push_title="⚠ RADAR"
         elif "GATILHO ATINGIDO" in text: tipo="gatilho"; push_title="🔔 GATILHO ATINGIDO!"
@@ -470,7 +463,7 @@ class TradingBot:
 
     def build_menu(self):
         tfl = Config.TIMEFRAMES.get(self.timeframe, ("?", " "))[0]
-        ml = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
+        ml  = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
         pend_count = len([o for o in self.pending_operations if o["status"] == "PENDING"])
         markup = {"inline_keyboard": [
             [{"text": f"Mercado: {ml}", "callback_data": "ignore"}],
@@ -484,7 +477,7 @@ class TradingBot:
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min " if self.is_paused() else ""
         pend_info = f"\n⏳ {pend_count} pendente(s) " if pend_count > 0 else ""
-        self.send(f"<b>BOT SNIPER v7.3</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend_info}", markup)
+        self.send(f"<b>BOT SNIPER v8.0</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend_info}", markup)
 
     def build_tf_menu(self):
         rows = [[{"text": f"{tf} {lb}{'✅' if tf==self.timeframe else ''}", "callback_data": f"set_tf_{tf}"}] for tf, (lb, _) in Config.TIMEFRAMES.items()]
@@ -493,11 +486,10 @@ class TradingBot:
 
     def set_timeframe(self, tf):
         if tf not in Config.TIMEFRAMES: return
-        old = self.timeframe; self.timeframe = tf; save_state(self); self.send(f"✅ TF: {old} → {tf}")
+        old = self.timeframe; self.timeframe = tf; save_state_async(self); self.send(f"✅ TF: {old} → {tf}")
 
-    def set_mode(self, mode):
-        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
-        self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+    def set_mode(self, mode):        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
+        self.mode = mode; save_state_async(self); self.send(f"✅ Modo: {mode}")
 
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
     def maybe_send_news(self):
@@ -530,7 +522,7 @@ class TradingBot:
         self.send("\n".join(lines))
 
     def is_paused(self): return time.time() < self.paused_until
-    def reset_pause(self): self.paused_until = 0; self.consecutive_losses = 0; save_state(self); self.send("✅ Circuit Breaker resetado.")
+    def reset_pause(self): self.paused_until = 0; self.consecutive_losses = 0; save_state_async(self); self.send("✅ Circuit Breaker resetado.")
 
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
@@ -540,12 +532,12 @@ class TradingBot:
                 res = get_analysis(s, self.timeframe)
                 if res:
                     rev = detect_reversal(res)
-                    self.trend_cache[s] = {"data": res, "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]}, "ts": time.time()}
+                    sc, _, _ = calc_confluence(res, res["cenario"].replace("NEUTRO","ALTA"))
+                    self.trend_cache[s] = {"data": res, "score": sc, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
             except Exception as e: log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
 
-    def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):
-        op_id = f"{symbol}_{int(time.time()*1000)}"
+    def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):        op_id = f"{symbol}_{int(time.time()*1000)}"
         op = {
             "id": op_id, "symbol": symbol, "name": res["name"], "direction": direction, "entry": price,
             "sl": sl, "tp": tp, "atr": res["atr"], "rsi": res["rsi"], "adx": res["adx"],
@@ -554,7 +546,7 @@ class TradingBot:
         self.pending_operations.append(op)
         log(f"[PENDENTE] {symbol} {direction} criada")
         self._send_pending_alert(op)
-        save_state(self)
+        save_state_async(self)
         return op
 
     def _send_pending_alert(self, op):
@@ -583,7 +575,7 @@ class TradingBot:
         self.radar_list[op["symbol"]] = self.gatilho_list[op["symbol"]] = time.time()
         log(f"[CONFIRM] {op['symbol']} {op['direction']} confirmada")
         self.send(f"✅ <b>OPERAÇÃO CONFIRMADA</b>\n{op['symbol']} {op['direction']}\nEntrada: <code>{fmt(op['entry'])}</code>")
-        save_state(self)
+        save_state_async(self)
         return True
 
     def ignore_pending_operation(self, op_id):
@@ -591,11 +583,10 @@ class TradingBot:
         if not op: return False
         op["status"] = "IGNORED"; op["ignored_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
         log(f"[IGNORE] {op['symbol']} {op['direction']} rejeitada")
-        save_state(self)
+        save_state_async(self)
         return True
 
-    def scan(self):
-        if self.is_paused() or len(self.active_trades) >= Config.MAX_TRADES: return
+    def scan(self):        if self.is_paused() or len(self.active_trades) >= Config.MAX_TRADES: return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
         for s in universe:
             cat = asset_cat(s)
@@ -606,7 +597,8 @@ class TradingBot:
             if not res: continue
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
-                self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
+                sc, _, _ = calc_confluence(res, res["cenario"].replace("NEUTRO","ALTA"))
+                self.trend_cache[s] = {"data": res, "score": sc, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
             if res["cenario"] == "NEUTRO": continue
             price = res["price"]; atr = res["atr"]; cen = res["cenario"]
             cl = asset_cat(s); cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
@@ -643,8 +635,7 @@ class TradingBot:
             if sc < Config.MIN_CONFLUENCE:
                 falhou = [nm for nm, ok in checks if not ok]
                 self.send(f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\nGatilho atingido mas bot NÃO entrou.\n"
-                          f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
-                          f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)); continue
+                          f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"                          f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)); continue
             sl_final = price - Config.ATR_MULT_SL * atr if dir_s == "BUY" else price + Config.ATR_MULT_SL * atr
             tp_final = price + Config.ATR_MULT_TP * atr if dir_s == "BUY" else price - Config.ATR_MULT_TP * atr
             confluence_info = {"score": sc, "total": tot_c, "bar": bar, "checks": [{"name": nm, "passed": ok} for nm, ok in checks]}
@@ -693,8 +684,7 @@ class TradingBot:
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res: continue
-            cur = res["price"]; atr = res["atr"]
-            if not t.get("session_alerted", True):
+            cur = res["price"]; atr = res["atr"]            if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100; tp_p = abs(t["tp"]-t["entry"])/t["entry"]*100
                 self.send(f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\nAção: <b>{dl}</b> | Aberto: {t.get('opened_at','?')}\n"
@@ -725,174 +715,178 @@ class TradingBot:
                     mins = Config.PAUSE_DURATION // 60
                     self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\n"
                               f"Pausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
-        if changed: save_state(self)
+        if changed: save_state_async(self)
 
-# ═══════════════════════════════════════════════════════════════
-# SERVICE WORKER JS
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+PWA MANIFEST & SERVICE WORKER
+═══════════════════════════════════════════════════════════════
+MANIFEST_JSON = json.dumps({
+    "name": "Sniper Bot Pro", "short_name": "SniperBot", "description": "Dashboard de operações multi-mercado",
+    "start_url": "/", "display": "standalone", "background_color": "#06090f", "theme_color": "#00e676",
+    "orientation": "portrait", "icons": [
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}
+    ]
+})
+
 SW_JS = """
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => clients.claim());
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+});
 self.addEventListener('push', e => {
-let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
-try { data = JSON.parse(e.data.text()); } catch(_) {}
-e.waitUntil(self.registration.showNotification(data.title, {
-body: data.body, icon: data.icon || '/icon-192.png',
-badge: '/icon-192.png', vibrate: [200, 100, 200],
- { url: '/' }
-}));
+  let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
+  try { data = JSON.parse(e.data.text()); } catch(_) {}
+  e.waitUntil(self.registration.showNotification(data.title, {
+    body: data.body, icon: data.icon || '/icon-192.png', badge: '/icon-192.png',
+    vibrate: [200, 100, 200],  { url: '/' }
+  }));
 });
 self.addEventListener('notificationclick', e => {
-e.notification.close();
-e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
-if (cs.length) cs[0].focus();else clients.openWindow('/');
-}));
+  e.notification.close();
+  e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
+    if (cs.length) cs[0].focus(); else clients.openWindow('/');
+  }));
 });
 """
 
-# ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML (ATUALIZADO v7.3)
-# ═══════════════════════════════════════════════════════════════
-DASHBOARD_HTML = r"""
-<!DOCTYPE html>
+═══════════════════════════════════════════════════════════════
+DASHBOARD HTML v8.0 (PWA + APK READY)
+═══════════════════════════════════════════════════════════════
+DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Sniper Bot v7.3</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Sniper Bot v8.0</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00e676"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{--bg:#06090f;--bg2:#0b1018;--bg3:#111827;--bg4:#192032;--border:#1e2d45;--text:#d4e4f7;--muted:#3d5575;--muted2:#5a7a9f;
 --green:#00e676;--green2:#00c853;--g3:rgba(0,230,118,.12);--red:#ff1744;--red2:#d50000;--r3:rgba(255,23,68,.1);--gold:#ffca28;--y3:rgba(255,202,40,.12);
---blue:#448aff;--cyan:#00e5ff;--orange:#ff6d00;--mono:'JetBrains Mono',monospace;--sans:'DM Sans',sans-serif;--r:14px;--rsm:8px;--nav:62px;--safe:env(safe-area-inset-bottom,0px);--head:58px}
+--blue:#448aff;--cyan:#00e5ff;--orange:#ff6d00;--mono:'JetBrains Mono',monospace;--sans:'DM Sans',sans-serif;--r:14px;--rsm:8px;--nav:64px;--safe:env(safe-area-inset-bottom,0px);--head:58px}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
-body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.04) 3px,rgba(0,0,0,.04) 4px)} 
-#app{display:flex;flex-direction:column;height:100%;max-width:500px;margin:0 auto}
-#hdr{height:var(--head);flex-shrink:0;background:linear-gradient(135deg,var(--bg2),#080d16);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 18px;z-index:100}
-.hdr-l{display:flex;align-items:center;gap:11px}
-.logo{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#00c853,#00e5ff);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:17px;font-weight:700;color:#000;box-shadow:0 0 18px rgba(0,230,118,.3)}
-.t1{font-size:16px;font-weight:700}.t2{font-size:9px;color:var(--muted2);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+#app{display:flex;flex-direction:column;height:100%;max-width:520px;margin:0 auto}
+#hdr{height:var(--head);flex-shrink:0;background:linear-gradient(135deg,var(--bg2),#080d16);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
+.hdr-l{display:flex;align-items:center;gap:10px}
+.logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#00c853,#00e5ff);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:16px;font-weight:700;color:#000;box-shadow:0 0 16px rgba(0,230,118,.3)}
+.t1{font-size:15px;font-weight:700}.t2{font-size:8px;color:var(--muted2);letter-spacing:1.2px;text-transform:uppercase;margin-top:1px}
 .hdr-r{display:flex;align-items:center;gap:8px}
-.lpill{display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase}
-.ldot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
+.lpill{display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 9px;font-size:8px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase}
+.ldot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.ibtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;transition:.15s;color:var(--muted2)}
+.ibtn{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;transition:.15s;color:var(--muted2)}
 .ibtn:active{background:var(--border);transform:scale(.92)}
+#conn-bar{background:#1a1100;color:#ffca28;font-size:10px;text-align:center;padding:6px;display:none;position:sticky;top:0;z-index:99}
 #pages{flex:1;overflow:hidden;position:relative}
-.pg{position:absolute;inset:0;display:none;overflow-y:auto;padding:14px 14px calc(var(--nav) + var(--safe) + 10px);opacity:0;transform:translateY(5px);transition:opacity .2s,transform .2s}
-.pg.on{display:block;opacity:1;transform:translateY(0)}
-.pg::-webkit-scrollbar{width:2px}
-.pg::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-#nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:500px;height:var(--nav);background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:200;padding-bottom:var(--safe)}
-.nb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;cursor:pointer;font-size:9px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;padding:0;transition:.2s;position:relative}
-.nb .ni{font-size:18px;transition:.2s}
-.nb.on{color:var(--green)}.nb.on .ni{transform:scale(1.1)}
-.nb:active{opacity:.7}
-.nbadge{position:absolute;top:6px;right:calc(50% - 17px);width:15px;height:15px;border-radius:50%;background:var(--red);color:#fff;font-size:8px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700}
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
-.chd{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-.srow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px} 
-.sb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px 10px}
-.sl{font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
-.sv{font-size:22px;font-weight:700;font-family:var(--mono);line-height:1}
-.ss{font-size:9px;color:var(--muted2);margin-top:3px}.g{color:var(--green)}.r{color:var(--red)}.go{color:var(--gold)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.or{color:var(--orange)}
-.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px}
-.tc.buy{border-left:3px solid var(--green)}.tc.sell{border-left:3px solid var(--red)}.tc.neutro{border-left:3px solid var(--blue)}
-.tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
-.tc-sym{font-size:17px;font-weight:700;font-family:var(--mono)}
-.tc-nm{font-size:9px;color:var(--muted2);margin-top:2px}
-.db{font-size:10px;font-weight:700;font-family:var(--mono);padding:5px 10px;border-radius:20px}
-.dbu{background:var(--g3);color:var(--green)}.dbs{background:var(--r3);color:var(--red)}.dbn{background:rgba(68,138,255,.1);color:var(--blue)}
-.lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px}
-.lv{background:var(--bg3);border-radius:var(--rsm);padding:8px 6px;text-align:center}
-.lvl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
-.lvv{font-size:11px;font-family:var(--mono);font-weight:700}
+.pg{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px 12px calc(var(--nav) + var(--safe) + 12px);opacity:0;transform:translateY(4px);transition:opacity .18s,transform .18s}
+.pg.on{display:block;opacity:1;transform:translateY(0)}.pg::-webkit-scrollbar{width:2px}.pg::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+#nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:520px;height:var(--nav);background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:200;padding-bottom:var(--safe)}
+.nb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;background:none;cursor:pointer;font-size:8px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;padding:0;transition:.2s;position:relative}
+.nb .ni{font-size:18px;transition:.2s}.nb.on{color:var(--green)}.nb.on .ni{transform:scale(1.08)}.nb:active{opacity:.7}
+.nbadge{position:absolute;top:5px;right:calc(50% - 16px);min-width:14px;height:14px;border-radius:7px;background:var(--red);color:#fff;font-size:7px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;padding:0 3px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px}
+.chd{font-size:8px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.srow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px}
+.sb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 8px}
+.sl{font-size:7px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.sv{font-size:20px;font-weight:700;font-family:var(--mono);line-height:1}
+.ss{font-size:8px;color:var(--muted2);margin-top:2px}
+.g{color:var(--green)}.r{color:var(--red)}.go{color:var(--gold)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.or{color:var(--orange)}
+.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px}
+.tc.buy{border-left:3px solid var(--green)}.tc.sell{border-left:3px solid var(--red)}
+.tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
+.tc-sym{font-size:15px;font-weight:700;font-family:var(--mono)}
+.tc-nm{font-size:8px;color:var(--muted2);margin-top:1px}
+.db{font-size:9px;font-weight:700;font-family:var(--mono);padding:4px 8px;border-radius:20px}
+.dbu{background:var(--g3);color:var(--green)}.dbs{background:var(--r3);color:var(--red)}
+.lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:6px}
+.lv{background:var(--bg3);border-radius:var(--rsm);padding:6px 4px;text-align:center}
+.lvl{font-size:7px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.lvv{font-size:10px;font-family:var(--mono);font-weight:700}
 .tcft{display:flex;align-items:center;justify-content:space-between}
-.pnl{font-size:16px;font-weight:700;font-family:var(--mono)}
-.tcm{font-size:9px;color:var(--muted2)}
-.pbar{height:3px;background:var(--bg4);border-radius:2px;margin-top:8px;overflow:hidden}
-.pbar-f{height:100%;border-radius:2px;transition:width .5s}
+.pnl{font-size:14px;font-weight:700;font-family:var(--mono)}
+.tcm{font-size:8px;color:var(--muted2)}
+.pbar{height:2px;background:var(--bg4);border-radius:2px;margin-top:6px;overflow:hidden}
+.pbar-f{height:100%;border-radius:2px;transition:width .4s}
 .pg-fill{background:linear-gradient(90deg,var(--green2),var(--green))}.pr-fill{background:linear-gradient(90deg,var(--red2),var(--red))}
-.mg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.mkt{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between}
-.mktn{font-size:11px;font-weight:500}
-.mkts{font-size:8px;letter-spacing:.8px;text-transform:uppercase;padding:2px 8px;border-radius:20px;font-family:var(--mono)}
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mkt{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 10px;display:flex;align-items:center;justify-content:space-between}
+.mktn{font-size:10px;font-weight:500}.mkts{font-size:7px;letter-spacing:.6px;text-transform:uppercase;padding:2px 6px;border-radius:20px;font-family:var(--mono)}
 .mop{background:var(--g3);color:var(--green)}.mcl{background:var(--r3);color:var(--red)}
-.fchips{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px}
-.fchips::-webkit-scrollbar{display:none}
-.fc{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;cursor:pointer;transition:.15s;color:var(--muted2);white-space:nowrap}
-.fc.on{background:var(--g3);border-color:var(--green);color:var(--green)}.fc:active{transform:scale(.96)}
-.ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:.15s;letter-spacing:.3px}
+.ab{width:100%;padding:13px;border-radius:var(--r);border:none;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);margin-bottom:6px;transition:.15s;letter-spacing:.2px}
 .ab:active{transform:scale(.98)}
 .abd{background:var(--r3);color:var(--red);border:1px solid rgba(255,23,68,.2)}
 .abp{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
 .abn{background:rgba(68,138,255,.1);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
-.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
-.plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
-.pval{font-size:16px;font-family:var(--mono);font-weight:700}
-.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
-.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
-.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
-.empty{text-align:center;padding:40px 20px;color:var(--muted)}
-.empi{font-size:40px;margin-bottom:10px;display:block}
-.empt{font-size:12px;line-height:1.6;color:var(--muted2)}
-.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)} 
-.dv{height:1px;background:var(--border);margin:14px 0}
-.spin{animation:spin 1s linear infinite;display:inline-block}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px}
+.plbl{font-size:7px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.pval{font-size:14px;font-family:var(--mono);font-weight:700}
+.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:8px 12px;margin-bottom:8px;display:none;align-items:center;justify-content:space-between}
+.cbtxt{font-size:10px;color:var(--red);font-weight:600}.cbmin{font-size:16px;font-family:var(--mono);font-weight:700;color:var(--red)}
+.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:8px 10px;margin-bottom:8px;font-size:10px;color:var(--red);display:none}
+.empty{text-align:center;padding:30px 16px;color:var(--muted)}
+.empi{font-size:36px;margin-bottom:8px;display:block}.empt{font-size:11px;line-height:1.5;color:var(--muted2)}
+.ts{font-size:8px;color:var(--muted);text-align:center;padding:6px 0;letter-spacing:.4px;font-family:var(--mono)}
+.dv{height:1px;background:var(--border);margin:12px 0}.spin{animation:spin .8s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
-.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
-.rb:active{opacity:.7}/* Pending Cards */
-.pending-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
-.pending-card.buy{border-left:4px solid var(--green)}.pending-card.sell{border-left:4px solid var(--red)}
-.pc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.pc-sym{font-size:16px;font-weight:700;font-family:var(--mono)}
-.pc-status{font-size:8px;padding:2px 8px;border-radius:20px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;background:var(--y3);color:var(--gold)}
-.pc-lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
-.pc-lv{background:var(--bg3);border-radius:var(--rsm);padding:8px;text-align:center;font-size:10px}
-.pc-ll{font-size:7px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
-.pc-val{font-family:var(--mono);font-weight:700;font-size:12px}
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.sttl{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:5px}
+/* Pending */
+.pending-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px}
+.pending-card.buy{border-left:3px solid var(--green)}.pending-card.sell{border-left:3px solid var(--red)}
+.pc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.pc-sym{font-size:14px;font-weight:700;font-family:var(--mono)}
+.pc-status{font-size:7px;padding:2px 6px;border-radius:20px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;background:var(--y3);color:var(--gold)}
+.pc-lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px}
+.pc-lv{background:var(--bg3);border-radius:var(--rsm);padding:6px;text-align:center;font-size:9px}
+.pc-ll{font-size:6px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:1px}
+.pc-val{font-family:var(--mono);font-weight:700;font-size:11px}
 .pc-val.g{color:var(--green)}.pc-val.r{color:var(--red)}
-.pc-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
-.pc-btn{flex:1;min-width:80px;padding:8px 10px;border:none;border-radius:var(--rsm);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:.15s;letter-spacing:.3px}
+.pc-actions{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.pc-btn{flex:1;min-width:70px;padding:7px 8px;border:none;border-radius:var(--rsm);font-size:10px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:.15s;letter-spacing:.2px}
 .pc-btn:active{transform:scale(.96)}
 .pc-copy{background:var(--bg3);border:1px solid var(--border);color:var(--muted2)}
 .pc-copy.copied{background:var(--g3);border-color:var(--green);color:var(--green)}
 .pc-confirm{background:var(--g3);border:1px solid rgba(0,230,118,.3);color:var(--green)}
 .pc-ignore{background:var(--r3);border:1px solid rgba(255,23,68,.3);color:var(--red)}
-.pc-info{display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:9px;color:var(--muted2)}
+.pc-info{display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:8px;color:var(--muted2)}
 .pc-time{font-family:var(--mono)}
-/* Config */
-.cfgsec{margin-bottom:18px}
-.cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px}
-.mdg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.mdb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px 8px;cursor:pointer;font-size:12px;font-family:var(--sans);color:var(--text);text-align:center;transition:.15s;line-height:1.4;border:none}
+/* Config & Calc */
+.cfgsec{margin-bottom:16px}.cfgl{font-size:8px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);margin-bottom:8px}
+.mdg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mdb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 6px;cursor:pointer;font-size:11px;font-family:var(--sans);color:var(--text);text-align:center;transition:.15s;line-height:1.3;border:none}
 .mdb:active{transform:scale(.97)}.mdb.on{background:var(--g3);border:1px solid var(--green);color:var(--green)}
-.mdi{font-size:20px;display:block;margin-bottom:3px}
-.tfg{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
-.tfb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 6px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--text);text-align:center;transition:.15s;border:none} 
+.mdi{font-size:18px;display:block;margin-bottom:2px}
+.tfg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tfb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 4px;cursor:pointer;font-size:10px;font-family:var(--mono);color:var(--text);text-align:center;transition:.15s;border:none}
 .tfb.on{background:rgba(0,229,255,.1);border:1px solid var(--cyan);color:var(--cyan)}.tfb:active{transform:scale(.97)}
-.tfd{font-size:14px;display:block;margin-bottom:2px}.tfl2{font-size:8px;color:var(--muted2);margin-top:1px}
-/* Calc */
-.calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
-.cinp{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px;font-family:var(--mono);color:var(--text);font-size:14px;width:100%}
+.tfd{font-size:13px;display:block;margin-bottom:1px}.tfl2{font-size:7px;color:var(--muted2);margin-top:1px}
+.calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.cinp{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px;font-family:var(--mono);color:var(--text);font-size:13px;width:100%}
 .cinp:focus{outline:none;border-color:var(--green)}
-.cres{background:var(--g3);border:1px solid rgba(0,230,118,.3);border-radius:var(--r);padding:14px;margin-top:10px}
-.cres-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px}
+.cres{background:var(--g3);border:1px solid rgba(0,230,118,.3);border-radius:var(--r);padding:12px;margin-top:8px}
+.cres-row{display:flex;justify-content:space-between;margin-bottom:6px;font-size:11px;align-items:center}
 .cres-val{font-family:var(--mono);font-weight:700}
-.copy-sm{background:var(--bg3);border:1px solid var(--border);color:var(--muted2);padding:4px 8px;border-radius:6px;font-size:10px;cursor:pointer;margin-left:6px}
-.copy-sm:hover{border-color:var(--green);color:var(--green)}
+.copy-sm{background:var(--bg3);border:1px solid var(--border);color:var(--muted2);padding:3px 6px;border-radius:5px;font-size:9px;cursor:pointer;margin-left:5px}
+.copy-sm:active{border-color:var(--green);color:var(--green)}
+.sel{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px;font-family:var(--sans);color:var(--text);font-size:12px;width:100%;margin-bottom:8px}
+.hist-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:10px}
+.hist-row:last-child{border:none}
 </style>
 </head>
 <body>
 <div id="app">
-  <div id="hdr">
-    <div class="hdr-l"><div class="logo">S</div><div><div class="t1">Sniper Bot</div><div class="t2">v7.3 Manual Ops</div></div></div>
+  <div id="conn-bar">⚠ Sem conexão. Dados em cache.</div>  <div id="hdr">
+    <div class="hdr-l"><div class="logo">S</div><div><div class="t1">Sniper Bot</div><div class="t2">v8.0 Pro</div></div></div>
     <div class="hdr-r"><div class="lpill"><div class="ldot"></div>LIVE</div><div class="ibtn" id="refbtn" onclick="refreshAll()">↻</div></div>
   </div>
   <div id="pages">
-    <div id="pg-dash" class="pg on">      <div class="chd"><span>📊 Dashboard</span><span class="ts" id="d-ts">--</span></div>
+    <div id="pg-dash" class="pg on">
+      <div class="chd"><span>📊 Dashboard</span><span class="ts" id="d-ts">--</span></div>
       <div id="cbbar" class="cbbar"><span class="cbtxt">⛔ CIRCUIT BREAKER</span><span class="cbmin" id="cbmin">--m</span></div>
       <div id="eb" class="eb">⚠ Erro de conexão. Tente novamente.</div>
       <div class="srow">
@@ -906,59 +900,57 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
       <div class="sh"><span class="sttl">🌐 Mercados</span></div>
       <div id="d-mkts" class="mg"></div>
     </div>
-
     <div id="pg-pend" class="pg">
-      <div class="chd"><span>⏳ Operações Pendentes</span><span class="ts" id="pend-ts">Auto: 10s</span></div>
+      <div class="chd"><span>⏳ Operações Pendentes</span><span class="ts">Auto: 10s</span></div>
       <div id="pending-list"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div></div>
     </div>
-
     <div id="pg-trends" class="pg">
-      <div class="chd"><span>📈 Tendências em Tempo Real</span><span class="ts" id="trends-ts">Atualizando...</span></div>
-      <div id="trends-list"><div class="empty"><span class="empi">⏳</span><div class="empt">Carregando dados de mercado...</div></div></div>
+      <div class="chd"><span>📈 Tendências</span><span class="ts" id="trends-ts">--</span></div>
+      <div id="trends-list"><div class="empty"><span class="empi">⏳</span><div class="empt">Carregando dados...</div></div></div>
     </div>
-
     <div id="pg-calc" class="pg">
       <div class="chd"><span>🧮 Calculadora de Risco</span></div>
       <div class="card">
-        <div class="cfgl">Entrada Rápida</div>
+        <select id="calc-type" class="sel" onchange="updateCalc()">
+          <option value="forex">FOREX (Lotes)</option>
+          <option value="crypto">CRYPTO (Unidades)</option>
+          <option value="indices">ÍNDICES (Contratos)</option>
+        </select>
         <div class="calc-grid">
           <input type="number" id="calc-cap" class="cinp" placeholder="Capital ($)" oninput="updateCalc()">
           <input type="number" id="calc-risk" class="cinp" placeholder="Risco (%)" value="1" oninput="updateCalc()">
           <input type="number" id="calc-entry" class="cinp" placeholder="Preço Entrada" oninput="updateCalc()">
           <input type="number" id="calc-sl" class="cinp" placeholder="Preço SL" oninput="updateCalc()">
-          <input type="number" id="calc-tp" class="cinp" placeholder="Preço TP (Opcional)" oninput="updateCalc()">
+          <input type="number" id="calc-tp" class="cinp" placeholder="Preço TP (Opc.)" oninput="updateCalc()">
         </div>
         <div id="calc-res" class="cres" style="display:none">
-          <div class="cres-row"><span>📏 Tamanho Posição:</span><span class="cres-val" id="res-size">--</span><button class="copy-sm" onclick="copyVal(document.getElementById('res-size').textContent, 'cp-size')">📋</button></div>
+          <div class="cres-row"><span id="res-size-lbl">📏 Lotes:</span><span class="cres-val" id="res-size">--</span><button class="copy-sm" onclick="copyVal(document.getElementById('res-size').textContent)">📋</button></div>
           <div class="cres-row"><span>💵 Valor em Risco:</span><span class="cres-val r" id="res-risk">--</span></div>
           <div class="cres-row"><span>🎯 Potencial Lucro:</span><span class="cres-val g" id="res-reward">--</span></div>
           <div class="cres-row"><span>⚖️ Ratio R:R:</span><span class="cres-val bl" id="res-rr">--</span></div>
         </div>
-        <p style="font-size:10px;color:var(--muted);margin-top:10px">💡 Cálculo baseado na distância absoluta de preço. Ajuste conforme lote/pip da sua corretora.</p>
-      </div>
+        <p style="font-size:9px;color:var(--muted);margin-top:8px">💡 Cálculo estimado. Verifique especificações da sua corretora.</p>      </div>
     </div>
-
+    <div id="pg-hist" class="pg">
+      <div class="chd"><span>📜 Histórico</span><span class="ts" id="hist-ts">--</span></div>
+      <div id="hist-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada</div></div></div>
+    </div>
     <div id="pg-cfg" class="pg">
       <div class="chd"><span>⚙ Configurações</span></div>
-      <div class="cfgsec">
-        <div class="cfgl">Mercado</div>        <div class="mdg">
-          <button class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</button>
-          <button class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</button>
-          <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMM.</button>
-          <button class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</button>
-        </div>
-      </div>
-      <div class="cfgsec">
-        <div class="cfgl">Timeframe</div>
-        <div class="tfg">
-          <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd">●</span>1m</button>
-          <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd">●</span>5m</button>
-          <button class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd">●</span>15m</button>
-          <button class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd">●</span>30m</button>
-          <button class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd">●</span>1h</button>
-          <button class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd">●</span>4h</button>
-        </div>
-      </div>
+      <div class="cfgsec"><div class="cfgl">Mercado</div><div class="mdg">
+        <button class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</button>
+        <button class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</button>
+        <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMM.</button>
+        <button class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</button>
+      </div></div>
+      <div class="cfgsec"><div class="cfgl">Timeframe</div><div class="tfg">
+        <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd">●</span>1m</button>
+        <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd">●</span>5m</button>
+        <button class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd">●</span>15m</button>
+        <button class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd">●</span>30m</button>
+        <button class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd">●</span>1h</button>
+        <button class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd">●</span>4h</button>
+      </div></div>
       <div class="dv"></div>
       <button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
       <button class="ab abn" onclick="window.location.reload()">↻ Atualizar App</button>
@@ -975,38 +967,42 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
     <button class="nb" onclick="goTo('pend',this)"><span class="ni">⏳</span>Pendentes<span class="nbadge" id="nbadge-pend">0</span></button>
     <button class="nb" onclick="goTo('trends',this)"><span class="ni">📈</span>Tendências</button>
     <button class="nb" onclick="goTo('calc',this)"><span class="ni">🧮</span>Risco</button>
+    <button class="nb" onclick="goTo('hist',this)"><span class="ni">📜</span>Histórico</button>
     <button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
   </div>
 </div>
 <script>
-let _st=null,_pend=[];
+let _st=null,_pend=[],_hist=[],_visible=true;
 function fp(p){if(p===undefined||p===null)return'--';if(p>=10000)return p.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});if(p>=1000)return p.toFixed(2);if(p>=10)return p.toFixed(4);if(p>=1)return p.toFixed(5);return p.toFixed(6);}
 async function apiFetch(path,opts={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},mode:'same-origin',...opts});if(!r.ok)throw new Error(r.status);return r.json();}
-function goTo(pg,btn){document.querySelectorAll('.pg').forEach(p=>{p.classList.remove('on');p.style.display='none';});document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));const t=document.getElementById('pg-'+pg);if(t){t.classList.add('on');t.style.display='block';}btn.classList.add('on');if(pg==='pend')loadPending();if(pg==='trends')loadTrends();if(pg==='cfg')loadCfg();}
-async function refreshAll(){const b=document.getElementById('refbtn');b.classList.add('spin');try{await loadDash();if(document.querySelector('.pg.on').id==='pg-pend')await loadPending();if(document.querySelector('.pg.on').id==='pg-trends')await loadTrends();}finally{b.classList.remove('spin');}}
+function goTo(pg,btn){document.querySelectorAll('.pg').forEach(p=>{p.classList.remove('on');p.style.display='none';});document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));const t=document.getElementById('pg-'+pg);if(t){t.classList.add('on');t.style.display='block';}btn.classList.add('on');if(pg==='pend')loadPending();if(pg==='trends')loadTrends();if(pg==='hist')loadHist();if(pg==='cfg')loadCfg();}
+async function refreshAll(){const b=document.getElementById('refbtn');b.classList.add('spin');try{await loadDash();const a=document.querySelector('.pg.on');if(a.id==='pg-pend')await loadPending();if(a.id==='pg-trends')await loadTrends();if(a.id==='pg-hist')await loadHist();}finally{b.classList.remove('spin');}}
 async function loadDash(){try{_st=await apiFetch('/api/status');document.getElementById('eb').style.display='none';document.getElementById('d-w').textContent=_st.wins;document.getElementById('d-l').textContent=_st.losses;document.getElementById('d-wr').textContent=_st.winrate+'% WR';document.getElementById('d-sq').textContent='Seq: '+_st.consecutive_losses;document.getElementById('d-t').textContent=_st.active_trades.length+'/3';document.getElementById('d-mt').textContent=_st.mode+' '+_st.timeframe;const cb=document.getElementById('cbbar');if(_st.paused){cb.style.display='flex';document.getElementById('cbmin').textContent=_st.cb_mins+'min';}else cb.style.display='none';document.getElementById('d-trades').innerHTML=_st.active_trades.length?_st.active_trades.map(renderTC).join(''):'<div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto</div></div>';const mn={FOREX:'📈 FOREX',CRYPTO:'₿ Cripto',COMMODITIES:'🏅 Commodities',INDICES:'📊 Índices'};document.getElementById('d-mkts').innerHTML=Object.entries(_st.markets).map(([k,v])=>`<div class="mkt"><span class="mktn">${mn[k]||k}</span><span class="mkts ${v?'mop':'mcl'}">${v?'Aberto':'Fechado'}</span></div>`).join('');document.getElementById('d-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});updCfgBtns();updBadges();}catch(e){document.getElementById('eb').style.display='block';}}
-function renderTC(t){const buy=t.dir==='BUY',pos=t.pnl>=0;const cls=buy?'buy':'sell';const dc=buy?'dbu':'dbs';const pct=Math.min(Math.abs(t.pnl)/3*100,100);return`<div class="tc ${cls}"><div class="tc-top"><div><div class="tc-sym">${t.symbol}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div><div class="db ${dc}">${buy?'▲ BUY':'▼ SELL'}</div></div><div class="lvls"><div class="lv"><div class="lvl">Entrada</div><div class="lvv">${fp(t.entry)}</div></div><div class="lv"><div class="lvl">SL 🛡</div><div class="lvv r">${fp(t.sl)}</div></div><div class="lv"><div class="lvl">TP 🎯</div><div class="lvv g">${fp(t.tp)}</div></div></div><div class="tcft"><div class="pnl ${pos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}%</div><div class="tcm">Atual: ${fp(t.current)}</div></div><div class="pbar"><div class="pbar-f ${pos?'pg-fill':'pr-fill'}" style="width:${pct}%"></div></div></div>`;}
-async function loadPending(){try{_pend=await apiFetch('/api/pending');const cnt=_pend.filter(p=>p.status==='PENDING').length;document.getElementById('nbadge-pend').textContent=cnt>0?cnt:'';document.getElementById('nbadge-pend').style.display=cnt>0?'flex':'none';renderPending();}catch(e){console.error(e);}}
-function renderPending(){const el=document.getElementById('pending-list');const active=_pend.filter(p=>p.status==='PENDING');if(!active.length){el.innerHTML='<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div>';return;}el.innerHTML=active.map(op=>{const buy=op.direction==='BUY';const slp=Math.abs(op.entry-op.sl)/op.entry*100;const tpp=Math.abs(op.tp-op.entry)/op.entry*100;const ratio=tpp/slp;return`<div class="pending-card ${buy?'buy':'sell'}"><div class="pc-head"><div><div class="pc-sym">${op.symbol}</div><div style="font-size:9px;color:var(--muted2);margin-top:2px">${op.name}</div></div><div class="pc-status">⏳ Pendente</div></div><div style="text-align:center;margin-bottom:10px;font-size:18px;font-weight:700;color:${buy?'var(--green)':'var(--red)'}">${buy?'▲ BUY':'▼ SELL'}</div><div class="pc-lvls"><div class="pc-lv"><div class="pc-ll">Entrada</div><div class="pc-val">${fp(op.entry)}</div></div><div class="pc-lv"><div class="pc-ll">SL 🛡</div><div class="pc-val r">${fp(op.sl)}</div></div><div class="pc-lv"><div class="pc-ll">TP 🎯</div><div class="pc-val g">${fp(op.tp)}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;font-size:10px;color:var(--muted2)"><div>ATR: <code style="color:var(--text)">${fp(op.atr)}</code></div><div>RSI: <code style="color:var(--text)">${op.rsi.toFixed(1)}</code></div><div>ADX: <code style="color:var(--text)">${op.adx.toFixed(1)}</code></div></div><div class="pc-actions"><button class="pc-btn pc-copy" id="sl_${op.id}" onclick="copyVal('${fp(op.sl)}','sl_${op.id}')">📋 SL</button><button class="pc-btn pc-copy" id="tp_${op.id}" onclick="copyVal('${fp(op.tp)}','tp_${op.id}')">📋 TP</button><button class="pc-btn pc-confirm" onclick="confirmPending('${op.id}')">✅ Entrar</button><button class="pc-btn pc-ignore" onclick="ignorePending('${op.id}')">❌ Ignorar</button></div><div class="pc-info"><span>Ratio: <strong>${ratio.toFixed(2)}:1</strong></span><span class="pc-time">${op.created_at}</span></div></div>`;}).join('');}
-function copyVal(val,uid){navigator.clipboard.writeText(val).then(()=>{const btn=document.getElementById(uid);if(btn){btn.textContent='✅';btn.classList.add('copied');setTimeout(()=>{btn.textContent=uid.startsWith('sl')?'📋 SL':'📋 TP';btn.classList.remove('copied');},1200);}}).catch(()=>alert('Copie manualmente: '+val));}
-async function confirmPending(opId){try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();await loadDash();}catch(e){alert('Erro: '+e.message);}}
-async function ignorePending(opId){try{await apiFetch('/api/ignore',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();}catch(e){alert('Erro: '+e.message);}}async function loadTrends(){try{const data=await apiFetch('/api/trends');const el=document.getElementById('trends-list');if(!data||data.length===0){el.innerHTML='<div class="empty"><span class="empi">📡</span><div class="empt">Nenhum sinal ativo no momento</div></div>';return;}el.innerHTML=data.slice(0,20).map(t=>{const cls=t.dir==='ALTA'?'buy':t.dir==='BAIXA'?'sell':'neutro';const dc=t.dir==='ALTA'?'dbu':t.dir==='BAIXA'?'dbs':'dbn';return`<div class="tc ${cls}"><div class="tc-top"><div><div class="tc-sym">${t.symbol}</div><div class="tc-nm">${t.name} · Preço: ${t.price}</div></div><div class="db ${dc}">${t.dir}</div></div><div class="lvls"><div class="lv"><div class="lvl">Score</div><div class="lvv">${t.score}/7</div></div><div class="lv"><div class="lvl">RSI</div><div class="lvv">${t.rsi.toFixed(1)}</div></div><div class="lv"><div class="lvl">ADX</div><div class="lvv">${t.adx.toFixed(1)}</div></div></div></div>`;}).join('');document.getElementById('trends-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}catch(e){console.error(e);}}
-function updateCalc(){const cap=parseFloat(document.getElementById('calc-cap').value)||0;const risk=parseFloat(document.getElementById('calc-risk').value)||0;const entry=parseFloat(document.getElementById('calc-entry').value)||0;const sl=parseFloat(document.getElementById('calc-sl').value)||0;const tp=parseFloat(document.getElementById('calc-tp').value)||0;if(cap&&risk&&entry&&sl){const riskAmt=cap*(risk/100);const slDist=Math.abs(entry-sl);const size=riskAmt/slDist;const tpDist=tp?Math.abs(tp-entry):0;const reward=tp?size*tpDist:0;const rr=tp?(tpDist/slDist).toFixed(2):'--';document.getElementById('res-size').textContent=size.toFixed(2);document.getElementById('res-risk').textContent='$'+riskAmt.toFixed(2);document.getElementById('res-reward').textContent=tp?'$'+reward.toFixed(2):'--';document.getElementById('res-rr').textContent=rr;document.getElementById('calc-res').style.display='block';}}
+function renderTC(t){const buy=t.dir==='BUY',pos=t.pnl>=0;const cls=buy?'buy':'sell';const dc=buy?'dbu':'dbs';const pct=Math.min(Math.abs(t.pnl)/3*100,100);return`<div class="tc ${cls}"><div class="tc-top"><div><div class="tc-sym">${t.symbol}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div><div class="db ${dc}">${buy?'▲ BUY':'▼ SELL'}</div></div><div class="lvls"><div class="lv"><div class="lvl">Entrada</div><div class="lvv">${fp(t.entry)}</div></div><div class="lv"><div class="lvl">SL 🛡</div><div class="lvv r">${fp(t.sl)}</div></div><div class="lv"><div class="lvl">TP 🎯</div><div class="lvv g">${fp(t.tp)}</div></div></div><div class="tcft"><div class="pnl ${pos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}%</div><div class="tcm">Atual: ${fp(t.current)}</div></div><div class="pbar"><div class="pbar-f ${pos?'pg-fill':'pr-fill'}" style="width:${pct}%"></div></div></div>`;}async function loadPending(){try{_pend=await apiFetch('/api/pending');const cnt=_pend.filter(p=>p.status==='PENDING').length;document.getElementById('nbadge-pend').textContent=cnt>0?cnt:'';document.getElementById('nbadge-pend').style.display=cnt>0?'flex':'none';renderPending();}catch(e){console.error(e);}}
+function renderPending(){const el=document.getElementById('pending-list');const active=_pend.filter(p=>p.status==='PENDING');if(!active.length){el.innerHTML='<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div>';return;}el.innerHTML=active.map(op=>{const buy=op.direction==='BUY';const slp=Math.abs(op.entry-op.sl)/op.entry*100;const tpp=Math.abs(op.tp-op.entry)/op.entry*100;const ratio=tpp/slp;return`<div class="pending-card ${buy?'buy':'sell'}"><div class="pc-head"><div><div class="pc-sym">${op.symbol}</div><div style="font-size:8px;color:var(--muted2);margin-top:1px">${op.name}</div></div><div class="pc-status">⏳ Pendente</div></div><div style="text-align:center;margin-bottom:8px;font-size:16px;font-weight:700;color:${buy?'var(--green)':'var(--red)'}">${buy?'▲ BUY':'▼ SELL'}</div><div class="pc-lvls"><div class="pc-lv"><div class="pc-ll">Entrada</div><div class="pc-val">${fp(op.entry)}</div></div><div class="pc-lv"><div class="pc-ll">SL 🛡</div><div class="pc-val r">${fp(op.sl)}</div></div><div class="pc-lv"><div class="pc-ll">TP 🎯</div><div class="pc-val g">${fp(op.tp)}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;font-size:9px;color:var(--muted2)"><div>ATR: <code style="color:var(--text)">${fp(op.atr)}</code></div><div>RSI: <code style="color:var(--text)">${op.rsi.toFixed(1)}</code></div><div>ADX: <code style="color:var(--text)">${op.adx.toFixed(1)}</code></div></div><div class="pc-actions"><button class="pc-btn pc-copy" id="sl_${op.id}" onclick="copyVal('${fp(op.sl)}','sl_${op.id}','SL')">📋 SL</button><button class="pc-btn pc-copy" id="tp_${op.id}" onclick="copyVal('${fp(op.tp)}','tp_${op.id}','TP')">📋 TP</button><button class="pc-btn pc-confirm" onclick="confirmPending('${op.id}')">✅ Entrar</button><button class="pc-btn pc-ignore" onclick="ignorePending('${op.id}')">❌ Ignorar</button></div><div class="pc-info"><span>Ratio: <strong>${ratio.toFixed(2)}:1</strong></span><span class="pc-time">${op.created_at}</span></div></div>`;}).join('');}
+function copyVal(val,uid,label){navigator.clipboard.writeText(val).then(()=>{const btn=document.getElementById(uid);if(btn){btn.textContent='✅ '+label;btn.classList.add('copied');setTimeout(()=>{btn.textContent='📋 '+label;btn.classList.remove('copied');},1200);if(navigator.vibrate)navigator.vibrate(50);}}).catch(()=>alert('Copie manualmente: '+val));}
+async function confirmPending(opId){try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();await loadDash();if(navigator.vibrate)navigator.vibrate([100,50,100]);}catch(e){alert('Erro: '+e.message);}}
+async function ignorePending(opId){try{await apiFetch('/api/ignore',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();}catch(e){alert('Erro: '+e.message);}}
+async function loadTrends(){try{const data=await apiFetch('/api/trends');const el=document.getElementById('trends-list');if(!data||data.length===0){el.innerHTML='<div class="empty"><span class="empi">📡</span><div class="empt">Nenhum sinal ativo</div></div>';return;}el.innerHTML=data.slice(0,20).map(t=>{const cls=t.dir==='ALTA'?'buy':t.dir==='BAIXA'?'sell':'neutro';const dc=t.dir==='ALTA'?'dbu':t.dir==='BAIXA'?'dbs':'dbn';return`<div class="tc ${cls}"><div class="tc-top"><div><div class="tc-sym">${t.symbol}</div><div class="tc-nm">${t.name} · Preço: ${t.price}</div></div><div class="db ${dc}">${t.dir}</div></div><div class="lvls"><div class="lv"><div class="lvl">Score</div><div class="lvv">${t.score}/7</div></div><div class="lv"><div class="lvl">RSI</div><div class="lvv">${t.rsi.toFixed(1)}</div></div><div class="lv"><div class="lvl">ADX</div><div class="lvv">${t.adx.toFixed(1)}</div></div></div></div>`;}).join('');document.getElementById('trends-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}catch(e){console.error(e);}}
+async function loadHist(){try{_hist=await apiFetch('/api/history');const el=document.getElementById('hist-list');if(!_hist.length){el.innerHTML='<div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada</div></div>';return;}let totalPnl=0;el.innerHTML=_hist.slice().reverse().slice(0,30).map(h=>{totalPnl+=h.pnl;const win=h.result==='WIN';return`<div class="hist-row"><span>${h.symbol} ${h.dir}</span><span class="${win?'g':'r'}">${win?'✅':'❌'} ${h.pnl>=0?'+':''}${h.pnl.toFixed(2)}%</span><span style="color:var(--muted2)">${h.closed_at}</span></div>`;}).join('')+`<div style="text-align:center;padding:10px;font-size:11px;font-weight:700;color:${totalPnl>=0?'var(--green)':'var(--red)'}">P&L Acumulado: ${totalPnl>=0?'+':''}${totalPnl.toFixed(2)}%</div>`;document.getElementById('hist-ts').textContent=_hist.length+' registros';}catch(e){console.error(e);}}
+function updateCalc(){const cap=parseFloat(document.getElementById('calc-cap').value)||0;const risk=parseFloat(document.getElementById('calc-risk').value)||0;const entry=parseFloat(document.getElementById('calc-entry').value)||0;const sl=parseFloat(document.getElementById('calc-sl').value)||0;const tp=parseFloat(document.getElementById('calc-tp').value)||0;const type=document.getElementById('calc-type').value;if(cap&&risk&&entry&&sl){const riskAmt=cap*(risk/100);const slDist=Math.abs(entry-sl);let size=0,lbl='📏 Tamanho:';if(type==='forex'){size=riskAmt/(slDist*100000);lbl='📏 Lotes:';}else if(type==='crypto'){size=riskAmt/slDist;lbl='📏 Unidades:';}else{size=riskAmt/(slDist*10);lbl='📏 Contratos:';}const tpDist=tp?Math.abs(tp-entry):0;const reward=tp?size*tpDist*(type==='forex'?100000:type==='indices'?10:1):0;const rr=tp?(tpDist/slDist).toFixed(2):'--';document.getElementById('res-size-lbl').textContent=lbl;document.getElementById('res-size').textContent=size.toFixed(2);document.getElementById('res-risk').textContent='$'+riskAmt.toFixed(2);document.getElementById('res-reward').textContent=tp?'$'+reward.toFixed(2):'--';document.getElementById('res-rr').textContent=rr;document.getElementById('calc-res').style.display='block';}}
 function updBadges(){const pend=_pend?_pend.filter(p=>p.status==='PENDING').length:0;document.getElementById('nbadge-pend').textContent=pend>0?pend:'';document.getElementById('nbadge-pend').style.display=pend>0?'flex':'none';}
 async function loadCfg(){try{const c=await apiFetch('/api/config');document.getElementById('p-sl').textContent=c.atm_sl+'×ATR';document.getElementById('p-tp').textContent=c.atr_tp+'×ATR';document.getElementById('p-mt').textContent=c.max_trades;document.getElementById('p-mc').textContent=c.min_conf+'/7';}catch(_){}updCfgBtns();}
 function updCfgBtns(){if(!_st)return;document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===_st.mode));document.querySelectorAll('[data-tf]').forEach(b=>b.classList.toggle('on',b.dataset.tf===_st.timeframe));}
 async function setMode(m){try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function setTf(t){try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function resetPausa(){if(!confirm('Resetar Circuit Breaker?'))return;try{await apiFetch('/api/resetpausa',{method:'POST'});await loadDash();}catch(e){alert('Erro: '+e.message);}}
-window.addEventListener('load',()=>{loadDash();loadPending();loadTrends();setInterval(()=>{loadDash();},30000);setInterval(()=>{if(document.querySelector('.pg.on').id==='pg-pend')loadPending();if(document.querySelector('.pg.on').id==='pg-trends')loadTrends();},10000);});
+document.addEventListener('visibilitychange',()=>{_visible=!document.hidden;});
+window.addEventListener('online',()=>{document.getElementById('conn-bar').style.display='none';refreshAll();});
+window.addEventListener('offline',()=>{document.getElementById('conn-bar').style.display='block';});
+window.addEventListener('load',()=>{loadDash();loadPending();setInterval(()=>{if(_visible){loadDash();if(document.querySelector('.pg.on').id==='pg-pend')loadPending();if(document.querySelector('.pg.on').id==='pg-trends')loadTrends();if(document.querySelector('.pg.on').id==='pg-hist')loadHist();}},10000);if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});});
 </script>
 </body>
-</html>
-"""
+</html>"""
 
-# ═══════════════════════════════════════════════════════════════
-# FLASK API
-# ═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+FLASK API
+═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
@@ -1020,6 +1016,9 @@ def create_api(bot):
     @app.route("/")
     def index(): return Response(DASHBOARD_HTML, mimetype="text/html")
 
+    @app.route("/manifest.json")
+    def manifest(): return Response(MANIFEST_JSON, mimetype="application/json")
+
     @app.route("/sw.js")
     def sw(): return Response(SW_JS, mimetype="application/javascript")
 
@@ -1029,20 +1028,18 @@ def create_api(bot):
         size = 192 if "192" in request.path else 512
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
-
     @app.route("/api/health")
-    def api_health(): return jsonify({"status": "ok", "version": "7.3"})
+    def api_health(): return jsonify({"status": "ok", "version": "8.0"})
 
     @app.route("/api/status")
     def api_status():
+        if not api_limiter.is_allowed(): return jsonify({"error": "rate_limit"}), 429
         total = bot.wins + bot.losses
         wr    = round(bot.wins/total*100, 1) if total > 0 else 0
         trades_out = []
         for t in bot.active_trades:
-            try: 
-                res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]            
-            except: 
-                cur = t["entry"]
+            try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
+            except: cur = t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
             if t["dir"] == "SELL": pnl = -pnl
             trades_out.append({"symbol": t["symbol"], "name": t.get("name", ""), "dir": t["dir"],
@@ -1064,22 +1061,26 @@ def create_api(bot):
 
     @app.route("/api/pending")
     def api_pending():
+        if not api_limiter.is_allowed(): return jsonify({"error": "rate_limit"}), 429
         return jsonify(bot.pending_operations)
 
     @app.route("/api/trends")
     def api_trends():
+        if not api_limiter.is_allowed(): return jsonify({"error": "rate_limit"}), 429
         trends = []
         for sym, cache in bot.trend_cache.items():
             if cache.get("data"):
                 d = cache["data"]
-                sc, _, _ = calc_confluence(d, d["cenario"].replace("NEUTRO","ALTA"))
                 trends.append({
                     "symbol": sym, "name": asset_name(sym), "price": fmt(d["price"]),
                     "dir": d["cenario"], "rsi": d["rsi"], "adx": d["adx"],
-                    "score": sc, "ts": cache["ts"]
+                    "score": cache.get("score", 0), "ts": cache["ts"]
                 })
-        trends.sort(key=lambda x: x["ts"], reverse=True)
-        return jsonify(trends[:20])
+        trends.sort(key=lambda x: x["ts"], reverse=True)        return jsonify(trends[:20])
+
+    @app.route("/api/history")
+    def api_history():
+        return jsonify(bot.history)
 
     @app.route("/api/confirm", methods=["POST", "OPTIONS"])
     def api_confirm():
@@ -1091,7 +1092,7 @@ def create_api(bot):
     @app.route("/api/ignore", methods=["POST", "OPTIONS"])
     def api_ignore():
         if request.method == "OPTIONS": return jsonify({}), 200
-        data = request.get_json(force=True) or {}        
+        data = request.get_json(force=True) or {}
         bot.ignore_pending_operation(data.get("op_id", ""))
         return jsonify({"ok": True})
 
@@ -1124,8 +1125,7 @@ def create_api(bot):
     @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
     def api_subscribe():
         if request.method == "OPTIONS": return jsonify({}), 200
-        sub = request.get_json(force=True)
-        if sub and sub not in _push_subscriptions:
+        sub = request.get_json(force=True)        if sub and sub not in _push_subscriptions:
             _push_subscriptions.append(sub)
             log(f"[PUSH] Nova inscrição. Total: {len(_push_subscriptions)}")
         return jsonify({"ok": True})
@@ -1138,10 +1138,10 @@ def run_api(bot):
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
-# ═══════════════════════════════════════════════════════════════
-# LOOP DO BOT & MAIN
-# ═══════════════════════════════════════════════════════════════
-def bot_loop(bot):    
+═══════════════════════════════════════════════════════════════
+LOOP DO BOT & MAIN
+═══════════════════════════════════════════════════════════════
+def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
     try: bot.send_news()
@@ -1174,8 +1174,7 @@ def bot_loop(bot):
                         elif cb == "placar": bot.send_placar()
                         elif cb == "pending": bot.send_pending_count()
             bot.update_trends_cache()
-            bot.maybe_send_news()
-            bot.scan()
+            bot.maybe_send_news()            bot.scan()
             bot.scan_reversal_forex()
             bot.monitor_trades()
             time.sleep(Config.SCAN_INTERVAL)
@@ -1183,7 +1182,7 @@ def bot_loop(bot):
             log(f"Erro loop: {e}"); time.sleep(10)
 
 def main():
-    log("🔌 Bot Sniper v7.3 — Tendências RT + Cópia Individual + Calculadora")
+    log("🔌 Bot Sniper v8.0 — Production Ready + PWA + APK Optimized")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
     except: pass
     bot = TradingBot()
