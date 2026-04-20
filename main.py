@@ -145,7 +145,9 @@ RSS_FEEDS = [
     ("Cointelegraph", "https://cointelegraph.com/rss"),
     ("Decrypt", "https://decrypt.co/feed"),
     ("Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories"),
-]def _parse_rss(url, src, mx=3):
+]
+    
+def _parse_rss(url, src, mx=3):
     try:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
         r.raise_for_status()
