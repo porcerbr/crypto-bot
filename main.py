@@ -1650,7 +1650,8 @@ function smoothUpdate(fn) {
   });
 }
 
-// Highlight de texto para buscafunction highlightText(text, query) {
+// Highlight de texto para busca
+function highlightText(text, query) {
   if (!query) return text;
   const regex = new RegExp(`(${query})`, 'gi');
   return text.replace(regex, '<span class="highlight">$1</span>');
