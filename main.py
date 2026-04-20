@@ -637,22 +637,31 @@ class TradingBot:
         save_state(self); self.send("✅ Circuit Breaker resetado.")
 
     # ── Cache de tendências ───────────────────────────────────
+    # No método de atualização da classe TradingBot
+
     def update_trends_cache(self):
-        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
-        log("📡 Atualizando cache tendências...")
-        for s in all_syms():
-            try:
-                res = get_analysis(s, self.timeframe)
-                if res:
-                    rev = detect_reversal(res)
-                    self.trend_cache[s] = {
-                        "data": res,
-                        "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
-                        "ts": time.time(),
-                    }
-            except Exception as e: log(f"[TRENDS] {s}: {e}")
-        self.last_trends_update = time.time()
-        log(f"📡 Cache: {len(self.trend_cache)} ativos")
+    # Inicializa a estrutura para incluir a lista de ativos
+        self.trends_data = {
+        "summary": {"high": 0, "low": 0, "neutral": 0},
+        "assets": []  # Lista para armazenar dados individuais
+    }
+    
+        for symbol in self.symbols:
+        # Lógica de análise de tendência (exemplo simplificado)
+        trend_info = self.get_asset_trend(symbol) 
+        
+        # Incrementa o resumo (o que já funcionava)
+        self.trends_data["summary"][trend_info['direction']] += 1
+        
+        # Adiciona os dados detalhados do ativo
+        self.trends_data["assets"].append({
+            "symbol": symbol,
+            "price": trend_info['current_price'],
+            "trend": trend_info['direction'],
+            "rsi": trend_info['rsi_value'],
+            "change": trend_info['percent_change'],
+            "last_update": datetime.now().strftime("%H:%M:%S")
+        })
 
     # ── SCAN — 4 fases ───────────────────────────────────────
     def scan(self):
