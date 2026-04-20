@@ -2782,31 +2782,38 @@ const manifest = {
     { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
   ]
 };
-const manifestBlob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
 const manifestLink = document.createElement('link');
 manifestLink.rel = 'manifest';
 manifestLink.href = URL.createObjectURL(manifestBlob);
 document.head.appendChild(manifestLink);
 
 // Carregar preferências salvas
-function loadPreferences() {  const saved = localStorage.getItem('sniper_prefs');
-  if (saved) {
-    try {
-      const prefs = JSON.parse(saved);
-      if (prefs.theme) document.documentElement.setAttribute('data-theme', prefs.theme);
-      if (prefs.signalFilter) {
-        UI.state.signalFilter = prefs.signalFilter;
-        const btn = document.querySelector(`#signalFilters .chip[data-type="${prefs.signalFilter}"]`);
-        if (btn) {
-          document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
-          btn.classList.add('active');
-        }
+function loadPreferences() {
+  const saved = localStorage.getItem('sniper_prefs');
+  if (!saved) return;
+
+  try {
+    const prefs = JSON.parse(saved);
+
+    if (prefs.theme) {
+      document.documentElement.setAttribute('data-theme', prefs.theme);
+    }
+
+    if (prefs.signalFilter) {
+      UI.state.signalFilter = prefs.signalFilter;
+      const btn = document.querySelector(`#signalFilters .chip[data-type="${prefs.signalFilter}"]`);
+      if (btn) {
+        document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
+        btn.classList.add('active');
       }
-      // MELHORIA 3: Restaurar modo Apenas Sinais
-      if (prefs.signalsOnly) {
-        setTimeout(() => toggleSignalsOnly(true), 100);
-      }
-    } catch (_) {}
+    }
+
+    if (prefs.signalsOnly) {
+      setTimeout(() => toggleSignalsOnly(true), 100);
+    }
+  } catch (e) {
+    console.warn('Erro ao carregar preferências:', e);
   }
 }
 
@@ -2818,34 +2825,63 @@ function savePreferences(key, value) {
 
 // Init
 window.addEventListener('load', async () => {
-  initServiceWorker();
-  
-  // Carregar preferências primeiro
-  loadPreferences();
-  
-  // NOVO: Inicializar calculadora
-  Calc.init();
-  
-  // IMPORTANTE: Se estiver no modo Apenas Sinais, garantir estado correto
-  const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}');
-  if (prefs.signalsOnly) {
-    // Em vez de ativar direto, apenas marcar o checkbox e deixar o usuário ativar
-    // Isso evita o app travar no load
-    const toggle = document.getElementById('signalsOnlyToggle');
-    if (toggle) toggle.checked = false; // Não ativar automaticamente
-    savePreferences('signalsOnly', false); // Resetar para evitar travamento
+  try {
+    initServiceWorker();
+
+    // Carregar preferências primeiro
+    loadPreferences();
+
+    // Inicializar calculadora
+    if (typeof Calc !== 'undefined' && Calc && typeof Calc.init === 'function') {
+      Calc.init();
+    }
+
+    // Evita ativação automática do modo Apenas Sinais no carregamento
+    const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}');
+    if (prefs.signalsOnly) {
+      const toggle = document.getElementById('signalsOnlyToggle');
+      if (toggle) toggle.checked = false;
+      savePreferences('signalsOnly', false);
+    }
+
+    // Carregar dados iniciais
+    await loadDashboard();
+
+    window._status = await API.getStatus();
+
+    // Garantir que a página dashboard está ativa por padrão
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const dash = document.getElementById('page-dash');
+    if (dash) dash.classList.add('active');
+
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.nav-btn')?.classList.add('active');
+
+    // Auto-refresh a cada 30s
+    setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadDashboard();
+        if (document.querySelector('.page.active')?.id === 'page-sig') {
+          loadSignals();
+        }
+      }
+    }, 30000);
+
+    // Listener para visibilidade
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        loadDashboard();
+        if (document.querySelector('.page.active')?.id === 'page-sig') {
+          loadSignals();
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error('Erro na inicialização:', err);
   }
-  
-  // Carregar dados iniciais
-  await loadDashboard();
-  window._status = await API.getStatus();
-  
-  // Garantir que a página dashboard está ativa por padrão
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-dash').classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.nav-btn')?.classList.add('active');
-  
+});
+
   // ================================
   // AUTO-REFRESH DASHBOARD
   // ================================
