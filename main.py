@@ -2765,6 +2765,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
+
 /* ═══════════════════════════════════════════════════════════ */
 /* INICIALIZAÇÃO */
 /* ═══════════════════════════════════════════════════════════ */
@@ -2824,20 +2825,31 @@ function savePreferences(key, value) {
   localStorage.setItem('sniper_prefs', JSON.stringify(prefs));
 }
 
-// Init
+function refreshActivePage() {
+  const activePage = document.querySelector('.page.active')?.id;
+
+  if (activePage === 'page-dash') {
+    loadDashboard();
+  } else if (activePage === 'page-scan') {
+    FrontendCache.clear();
+    loadScanner();
+  } else if (activePage === 'page-sig') {
+    loadSignals();
+  } else if (activePage === 'page-ct') {
+    loadCT();
+    loadNews();
+  }
+}
+
 window.addEventListener('load', async () => {
   try {
     initServiceWorker();
-
-    // Carregar preferências primeiro
     loadPreferences();
 
-    // Inicializar calculadora
     if (typeof Calc !== 'undefined' && Calc && typeof Calc.init === 'function') {
       Calc.init();
     }
 
-    // Evita ativação automática do modo Apenas Sinais no carregamento
     const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}');
     if (prefs.signalsOnly) {
       const toggle = document.getElementById('signalsOnlyToggle');
@@ -2845,12 +2857,9 @@ window.addEventListener('load', async () => {
       savePreferences('signalsOnly', false);
     }
 
-    // Carregar dados iniciais
     await loadDashboard();
-
     window._status = await API.getStatus();
 
-    // Garantir que a página dashboard está ativa por padrão
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const dash = document.getElementById('page-dash');
     if (dash) dash.classList.add('active');
@@ -2858,23 +2867,17 @@ window.addEventListener('load', async () => {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelector('.nav-btn')?.classList.add('active');
 
-    // Auto-refresh a cada 30s
+    // Atualiza a página visível a cada 30s
     setInterval(() => {
       if (document.visibilityState === 'visible') {
-        loadDashboard();
-        if (document.querySelector('.page.active')?.id === 'page-sig') {
-          loadSignals();
-        }
+        refreshActivePage();
       }
     }, 30000);
 
-    // Listener para visibilidade
+    // Quando voltar para a aba, atualiza a página atual
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        loadDashboard();
-        if (document.querySelector('.page.active')?.id === 'page-sig') {
-          loadSignals();
-        }
+        refreshActivePage();
       }
     });
 
