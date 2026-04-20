@@ -646,8 +646,8 @@ class TradingBot:
     
         universe = all_syms() # Pega todos os símbolos
         for s in universe:
-        res = get_analysis(s, self.timeframe)
-        if not res: continue
+            res = get_analysis(s, self.timeframe)
+            if not res: continue
         
         # Dados para o resumo (o que já tinha)
         cen = res["cenario"]
