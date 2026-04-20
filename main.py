@@ -23,7 +23,7 @@ from flask_cors import CORS
 # CONFIGURAÇÕES
 # ═══════════════════════════════════════════════════════════════
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAGVE78Dy81Uyms4oWGH_9rvW7CYA6iSncY")
+    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
     BR_TZ      = timezone(timedelta(hours=-3))
 
