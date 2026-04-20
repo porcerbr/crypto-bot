@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-BOT SNIPER v7.1 — Multi-mercado + API HTTP + Dashboard PWA + Push Notifications
+BOT SNIPER v7.2 — Multi-mercado + API HTTP + Dashboard PWA + Push Notifications
 ═══════════════════════════════════════════════════════════════════════════════
-ARQUITETURA: Flask serve o HTML/API direto (1 único app no Railway)
-NOVIDADES v7.1 (sobre v7):
-  • Scan em 4 fases restaurado: RADAR → GATILHO → SINAL → INSUF.
-  • Scan de Contra-Tendência FOREX (CT) restaurado
-  • Feed de sinais (/api/signals) restaurado
-  • Notícias (/api/news) com cache
-  • Push Notifications via Web Push API (funciona mesmo com app fechado)
-  • Dashboard com 5 abas completas
-  • MATIC-USD → POL-USD corrigido
-  • Feeds RSS funcionais
+NOVIDADES v7.2 (sobre v7.1):
+  • ✅ CONFIRMAÇÃO MANUAL: Operações ficam pendentes até você confirmar
+  • 📋 COPIAR SL/TP: Um clique copia valores prontos para sua plataforma
+  • ⏳ FILA DE PENDENTES: Gerencie operações com botões ou swipe
+  • 🎯 Templates de Entrada: Dados estruturados para copy/paste
+  • 💾 Persistência: Fila restaura após recarregar
+  • 🔔 Badge de Pendentes: Mostra quantas aguardam confirmação
 """
 import os, time, json, math, threading, requests
 import pandas as pd, xml.etree.ElementTree as ET
@@ -88,7 +85,7 @@ class Config:
 
     # Filtros CT
     MIN_CONFLUENCE_CT = 4
-    REVERSAL_COOLDOWN = 2700   # 45min entre alertas CT
+    REVERSAL_COOLDOWN = 2700
 
     # Timers
     RADAR_COOLDOWN   = 1800
@@ -170,6 +167,7 @@ def save_state(bot):
         "consecutive_losses": bot.consecutive_losses,
         "paused_until": bot.paused_until,
         "active_trades": bot.active_trades,
+        "pending_operations": bot.pending_operations,
         "radar_list": bot.radar_list,
         "gatilho_list": bot.gatilho_list,
         "reversal_list": bot.reversal_list,
@@ -191,18 +189,26 @@ def load_state(bot):
         bot.consecutive_losses = data.get("consecutive_losses", 0)
         bot.paused_until       = data.get("paused_until", 0)
         bot.active_trades      = data.get("active_trades", [])
+        bot.pending_operations = data.get("pending_operations", [])
         bot.radar_list         = data.get("radar_list", {})
         bot.gatilho_list       = data.get("gatilho_list", {})
         bot.reversal_list      = data.get("reversal_list", {})
         bot.asset_cooldown     = data.get("asset_cooldown", {})
         bot.history            = data.get("history", [])
         for t in bot.active_trades: t["session_alerted"] = False
-        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s)")
+        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_operations)} pendente(s)")
         if bot.active_trades:
             lines = ["♻️ <b>BOT REINICIADO – TRADES ATIVOS</b>\n"]
             for t in bot.active_trades:
                 dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
                 lines.append(f"📌 <b>{t['symbol']}</b> {dl} | Entrada: <code>{fmt(t['entry'])}</code> | TP: <code>{fmt(t['tp'])}</code> | SL: <code>{fmt(t['sl'])}</code>")
+            bot._restore_msg = "\n".join(lines)
+        elif bot.pending_operations:
+            lines = ["⏳ <b>BOT REINICIADO – OPERAÇÕES PENDENTES</b>\n"]
+            for op in bot.pending_operations[:3]:
+                dl = "BUY 🟢" if op["direction"] == "BUY" else "SELL 🔴"
+                lines.append(f"⏳ <b>{op['symbol']}</b> {dl} | Entrada: <code>{fmt(op['entry'])}</code> | SL: <code>{fmt(op['sl'])}</code> | TP: <code>{fmt(op['tp'])}</code>")
+            if len(bot.pending_operations) > 3: lines.append(f"\n... +{len(bot.pending_operations)-3} mais pendentes")
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
@@ -365,7 +371,7 @@ def cbar(sc, tot):
 
 # ═══════════════════════════════════════════════════════════════
 # MOTOR DE CONTRA-TENDÊNCIA (FOREX)
-# ═══════════════════════════════════════════════════════════════
+# ═════════��═════════════════════════════════════════════════════
 def detect_candle_patterns(df):
     if len(df) < 3: return False, False, ""
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
@@ -467,7 +473,6 @@ def calc_reversal_conf(res, d):
     return sc, len(checks), checks
 
 def detect_reversal(res):
-    """Versão rápida de detecção CT para o cache de tendências."""
     if not res: return (False, None, 0, [])
     motivos = []; forca = 0; dir_rev = None
     rsi = res["rsi"]; price = res["price"]; cen = res["cenario"]
@@ -490,10 +495,9 @@ def detect_reversal(res):
 # ═══════════════════════════════════════════════════════════════
 # PUSH NOTIFICATIONS
 # ═══════════════════════════════════════════════════════════════
-_push_subscriptions = []  # lista de subscription dicts
+_push_subscriptions = []
 
 def send_push(title, body, icon="/icon-192.png"):
-    """Envia push para todos os clientes inscritos via Web Push."""
     try:
         from pywebpush import webpush, WebPushException
         import os
@@ -528,6 +532,7 @@ class TradingBot:
         self.wins = 0; self.losses = 0; self.consecutive_losses = 0
         self.paused_until = 0
         self.active_trades = []
+        self.pending_operations = []
         self.radar_list    = {}
         self.gatilho_list  = {}
         self.reversal_list = {}
@@ -536,16 +541,16 @@ class TradingBot:
         self.last_id = 0; self.last_news_ts = 0
         self._restore_msg = None
         self.trend_cache = {}; self.last_trends_update = 0
-        self.signals_feed = []   # feed de sinais para o app
+        self.signals_feed = []
         self.news_cache   = []; self.news_cache_ts = 0
 
-    # ── Telegram + captura de sinais ──────────────────────────
     def send(self, text, markup=None, disable_preview=False):
         import re
         clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text:            tipo = "radar";   push_title = "⚠ RADAR"
         elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"
+        elif "OPERAÇÃO PENDENTE" in text: tipo = "pending"; push_title = "⏳ Operação Pendente"
         elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
         elif "CONTRA-TENDÊNCIA" in text: tipo = "ct";      push_title = "⚡ Contra-Tendência!"
         elif "CONFLUÊNCIA INSUF" in text: tipo = "insuf"
@@ -560,7 +565,6 @@ class TradingBot:
                 "ts": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
             })
             self.signals_feed = self.signals_feed[-50:]
-            # Push notification para sinais importantes
             if push_title:
                 body = push_body or clean[:100]
                 threading.Thread(target=send_push, args=(push_title, body), daemon=True).start()
@@ -581,11 +585,12 @@ class TradingBot:
             [{"text": "TUDO", "callback_data": "set_TUDO"}],
             [{"text": f"TF: {self.timeframe} {tfl}", "callback_data": "tf_menu"}],
             [{"text": "Status", "callback_data": "status"}, {"text": "Placar", "callback_data": "placar"}],
-            [{"text": "Noticias", "callback_data": "news"}],
+            [{"text": "Pendentes", "callback_data": "pending"}, {"text": "Noticias", "callback_data": "news"}],
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min" if self.is_paused() else ""
-        self.send(f"<b>BOT SNIPER v7.1</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}", markup)
+        pend = f"\n⏳ {len(self.pending_operations)} operação(ões) pendente(s)" if self.pending_operations else ""
+        self.send(f"<b>BOT SNIPER v7.2</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend}", markup)
 
     def build_tf_menu(self):
         rows = [[{"text": f"{tf} {lb}{'✅' if tf==self.timeframe else ''}", "callback_data": f"set_tf_{tf}"}]
@@ -623,13 +628,23 @@ class TradingBot:
         tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
 
+    def send_pending_count(self):
+        count = len([o for o in self.pending_operations if o["status"] == "PENDING"])
+        lines = [f"⏳ <b>OPERAÇÕES PENDENTES</b> ({count})"]
+        if not count:
+            lines.append("Nenhuma operação aguardando confirmação.")
+        else:
+            for op in [o for o in self.pending_operations if o["status"] == "PENDING"]:
+                dl = "BUY 🟢" if op["direction"] == "BUY" else "SELL 🔴"
+                lines.append(f"<code>{op['symbol']}</code> {dl} | Entrada: <code>{fmt(op['entry'])}</code>\n  SL: <code>{fmt(op['sl'])}</code> | TP: <code>{fmt(op['tp'])}</code>\n  ➜ Confirme no app!")
+        self.send("\n".join(lines))
+
     def is_paused(self): return time.time() < self.paused_until
 
     def reset_pause(self):
         self.paused_until = 0; self.consecutive_losses = 0
         save_state(self); self.send("✅ Circuit Breaker resetado.")
 
-    # ── Cache de tendências ───────────────────────────────────
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
         log("📡 Atualizando cache tendências...")
@@ -647,7 +662,98 @@ class TradingBot:
         self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
 
-    # ── SCAN — 4 fases ───────────────────────────────────────
+    def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):
+        """Cria operação pendente ao invés de trade automático"""
+        op_id = f"{symbol}_{int(time.time()*1000)}"
+        op = {
+            "id": op_id,
+            "symbol": symbol,
+            "name": res["name"],
+            "direction": direction,
+            "entry": price,
+            "sl": sl,
+            "tp": tp,
+            "atr": res["atr"],
+            "rsi": res["rsi"],
+            "adx": res["adx"],
+            "created_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S"),
+            "status": "PENDING",
+            "confluence": confluence_data,
+        }
+        self.pending_operations.append(op)
+        log(f"[PENDENTE] {symbol} {direction} criada com ID {op_id}")
+        self._send_pending_alert(op)
+        save_state(self)
+        return op
+
+    def _send_pending_alert(self, op):
+        """Envia alerta de operação pendente"""
+        sl_pct = abs(op["entry"]-op["sl"])/op["entry"]*100
+        tp_pct = abs(op["tp"]-op["entry"])/op["entry"]*100
+        ratio = f"1:{tp_pct/sl_pct:.1f}" if sl_pct > 0 else "1:0"
+        dl = "COMPRAR (BUY) 🟢" if op["direction"]=="BUY" else "VENDER (SELL) 🔴"
+        cat = asset_cat(op["symbol"])
+        cl_lbl = Config.MARKET_CATEGORIES.get(cat, {}).get("label", cat)
+        
+        self.send(
+            f"⏳ <b>OPERAÇÃO PENDENTE – {op['symbol']}</b> ({op['name']})\n"
+            f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
+            f"╔══════════════════╗\n"
+            f"  ▶️  <b>{dl}</b>\n"
+            f"╚══════════════════╝\n\n"
+            f"💰 <b>Entrada:</b>     <code>{fmt(op['entry'])}</code>\n"
+            f"🛡 <b>Stop Loss:</b>   <code>{fmt(op['sl'])}</code>  ({-sl_pct:.2f}%)\n"
+            f"🎯 <b>Take Profit:</b> <code>{fmt(op['tp'])}</code>  ({tp_pct:+.2f}%)\n"
+            f"⚖️ <b>Ratio:</b>       <b>{ratio}</b>\n\n"
+            f"ATR: <code>{fmt(op['atr'])}</code> | ADX: <code>{op['adx']:.1f}</code> | RSI: <code>{op['rsi']:.1f}</code>\n\n"
+            f"<i>Confirme ou rejeite no app (⏳ aba Pendentes)</i>"
+        )
+
+    def confirm_pending_operation(self, op_id):
+        """Confirma uma operação pendente e a move para trades ativos"""
+        op = next((o for o in self.pending_operations if o["id"] == op_id), None)
+        if not op:
+            log(f"[CONFIRM] Operação {op_id} não encontrada")
+            return False
+        
+        op["status"] = "CONFIRMED"
+        op["confirmed_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
+        
+        trade = {
+            "symbol": op["symbol"],
+            "name": op["name"],
+            "entry": op["entry"],
+            "tp": op["tp"],
+            "sl": op["sl"],
+            "dir": op["direction"],
+            "peak": op["entry"],
+            "atr": op["atr"],
+            "opened_at": op["created_at"],
+            "session_alerted": True,
+            "pending_id": op_id,
+        }
+        self.active_trades.append(trade)
+        self.radar_list[op["symbol"]] = self.gatilho_list[op["symbol"]] = time.time()
+        
+        log(f"[CONFIRM] {op['symbol']} {op['direction']} confirmada")
+        self.send(f"✅ <b>OPERAÇÃO CONFIRMADA</b>\n{op['symbol']} {op['direction']}\nEntrada: <code>{fmt(op['entry'])}</code>")
+        
+        save_state(self)
+        return True
+
+    def ignore_pending_operation(self, op_id):
+        """Rejeita uma operação pendente"""
+        op = next((o for o in self.pending_operations if o["id"] == op_id), None)
+        if not op:
+            log(f"[IGNORE] Operação {op_id} não encontrada")
+            return False
+        
+        op["status"] = "IGNORED"
+        op["ignored_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
+        log(f"[IGNORE] {op['symbol']} {op['direction']} rejeitada pelo usuário")
+        save_state(self)
+        return True
+
     def scan(self):
         if self.is_paused(): return
         if len(self.active_trades) >= Config.MAX_TRADES: return
@@ -657,17 +763,16 @@ class TradingBot:
             cat = asset_cat(s)
             if not mkt_open(cat): continue
             if any(t["symbol"] == s for t in self.active_trades): continue
+            if any(o["symbol"] == s and o["status"] == "PENDING" for o in self.pending_operations): continue
             if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
 
             res = self.trend_cache.get(s, {}).get("data") or get_analysis(s, self.timeframe)
             if not res: continue
-            # Atualiza cache
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
                 self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
 
             if res["cenario"] == "NEUTRO":
-                # FASE 1 – Radar (só se não NEUTRO após filtro)
                 continue
 
             price = res["price"]; atr = res["atr"]; cen = res["cenario"]
@@ -740,46 +845,26 @@ class TradingBot:
                     + "\n".join(f"   ❌ {nm}" for nm in falhou)
                 ); continue
 
-            # FASE 4B — SINAL CONFIRMADO
-            if dir_s == "BUY":
-                sl = price - Config.ATR_MULT_SL * atr
-                tp = price + Config.ATR_MULT_TP * atr
-            else:
-                sl = price + Config.ATR_MULT_SL * atr
-                tp = price - Config.ATR_MULT_TP * atr
-            sl_pct = abs(price-sl)/price*100; tp_pct = abs(tp-price)/price*100
-            dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-            vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"]>0 else "N/A"
-            self.send(
-                f"🎯 <b>SINAL CONFIRMADO – {s}</b> ({res['name']})\n"
-                f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
-                f"╔══════════════════╗\n"
-                f"  ▶️  <b>{dl}</b>\n"
-                f"╚══════════════════╝\n\n"
-                f"💰 <b>Entrada:</b>     <code>{fmt(price)}</code>\n"
-                f"🛡 <b>Stop Loss:</b>   <code>{fmt(sl)}</code>  ({-sl_pct:.2f}%)\n"
-                f"🎯 <b>Take Profit:</b> <code>{fmt(tp)}</code>  ({tp_pct:+.2f}%)\n"
-                f"⚖️ <b>Ratio:</b>       <b>{ratio}</b>\n\n"
-                f"ATR: <code>{fmt(atr)}</code> | ADX: <code>{res['adx']:.1f}</code> | RSI: <code>{res['rsi']:.1f}</code>\n"
-                f"Volume: <code>{vol_txt}</code>\n\n"
-                f"<b>Confluência: {sc}/{tot_c} [{bar}]</b>\n{conf_txt}"
-            )
-            self.active_trades.append({
-                "symbol": s, "name": res["name"], "entry": price,
-                "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
-                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
-                "session_alerted": True,
-            })
-            self.radar_list[s] = self.gatilho_list[s] = time.time()
-            save_state(self)
+            # FASE 4B — Criar Operação Pendente (v7.2)
+            sl_final = price - Config.ATR_MULT_SL * atr if dir_s == "BUY" else price + Config.ATR_MULT_SL * atr
+            tp_final = price + Config.ATR_MULT_TP * atr if dir_s == "BUY" else price - Config.ATR_MULT_TP * atr
+            
+            confluence_info = {
+                "score": sc,
+                "total": tot_c,
+                "bar": bar,
+                "checks": [{"name": nm, "passed": ok} for nm, ok in checks]
+            }
+            
+            self.create_pending_operation(s, dir_s, price, sl_final, tp_final, res, confluence_info)
 
-    # ── Scan Contra-Tendência FOREX ───────────────────────────
     def scan_reversal_forex(self):
         if self.is_paused(): return
         if not mkt_open("FOREX"): return
         if len(self.active_trades) >= Config.MAX_TRADES: return
         for s in Config.MARKET_CATEGORIES["FOREX"]["assets"].keys():
             if any(t["symbol"] == s for t in self.active_trades): continue
+            if any(o["symbol"] == s and o["status"] == "PENDING" for o in self.pending_operations): continue
             if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
             if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN: continue
             res = get_reversal_analysis(s, self.timeframe)
@@ -808,8 +893,6 @@ class TradingBot:
             if not cands: continue
             cands.sort(key=lambda x: x[0], reverse=True)
             sc, tc, ch, dir_s, sinais = cands[0]
-            bar = cbar(sc, tc)
-            conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
             sl_m = Config.ATR_MULT_SL; tp_m = Config.ATR_MULT_SL * 1.5
             if dir_s == "BUY":
                 sl = price - sl_m*atr; tp = price + tp_m*atr
@@ -817,35 +900,17 @@ class TradingBot:
                 sl = price + sl_m*atr; tp = price - tp_m*atr
             sl_p = abs(price-sl)/price*100; tp_p = abs(tp-price)/price*100
             ratio = f"1:{tp_m/sl_m:.1f}"
-            dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-            sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
-            self.send(
-                f"⚡ <b>CONTRA-TENDÊNCIA FOREX – {s}</b> ({res['name']})\n"
-                f"📈 FOREX | TF: <code>{self.timeframe}</code>\n\n"
-                f"🔄 <i>Sinal de reversão — CONTRA a tendência</i>\n\n"
-                f"╔══════════════════╗\n"
-                f"  ▶️  <b>{dl}</b>\n"
-                f"╚══════════════════╝\n\n"
-                f"💰 <b>Entrada:</b>     <code>{fmt(price)}</code>\n"
-                f"🛡 <b>Stop Loss:</b>   <code>{fmt(sl)}</code>  ({-sl_p:.2f}%)\n"
-                f"🎯 <b>Take Profit:</b> <code>{fmt(tp)}</code>  ({tp_p:+.2f}%)\n"
-                f"⚖️ <b>Ratio:</b>       <b>{ratio}</b>\n\n"
-                f"<b>Sinais de exaustão:</b>\n{sinais_txt}\n\n"
-                f"ADX: <code>{res['adx']:.1f}</code> | RSI: <code>{res['rsi']:.1f}</code>\n\n"
-                f"<b>Confluência: {sc}/{tc} [{bar}]</b>\n{conf_txt}\n\n"
-                f"⚠️ <i>Use gestão de risco reduzida.</i>"
-            )
-            self.reversal_list[s] = time.time()
-            self.active_trades.append({
-                "symbol": s, "name": res["name"], "entry": price,
-                "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
-                "tipo": "CONTRA-TENDÊNCIA ⚡",
-                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
-                "session_alerted": True,
-            })
-            save_state(self)
+            
+            confluence_info = {
+                "score": sc,
+                "total": tc,
+                "bar": cbar(sc, tc),
+                "tipo": "CONTRA-TENDÊNCIA",
+                "razoes": sinais,
+            }
+            
+            self.create_pending_operation(s, dir_s, price, sl, tp, res, confluence_info)
 
-    # ── Monitor + Trailing Stop ───────────────────────────────
     def monitor_trades(self):
         changed = False
         for t in self.active_trades[:]:
@@ -853,7 +918,6 @@ class TradingBot:
             if not res: continue
             cur = res["price"]; atr = res["atr"]
 
-            # Reanunciar trade restaurado
             if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100
@@ -867,7 +931,6 @@ class TradingBot:
                 )
                 t["session_alerted"] = True; changed = True
 
-            # Trailing Stop
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
                 t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
                 if nsl > t["sl"]: t["sl"] = nsl; changed = True
@@ -926,7 +989,7 @@ self.addEventListener('notificationclick', e => {
 """
 
 # ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML (embutido)
+# DASHBOARD HTML (COMPLETO - v7.2)
 # ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -937,7 +1000,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="theme-color" content="#06090f"/>
-<title>Sniper Bot</title>
+<title>Sniper Bot v7.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
@@ -975,9 +1038,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .sv{font-size:22px;font-weight:700;font-family:var(--mono);line-height:1}
 .ss{font-size:9px;color:var(--muted2);margin-top:3px}
 .g{color:var(--green)}.r{color:var(--red)}.go{color:var(--gold)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.or{color:var(--orange)}
-.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px}
+.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid var(--border)}
 .tc.buy{border-left:3px solid var(--green)}.tc.sell{border-left:3px solid var(--red)}
-.tc.ctb{border-left:3px solid var(--gold)}.tc.cts{border-left:3px solid var(--orange)}
 .tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
 .tc-sym{font-size:17px;font-weight:700;font-family:var(--mono)}
 .tc-nm{font-size:9px;color:var(--muted2);margin-top:2px}
@@ -1002,53 +1064,41 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .fchips::-webkit-scrollbar{display:none}
 .fc{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;cursor:pointer;transition:.15s;color:var(--muted2);white-space:nowrap}
 .fc.on{background:var(--g3);border-color:var(--green);color:var(--green)}.fc:active{transform:scale(.96)}
-.si{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
-.si:last-child{border-bottom:none}
-.sico{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:var(--mono);flex-shrink:0}
-.siA{background:var(--g3);color:var(--green)}.siB{background:var(--r3);color:var(--red)}.siN{background:var(--bg4);color:var(--muted2)}
-.sinf{flex:1;min-width:0}
-.ssym{font-size:13px;font-weight:700;font-family:var(--mono)}
-.snm{font-size:9px;color:var(--muted2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.srgt{text-align:right;flex-shrink:0}
-.spr{font-size:12px;font-family:var(--mono);font-weight:600}
-.stags{display:flex;gap:4px;margin-top:3px;justify-content:flex-end;flex-wrap:wrap}
-.tag{font-size:8px;font-family:var(--mono);padding:1px 5px;border-radius:3px}
-.tg{background:var(--g3);color:var(--green)}.tr{background:var(--r3);color:var(--red)}.tn{background:var(--bg4);color:var(--muted2)}
-.tbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 12px}
-.tbl{font-size:9px;color:var(--muted2);letter-spacing:.8px;text-transform:uppercase;flex:1}
-.tbc{font-size:12px;font-family:var(--mono)}
-.sigit{border-bottom:1px solid var(--border);padding:12px 0;display:flex;gap:10px;align-items:flex-start}
-.sigit:last-child{border-bottom:none}
-.sgico{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px}
-.iradar{background:rgba(68,138,255,.12);color:var(--blue)}.igatilho{background:rgba(0,229,255,.12);color:var(--cyan)}
-.isinal{background:var(--g3);color:var(--green)}.ict{background:var(--y3);color:var(--gold)}
-.iinsuf{background:var(--bg4);color:var(--muted2)}.iclose{background:var(--bg4);color:var(--muted2)}.icb{background:var(--r3);color:var(--red)}
-.sgbody{flex:1;min-width:0}
-.sgtipo{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
-.sgtxt{font-size:11px;color:var(--muted2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.sgts{font-size:9px;color:var(--muted);margin-top:4px;font-family:var(--mono)}
-.ctc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid var(--gold)}
-.cttop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.ctsym{font-size:15px;font-weight:700;font-family:var(--mono)}
-.ctsc{font-size:10px;font-family:var(--mono);font-weight:700;padding:4px 10px;border-radius:20px;background:var(--y3);color:var(--gold)}
-.ctdir{font-size:11px;font-weight:600;margin-bottom:8px}
-.ctsigs{display:flex;flex-wrap:wrap;gap:4px}
-.ctag{font-size:9px;padding:3px 8px;border-radius:4px;background:var(--bg4);color:var(--muted2);border:1px solid var(--border)}
-.ctm2{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
-.ctmb{text-align:center;flex:1}
-.ctml{font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
-.ctmv{font-size:13px;font-family:var(--mono);font-weight:700;margin-top:2px}
-.fgb{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-.fgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:4px}
-.fgv{font-size:18px;font-weight:700}
-.fgn{font-size:36px;font-weight:700;font-family:var(--mono);opacity:.15}
-.ni2{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
-.ni2:last-child{border-bottom:none}
-.nnum{width:24px;height:24px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--mono);color:var(--muted2);flex-shrink:0;margin-top:1px}
-.nbody{flex:1;min-width:0}
-.ntitle{font-size:12px;line-height:1.5;color:var(--text);text-decoration:none;display:block}
-.ntitle:hover{color:var(--cyan)}
-.nsrc{font-size:9px;color:var(--muted2);margin-top:4px}
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
+.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
+.rb:active{opacity:.7}
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.empi{font-size:40px;margin-bottom:10px;display:block}
+.empt{font-size:12px;line-height:1.6;color:var(--muted2)}
+.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}
+.dv{height:1px;background:var(--border);margin:14px 0}
+.spin{animation:spin 1s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
+.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
+.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
+/* Pending Operations Card */
+.pending-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
+.pending-card.buy{border-left:4px solid var(--green)}.pending-card.sell{border-left:4px solid var(--red)}
+.pc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.pc-sym{font-size:16px;font-weight:700;font-family:var(--mono)}
+.pc-status{font-size:8px;padding:2px 8px;border-radius:20px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;background:var(--y3);color:var(--gold)}
+.pc-lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.pc-lv{background:var(--bg3);border-radius:var(--rsm);padding:8px;text-align:center;font-size:10px}
+.pc-ll{font-size:7px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.pc-val{font-family:var(--mono);font-weight:700;font-size:12px}
+.pc-val.g{color:var(--green)}.pc-val.r{color:var(--red)}
+.pc-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.pc-btn{flex:1;min-width:80px;padding:8px 10px;border:none;border-radius:var(--rsm);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:.15s;letter-spacing:.3px}
+.pc-btn:active{transform:scale(.96)}
+.pc-copy{background:var(--bg3);border:1px solid var(--border);color:var(--muted2)}
+.pc-copy.copied{background:var(--g3);border-color:var(--green);color:var(--green)}
+.pc-confirm{background:var(--g3);border:1px solid rgba(0,230,118,.3);color:var(--green)}
+.pc-ignore{background:var(--r3);border:1px solid rgba(255,23,68,.3);color:var(--red)}
+.pc-info{display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:9px;color:var(--muted2)}
+.pc-time{font-family:var(--mono)}
+/* Config */
 .cfgsec{margin-bottom:18px}
 .cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px}
 .mdg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
@@ -1068,98 +1118,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
 .plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
 .pval{font-size:16px;font-family:var(--mono);font-weight:700}
-.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
-.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
-.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
-.empty{text-align:center;padding:40px 20px;color:var(--muted)}
-.empi{font-size:40px;margin-bottom:10px;display:block}
-.empt{font-size:12px;line-height:1.6;color:var(--muted2)}
-.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}
-.dv{height:1px;background:var(--border);margin:14px 0}
-.spin{animation:spin 1s linear infinite;display:inline-block}
-@keyframes spin{to{transform:rotate(360deg)}}
-.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
-.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
-.rb:active{opacity:.7}
-.stab{flex:1;padding:10px;border:none;background:transparent;color:var(--muted2);font-size:12px;cursor:pointer;font-family:var(--sans);font-weight:600;transition:.15s}
-.stab.on{color:var(--green)}
 .ntf-banner{background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.2);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px}
 .ntf-ttl{font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px}
 .ntf-txt{font-size:10px;color:var(--muted2);line-height:1.5}
-
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 1: Card de Sinal com Copiar */
-/* ═══════════════════════════════════════════════════════════ */
-.action-card { background: var(--bg2); border: 2px solid var(--border); border-radius: var(--r); padding: 14px; margin-bottom: 10px; position: relative; overflow: hidden; transition: transform .15s; }
-.action-card:active { transform: scale(.99); }
-.action-card.buy  { border-color: rgba(0,230,118,.5); }
-.action-card.sell { border-color: rgba(255,23,68,.4); }
-.action-card.ct   { border-color: rgba(255,202,40,.4); }
-.action-card .ac-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
-.action-card.buy  .ac-stripe { background: var(--green); }
-.action-card.sell .ac-stripe { background: var(--red); }
-.action-card.ct   .ac-stripe { background: var(--gold); }
-.ac-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-left: 8px; }
-.ac-symbol { font-size: 20px; font-weight: 700; font-family: var(--font-mono); }
-.ac-dir { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 20px; letter-spacing: .5px; }
-.ac-dir.buy  { background: var(--g3); color: var(--green); }
-.ac-dir.sell { background: var(--r3); color: var(--red); }
-.ac-dir.ct   { background: var(--y3); color: var(--gold); }
-.ac-levels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding-left: 8px; margin-bottom: 10px; }
-.ac-lv { background: var(--bg3); border-radius: var(--rsm); padding: 8px; text-align: center; }
-.ac-ll { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
-.ac-lv-val { font-size: 13px; font-weight: 700; font-family: var(--font-mono); }
-.ac-footer { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; }
-.ac-copy-btn { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 7px 14px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); cursor: pointer; color: var(--text-muted); transition: .15s; }
-.ac-copy-btn:active { background: var(--border); transform: scale(.97); }
-.ac-copy-btn.copied { color: var(--green); border-color: rgba(0,230,118,.4); }
-.ac-tipo { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 2: Timer de Expiração */
-/* ═══════════════════════════════════════════════════════════ */
-.sig-timer { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: var(--font-mono); font-weight: 600; padding: 3px 8px; border-radius: 20px; }
-.sig-timer.fresh  { background: rgba(0,230,118,.15); color: var(--green); }
-.sig-timer.aging  { background: rgba(255,202,40,.15); color: var(--gold); }
-.sig-timer.old    { background: rgba(255,23,68,.12);  color: var(--red); }
-.sig-timer.closed { background: var(--bg4); color: var(--muted); }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 3: Modo Apenas Sinais */
-/* ═══════════════════════════════════════════════════════════ */
-.simple-mode #hdr { display: none !important; }
-.simple-mode #nav { display: none !important; }
-.simple-mode .page { padding: 12px 12px 20px; }
-.simple-mode #page-sig { display: block !important; }
-.simple-mode .exit-simple { display: flex !important; }
-.exit-simple { display: none; position: fixed; top: 12px; right: 12px; z-index: 9999; width: 36px; height: 36px; border-radius: 18px; background: var(--bg3); border: 1px solid var(--border); align-items: center; justify-content: center; cursor: pointer; font-size: 18px; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
-.simple-mode-header { display: none; padding: 16px 0 8px; }
-.simple-mode .simple-mode-header { display: flex; align-items: center; justify-content: space-between; }
-
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 4: Fila de Pendentes com Swipe */
-/* ═══════════════════════════════════════════════════════════ */
-.pending-section { margin-bottom: 14px; }
-.pending-hdr { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted2); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
-.pending-count { background: var(--bg4); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; font-family: var(--font-mono); font-size: 10px; color: var(--muted2); }
-.swipe-wrap { position: relative; overflow: hidden; border-radius: var(--rsm); margin-bottom: 6px; }
-.swipe-behind { position: absolute; inset: 0; display: flex; align-items: center; border-radius: var(--rsm); }
-.swipe-behind .ok  { flex: 1; background: rgba(0,230,118,.25); display: flex; align-items: center; padding-left: 18px; gap: 6px; font-size: 12px; font-weight: 600; color: var(--green); }
-.swipe-behind .ng  { flex: 1; background: rgba(255,23,68,.18); display: flex; align-items: center; justify-content: flex-end; padding-right: 18px; gap: 6px; font-size: 12px; font-weight: 600; color: var(--red); }
-.swipe-card { position: relative; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--rsm); padding: 11px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; touch-action: pan-y; user-select: none; transition: transform .15s ease, opacity .2s; }
-.swipe-card.done { opacity: 0; transform: translateX(110%); }
-.swipe-card.skip { opacity: 0; transform: translateX(-110%); }
-.swipe-card .sc-sym { font-size: 14px; font-weight: 700; font-family: var(--font-mono); flex-shrink: 0; }
-.swipe-card .sc-info { flex: 1; min-width: 0; }
-.swipe-card .sc-txt { font-size: 11px; color: var(--muted2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.swipe-card .sc-ts  { font-size: 9px; color: var(--muted); margin-top: 2px; }
-.swipe-card .sc-act { display: flex; gap: 6px; }
-.sc-btn { font-size: 11px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); cursor: pointer; color: var(--text-muted); font-family: var(--font-sans); font-weight: 600; }
-.sc-btn.ok  { background: rgba(0,230,118,.12); color: var(--green); border-color: rgba(0,230,118,.3); }
-.sc-btn.nk  { background: rgba(255,23,68,.1);  color: var(--red);   border-color: rgba(255,23,68,.25); }
-.sc-btn:active { transform: scale(.96); }
-.empty-pending { text-align: center; padding: 14px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -1167,7 +1128,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 <div id="hdr">
   <div class="hdr-l">
     <div class="logo">S</div>
-    <div><div class="t1">Sniper Bot</div><div class="t2">Multi-Mercado v7.1</div></div>
+    <div><div class="t1">Sniper Bot</div><div class="t2">v7.2 Manual Ops</div></div>
   </div>
   <div class="hdr-r">
     <div class="lpill"><div class="ldot"></div>LIVE</div>
@@ -1176,7 +1137,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 </div>
 <div id="pages">
 
-<!-- ═══ DASHBOARD ═══ -->
+<!-- DASHBOARD -->
 <div class="pg on" id="pg-dash">
   <div class="eb" id="eb">⚠ Erro de conexão. Tente novamente.</div>
   <div class="cbbar" id="cbbar">
@@ -1195,78 +1156,20 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   <div class="ts" id="d-ts">--</div>
 </div>
 
-<!-- ═══ SCANNER ═══ -->
-<div class="pg" id="pg-scan">
-  <div class="sh"><div class="sttl">📡 Scanner Tempo Real</div><span class="rb" onclick="loadScanner()">↻</span></div>
-  <div class="tbar">
-    <span class="tbl">Alta</span><span class="tbc g" id="sc-a">--</span>
-    <span style="color:var(--border);margin:0 6px">|</span>
-    <span class="tbl">Baixa</span><span class="tbc r" id="sc-b">--</span>
-    <span style="color:var(--border);margin:0 6px">|</span>
-    <span class="tbl">Neutro</span><span class="tbc" style="color:var(--muted2)" id="sc-n">--</span>
-  </div>
-  <div class="fchips" id="sfil">
-    <div class="fc on" data-cat="TODOS" onclick="setSF('TODOS',this)">Todos</div>
-    <div class="fc" data-cat="ALTA" onclick="setSF('ALTA',this)">🟢 Alta</div>
-    <div class="fc" data-cat="BAIXA" onclick="setSF('BAIXA',this)">🔴 Baixa</div>
-    <div class="fc" data-cat="FOREX" onclick="setSF('FOREX',this)">📈 Forex</div>
-    <div class="fc" data-cat="CRYPTO" onclick="setSF('CRYPTO',this)">₿ Cripto</div>
-    <div class="fc" data-cat="COMMODITIES" onclick="setSF('COMMODITIES',this)">🏅 Comm.</div>
-    <div class="fc" data-cat="INDICES" onclick="setSF('INDICES',this)">📊 Índices</div>
-  </div>
-  <div class="card" style="padding:4px 14px"><div id="scan-list"><div class="empty"><span class="empi">📡</span><div class="empt">Aguardando dados do scanner…</div></div></div></div>
+<!-- PENDÊNCIAS -->
+<div class="pg" id="pg-pend">
+  <div class="sh"><div class="sttl">⏳ Operações Pendentes</div><span class="rb" onclick="loadPending()">↻</span></div>
+  <div id="pending-list"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div></div>
 </div>
 
-<!-- ═══ SINAIS ═══ -->
-<div class="pg" id="pg-sig">
-  <!-- Melhoria 3: botão de saída do modo simples -->
-  <div class="exit-simple" onclick="toggleSimpleMode(false)">✕</div>
-  <div class="sh"><div class="sttl">🔔 Feed de Sinais</div><span class="rb" onclick="loadSigs()">↻</span></div>
-  <!-- Melhoria 4: Fila de Pendentes -->
-  <div class="pending-section">
-    <div class="pending-hdr">⏳ Pendentes<span class="pending-count" id="pendingCount">0</span></div>
-    <div id="pendingQueue"><div class="empty-pending">Nenhum pendente</div></div>
-  </div>
-  <div class="fchips" id="sigfil">
-    <div class="fc on" data-sf="todos" onclick="setSigF('todos',this)">Todos</div>
-    <div class="fc" data-sf="sinal" onclick="setSigF('sinal',this)">🎯 Sinal</div>
-    <div class="fc" data-sf="gatilho" onclick="setSigF('gatilho',this)">🔔 Gatilho</div>
-    <div class="fc" data-sf="radar" onclick="setSigF('radar',this)">⚠ Radar</div>
-    <div class="fc" data-sf="ct" onclick="setSigF('ct',this)">⚡ CT</div>
-    <div class="fc" data-sf="close" onclick="setSigF('close',this)">🏁 Fechados</div>
-  </div>
-  <div class="card" style="padding:0 14px"><div id="sig-list"><div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal ainda.<br>Aparecem aqui junto com o Telegram.</div></div></div></div>
-</div>
-
-<!-- ═══ CT / NEWS ═══ -->
-<div class="pg" id="pg-ct">
-  <div style="display:flex;gap:0;margin-bottom:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
-    <button class="stab on" id="st-ct" onclick="showSub('ct')">⚡ Contra-T</button>
-    <button class="stab" id="st-nw" onclick="showSub('news')">📰 Notícias</button>
-  </div>
-  <div id="sub-ct">
-    <div class="sh"><div class="sttl">⚡ Oportunidades CT (FOREX)</div><span class="rb" onclick="loadCT()">↻</span></div>
-    <div style="background:var(--y3);border:1px solid rgba(255,202,40,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--gold);line-height:1.5">⚠️ Sinais <b>contra tendência</b> detectados no FOREX. Use gestão de risco reduzida.</div>
-    <div id="ct-list"><div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div></div>
-  </div>
-  <div id="sub-nw" style="display:none">
-    <div class="sh"><div class="sttl">📰 Notícias</div><span class="rb" onclick="loadNews()">↻</span></div>
-    <div class="fgb" id="fgb">
-      <div><div class="fgl">Fear &amp; Greed</div><div class="fgv" id="fgv">--</div></div>
-      <div class="fgn" id="fgn">--</div>
-    </div>
-    <div class="card" style="padding:0 14px"><div id="news-list"><div class="empty"><span class="empi">📰</span><div class="empt">Carregando…</div></div></div></div>
-  </div>
-</div>
-
-<!-- ═══ CONFIG ═══ -->
+<!-- CONFIG -->
 <div class="pg" id="pg-cfg">
   <div class="cfgsec">
     <div class="cfgl">Mercado</div>
     <div class="mdg">
       <button class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</button>
       <button class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</button>
-      <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMMODITIES</button>
+      <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMM.</button>
       <button class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</button>
     </div>
     <button class="mdb" style="width:100%;margin-top:7px;display:block;padding:12px" data-mode="TUDO" onclick="setMode('TUDO')">🌍 TUDO (42 ativos)</button>
@@ -1284,19 +1187,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   </div>
   <div class="dv"></div>
   <div class="cfgsec">
-    <div class="cfgl">Notificações Push</div>
-    <div class="ntf-banner" id="ntf-banner">
-      <div class="ntf-ttl">🔔 Receba alertas mesmo com o app fechado</div>
-      <div class="ntf-txt">Ative para receber notificações de sinais, gatilhos e encerramentos diretamente no seu celular.</div>
-    </div>
-    <button class="ab abn" id="ntf-btn" onclick="toggleNotifs()">🔔 Ativar Notificações Push</button>
-    <div id="ntf-status" style="font-size:10px;color:var(--muted2);text-align:center;margin-top:4px"></div>
-  </div>
-  <div class="cfgsec">
     <div class="cfgl">Ações</div>
-    <!-- Melhoria 3: Modo Apenas Sinais -->
-    <button class="ab abn" id="simpleModeBtn" onclick="toggleSimpleMode(true)">🔔 Modo Apenas Sinais</button>
-    <div style="font-size:10px;color:var(--muted2);text-align:center;margin-bottom:8px">Foco total nos sinais — ideal ao operar</div>
     <button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
     <button class="ab abp" onclick="refreshAll()">↻ Atualizar Agora</button>
   </div>
@@ -1309,25 +1200,18 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
       <div class="pbox"><div class="plbl">Confluência</div><div class="pval go" id="p-mc">--</div></div>
     </div>
   </div>
-  <div class="card" style="background:rgba(0,229,255,.04);border-color:rgba(0,229,255,.15)">
-    <div class="chd" style="color:var(--cyan)">📱 Instalar como App</div>
-    <div style="font-size:11px;color:var(--muted2);line-height:1.7">Android Chrome: <b style="color:var(--text)">⋮ → Adicionar à tela inicial</b><br>APK gratuito: <b style="color:var(--cyan)">pwabuilder.com</b></div>
-  </div>
 </div>
 
 </div>
 <nav id="nav">
   <button class="nb on" onclick="goTo('dash',this)"><span class="ni">⬡</span>Dashboard</button>
-  <button class="nb" onclick="goTo('scan',this)"><span class="ni">📡</span>Scanner</button>
-  <button class="nb" id="nb-sig" onclick="goTo('sig',this)"><span class="ni">🔔</span>Sinais<span class="nbadge" id="nbadge">0</span></button>
-  <button class="nb" onclick="goTo('ct',this)"><span class="ni">⚡</span>CT/News</button>
+  <button class="nb" id="nb-pend" onclick="goTo('pend',this)"><span class="ni">⏳</span>Pendentes<span class="nbadge" id="nbadge-pend">0</span></button>
   <button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
 </nav>
 </div>
 
 <script>
-let _st=null,_scan=[],_sigs=[],_sf='TODOS',_sigf='todos',_unread=0,_lastSigLen=0;
-
+let _st=null,_pend=[];
 function fp(p){
   if(p===undefined||p===null)return'--';
   if(p>=10000)return p.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1344,22 +1228,13 @@ function goTo(pg,btn){
   const target=document.getElementById('pg-'+pg);
   if(target){ target.classList.add('on'); target.style.display='block'; }
   btn.classList.add('on');
-  if(pg==='scan')loadScanner();
-  if(pg==='sig'){loadSigs();_unread=0;updBadge();}
-  if(pg==='ct'){loadCT();loadNews();}
+  if(pg==='pend')loadPending();
   if(pg==='cfg')loadCfg();
-}
-function showSub(s){
-  document.getElementById('sub-ct').style.display=s==='ct'?'':'none';
-  document.getElementById('sub-nw').style.display=s==='news'?'':'none';
-  document.getElementById('st-ct').classList.toggle('on',s==='ct');
-  document.getElementById('st-nw').classList.toggle('on',s==='news');
 }
 async function refreshAll(){
   const b=document.getElementById('refbtn');b.classList.add('spin');
   try{await loadDash();const a=document.querySelector('.pg.on');
-    if(a.id==='pg-scan')await loadScanner();
-    if(a.id==='pg-sig')await loadSigs();
+    if(a.id==='pg-pend')await loadPending();
   }finally{b.classList.remove('spin');}
 }
 async function loadDash(){
@@ -1380,14 +1255,15 @@ async function loadDash(){
     document.getElementById('d-mkts').innerHTML=Object.entries(_st.markets).map(([k,v])=>`<div class="mkt"><span class="mktn">${mn[k]||k}</span><span class="mkts ${v?'mop':'mcl'}">${v?'Aberto':'Fechado'}</span></div>`).join('');
     document.getElementById('d-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     updCfgBtns();
+    updBadges();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
 function renderTC(t){
-  const ct=(t.tipo||'').includes('CONTRA'),buy=t.dir==='BUY',pos=t.pnl>=0;
-  const cls=ct?(buy?'ctb':'cts'):(buy?'buy':'sell');
+  const buy=t.dir==='BUY',pos=t.pnl>=0;
+  const cls=buy?'buy':'sell';
   const dc=buy?'dbu':'dbs'; const pct=Math.min(Math.abs(t.pnl)/3*100,100);
   return`<div class="tc ${cls}"><div class="tc-top">
-    <div><div class="tc-sym">${t.symbol}${ct?'<span style="font-size:9px;background:var(--y3);color:var(--gold);padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle">CT</span>':''}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div>
+    <div><div class="tc-sym">${t.symbol}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div>
     <div class="db ${dc}">${buy?'▲ BUY':'▼ SELL'}</div></div>
     <div class="lvls">
       <div class="lv"><div class="lvl">Entrada</div><div class="lvv">${fp(t.entry)}</div></div>
@@ -1398,123 +1274,73 @@ function renderTC(t){
     <div class="pbar"><div class="pbar-f ${pos?'pg-fill':'pr-fill'}" style="width:${pct}%"></div></div>
   </div>`;
 }
-async function loadScanner(){
+async function loadPending(){
   try{
-    _scan=await apiFetch('/api/trends');
-    const a=_scan.filter(x=>x.cenario==='ALTA').length,b=_scan.filter(x=>x.cenario==='BAIXA').length,n=_scan.filter(x=>!x.cenario||x.cenario==='NEUTRO').length;
-    document.getElementById('sc-a').textContent=a;document.getElementById('sc-b').textContent=b;document.getElementById('sc-n').textContent=n;
-    let data=[..._scan];
-    if(_sf==='ALTA')data=data.filter(x=>x.cenario==='ALTA');
-    else if(_sf==='BAIXA')data=data.filter(x=>x.cenario==='BAIXA');
-    else if(['FOREX','CRYPTO','COMMODITIES','INDICES'].includes(_sf))data=data.filter(x=>x.category===_sf);
-    data.sort((a,b)=>({ALTA:0,BAIXA:1,NEUTRO:2}[a.cenario]??2)-({ALTA:0,BAIXA:1,NEUTRO:2}[b.cenario]??2));
-    if(!data.length){document.getElementById('scan-list').innerHTML='<div class="empty"><span class="empi">🔍</span><div class="empt">Nenhum ativo neste filtro.</div></div>';return;}
-    document.getElementById('scan-list').innerHTML=data.map(x=>{
-      const t=x.cenario||'NEUTRO',ic=t==='ALTA'?'↑':t==='BAIXA'?'↓':'–',icc=t==='ALTA'?'siA':t==='BAIXA'?'siB':'siN';
-      const rc=x.rsi>70?'tr':x.rsi<30?'tg':'tn',ac=x.adx>25?'tg':'tn';
-      const chgC=x.change_pct>0?'g':x.change_pct<0?'r':'';
-      return`<div class="si"><div class="sico ${icc}">${ic}</div>
-        <div class="sinf"><div class="ssym">${x.symbol}</div><div class="snm">${x.name||''} · ${x.category||''}</div></div>
-        <div class="srgt"><div class="spr">${fp(x.price)}</div>
-        <div class="stags"><span class="tag ${chgC?'t'+chgC:'tn'}">${x.change_pct>=0?'+':''}${x.change_pct.toFixed(2)}%</span><span class="tag ${rc}">RSI ${x.rsi.toFixed(0)}</span><span class="tag ${ac}">ADX ${x.adx.toFixed(0)}</span></div></div>
-      </div>`;
-    }).join('');
-  }catch(e){document.getElementById('scan-list').innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
+    _pend=await apiFetch('/api/pending');
+    const cnt=_pend.filter(p=>p.status==='PENDING').length;
+    document.getElementById('nbadge-pend').textContent=cnt>0?cnt:'';
+    document.getElementById('nbadge-pend').style.display=cnt>0?'flex':'none';
+    renderPending();
+  }catch(e){console.error(e);}
 }
-function setSF(cat,el){document.querySelectorAll('[data-cat]').forEach(c=>c.classList.remove('on'));el.classList.add('on');_sf=cat;loadScanner();}
-async function loadSigs(){
-  try{
-    const d=await apiFetch('/api/signals');
-    // Detectar novos e adicionar à fila de pendentes
-    if(d.length>_lastSigLen){
-      const novos=d.slice(0, d.length-_lastSigLen);
-      novos.forEach(s=>addToPending(s));
-      _unread+=d.length-_lastSigLen;
-      updBadge();
-    }
-    _lastSigLen=d.length;_sigs=d;renderSigs();
-  }catch(e){}
-}
-function setSigF(f,el){document.querySelectorAll('[data-sf]').forEach(x=>x.classList.remove('on'));el.classList.add('on');_sigf=f;renderSigs();}
-const SM={radar:{icon:'⚠',cls:'iradar',lbl:'RADAR',c:'var(--blue)'},gatilho:{icon:'🔔',cls:'igatilho',lbl:'GATILHO',c:'var(--cyan)'},sinal:{icon:'🎯',cls:'isinal',lbl:'SINAL',c:'var(--green)'},ct:{icon:'⚡',cls:'ict',lbl:'CONTRA-T',c:'var(--gold)'},insuf:{icon:'❌',cls:'iinsuf',lbl:'INSUF.',c:'var(--muted2)'},close:{icon:'🏁',cls:'iclose',lbl:'FECHADO',c:'var(--muted2)'},cb:{icon:'⛔',cls:'icb',lbl:'CIRCUIT BR.',c:'var(--red)'}};
-/* ── MELHORIA 2: timer de expiração ── */
-function sigTimer(ts){
-  try{const parts=ts.split(' ');const[d,m]=parts[0].split('/');const[hh,mm]=parts[1].split(':');
-    const now=new Date();const sig=new Date(now.getFullYear(),+m-1,+d,+hh,+mm);
-    const mins=Math.floor((now-sig)/60000);
-    if(mins<0||mins>1440)return{cls:'closed',txt:''};
-    if(mins<15)return{cls:'fresh',txt:mins+'m'};
-    if(mins<60)return{cls:'aging',txt:mins+'m'};
-    return{cls:'old',txt:Math.floor(mins/60)+'h'+(mins%60?mins%60+'m':'')};
-  }catch(e){return{cls:'closed',txt:''};}}
-
-/* ── MELHORIA 1: card de sinal com botão copiar ── */
-function renderSignalCard(s,m){
-  const timer=sigTimer(s.ts);
-  const timerHtml=timer.txt?`<span class="sig-timer ${timer.cls}">⏱ ${timer.txt}</span>`:'';
-  if(['sinal','gatilho','ct'].includes(s.tipo)){
-    const isBuy=s.texto.includes('BUY')||s.texto.includes('COMPRAR');
-    const isSell=s.texto.includes('SELL')||s.texto.includes('VENDER');
-    const dir=s.tipo==='ct'?'ct':isBuy?'buy':isSell?'sell':'';
-    const dirLabel=s.tipo==='ct'?'⚡ CT':isBuy?'▲ BUY':'▼ SELL';
-    const sym=s.texto.match(/[A-Z]{2,8}[-=^]?[A-Z0-9]*/)?.[0]||'';
-    const uid='cp'+Math.random().toString(36).slice(2,7);
-    const copyTxt=s.texto;
-    return `<div class="action-card ${dir}" style="margin-bottom:10px">
-      <div class="ac-stripe"></div>
-      <div class="ac-header">
-        <div class="ac-symbol">${sym} <span class="ac-tipo">${m.lbl}</span></div>
-        <div style="display:flex;align-items:center;gap:6px">
-          ${timerHtml}
-          ${dir?`<span class="ac-dir ${dir}">${dirLabel}</span>`:''}
+function renderPending(){
+  const el=document.getElementById('pending-list');
+  const active=_pend.filter(p=>p.status==='PENDING');
+  if(!active.length){el.innerHTML='<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div>';return;}
+  el.innerHTML=active.map(op=>{
+    const buy=op.direction==='BUY';
+    const slp=Math.abs(op.entry-op.sl)/op.entry*100;
+    const tpp=Math.abs(op.tp-op.entry)/op.entry*100;
+    const ratio=tpp/slp;
+    const uid='cp'+op.id.replace(/\W/g,'').slice(0,10);
+    return `<div class="pending-card ${buy?'buy':'sell'}">
+      <div class="pc-head">
+        <div>
+          <div class="pc-sym">${op.symbol}</div>
+          <div style="font-size:9px;color:var(--muted2);margin-top:2px">${op.name}</div>
         </div>
+        <div class="pc-status">⏳ Pendente</div>
       </div>
-      <div class="sgtxt" style="padding:0 0 10px 8px">${s.texto}</div>
-      <div class="ac-footer">
-        <span class="sgts">${s.ts}</span>
-        <button class="ac-copy-btn" id="${uid}"
-          onclick="(function(id,txt){navigator.clipboard.writeText(txt).then(()=>{const b=document.getElementById(id);if(b){b.textContent='✅ Copiado!';b.classList.add('copied');setTimeout(()=>{b.textContent='📋 Copiar';b.classList.remove('copied');},2000);}}).catch(()=>alert(txt));}('${uid}',\`${copyTxt.replace(/`/g,"'").replace(/\n/g,'\\n')}\`))">📋 Copiar</button>
+      <div style="text-align:center;margin-bottom:10px;font-size:18px;font-weight:700;color:${buy?'var(--green)':'var(--red)'}">${buy?'▲ BUY':'▼ SELL'}</div>
+      <div class="pc-lvls">
+        <div class="pc-lv"><div class="pc-ll">Entrada</div><div class="pc-val">${fp(op.entry)}</div></div>
+        <div class="pc-lv"><div class="pc-ll">SL 🛡</div><div class="pc-val r">${fp(op.sl)}</div></div>
+        <div class="pc-lv"><div class="pc-ll">TP 🎯</div><div class="pc-val g">${fp(op.tp)}</div></div>
       </div>
-    </div>`;}
-  return `<div class="sigit"><div class="sgico ${m.cls}">${m.icon}</div><div class="sgbody"><div class="sgtipo" style="color:${m.c}">${m.lbl} ${timerHtml}</div><div class="sgtxt">${s.texto}</div><div class="sgts">${s.ts}</div></div></div>`;}
-
-function renderSigs(){
-  let d=[..._sigs];if(_sigf!=='todos')d=d.filter(x=>x.tipo===_sigf);
-  const el=document.getElementById('sig-list');
-  if(!d.length){el.innerHTML='<div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal neste filtro.</div></div>';return;}
-  el.innerHTML=d.map(s=>{const m=SM[s.tipo]||SM.radar;return renderSignalCard(s,m);}).join('');}
-function updBadge(){const b=document.getElementById('nbadge');if(_unread>0){b.style.display='flex';b.textContent=_unread>9?'9+':_unread;}else b.style.display='none';}
-async function loadCT(){
-  const el=document.getElementById('ct-list');
-  el.innerHTML='<div class="empty"><span class="empi spin">⚡</span><div class="empt">Analisando…</div></div>';
-  try{
-    const d=await apiFetch('/api/reversals');
-    if(!d.length){el.innerHTML='<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div>';return;}
-    el.innerHTML=d.map(x=>{const buy=x.direction==='BUY';return`<div class="ctc">
-      <div class="cttop"><span class="ctsym">${x.symbol} <span style="font-size:10px;color:var(--muted2)">${x.name}</span></span><span class="ctsc">${x.strength}%</span></div>
-      <div class="ctdir ${buy?'g':'r'}">${buy?'▲ COMPRAR':'▼ VENDER'} — ${buy?'Baixa→Alta':'Alta→Baixa'}</div>
-      <div class="ctsigs">${(x.reasons||[]).map(s=>`<span class="ctag">${s}</span>`).join('')}</div>
-      <div class="ctm2">
-        <div class="ctmb"><div class="ctml">Preço</div><div class="ctmv">${fp(x.price)}</div></div>
-        <div class="ctmb"><div class="ctml">RSI</div><div class="ctmv ${x.rsi>70?'r':x.rsi<30?'g':''}">${x.rsi.toFixed(1)}</div></div>
-        <div class="ctmb"><div class="ctml">Força</div><div class="ctmv go">${x.strength}%</div></div>
-      </div></div>`;}).join('');
-  }catch(e){el.innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;font-size:10px;color:var(--muted2)">
+        <div>ATR: <code style="color:var(--text)">${fp(op.atr)}</code></div>
+        <div>RSI: <code style="color:var(--text)">${op.rsi.toFixed(1)}</code></div>
+        <div>ADX: <code style="color:var(--text)">${op.adx.toFixed(1)}</code></div>
+      </div>
+      <div class="pc-actions">
+        <button class="pc-btn pc-copy" id="${uid}" onclick="copySLTP(${op.sl},${op.tp},'${uid}')">📋 Copiar SL/TP</button>
+        <button class="pc-btn pc-confirm" onclick="confirmPending('${op.id}')">✅ Entrar</button>
+        <button class="pc-btn pc-ignore" onclick="ignorePending('${op.id}')">❌ Ignorar</button>
+      </div>
+      <div class="pc-info">
+        <span>Ratio: <strong>${ratio.toFixed(2)}:1</strong></span>
+        <span class="pc-time">${op.created_at}</span>
+      </div>
+    </div>`;
+  }).join('');
 }
-async function loadNews(){
-  const el=document.getElementById('news-list');
-  try{
-    const d=await apiFetch('/api/news');
-    const fg=d.fg,arts=d.articles||[];
-    if(fg){
-      document.getElementById('fgv').textContent=fg.value+' – '+fg.label;
-      const n=parseInt(fg.value)||0;
-      document.getElementById('fgn').textContent=n;
-      document.getElementById('fgv').style.color=n>60?'var(--green)':n<40?'var(--red)':'var(--gold)';
-    }
-    if(!arts.length){el.innerHTML='<div class="empty"><span class="empi">📰</span><div class="empt">Sem notícias.</div></div>';return;}
-    el.innerHTML=arts.map((a,i)=>`<div class="ni2"><div class="nnum">${i+1}</div><div class="nbody"><a class="ntitle" href="${a.url||'#'}" target="_blank">${a.title||''}</a><div class="nsrc">${a.source||''}</div></div></div>`).join('');
-  }catch(e){el.innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
+function copySLTP(sl,tp,uid){
+  const txt=`SL=${fp(sl)} | TP=${fp(tp)}`;
+  navigator.clipboard.writeText(txt).then(()=>{
+    const btn=document.getElementById(uid);
+    if(btn){btn.textContent='✅ Copiado!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='📋 Copiar SL/TP';btn.classList.remove('copied');},2000);}
+  }).catch(()=>alert(txt));
+}
+async function confirmPending(opId){
+  try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();await loadDash();}catch(e){alert('Erro: '+e.message);}
+}
+async function ignorePending(opId){
+  try{await apiFetch('/api/ignore',{method:'POST',body:JSON.stringify({op_id:opId})});await loadPending();}catch(e){alert('Erro: '+e.message);}
+}
+function updBadges(){
+  const pend=_pend?_pend.filter(p=>p.status==='PENDING').length:0;
+  document.getElementById('nbadge-pend').textContent=pend>0?pend:'';
+  document.getElementById('nbadge-pend').style.display=pend>0?'flex':'none';
 }
 async function loadCfg(){
   try{
@@ -1524,7 +1350,7 @@ async function loadCfg(){
     document.getElementById('p-mt').textContent=c.max_trades;
     document.getElementById('p-mc').textContent=c.min_conf+'/7';
   }catch(_){}
-  updCfgBtns();updNtfBtn();
+  updCfgBtns();
 }
 function updCfgBtns(){
   if(!_st)return;
@@ -1534,157 +1360,7 @@ function updCfgBtns(){
 async function setMode(m){try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function setTf(t){try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function resetPausa(){if(!confirm('Resetar Circuit Breaker?'))return;try{await apiFetch('/api/resetpausa',{method:'POST'});await loadDash();}catch(e){alert('Erro: '+e.message);}}
-
-/* ── Push Notifications ───────────────────────────────────── */
-let _swReg = null;
-async function initSW(){
-  if(!('serviceWorker' in navigator)||!('PushManager' in window))return;
-  try{
-    _swReg = await navigator.serviceWorker.register('/sw.js');
-    log('SW registrado');
-  }catch(e){console.warn('SW:',e);}
-}
-function log(m){console.log('[SniperBot]',m);}
-async function toggleNotifs(){
-  if(!('Notification' in window)){alert('Seu navegador não suporta notificações.');return;}
-  if(Notification.permission==='denied'){alert('Notificações bloqueadas. Habilite nas configurações do navegador.');return;}
-  if(Notification.permission==='granted'){
-    await subscribeUser(); return;
-  }
-  const perm = await Notification.requestPermission();
-  if(perm==='granted') await subscribeUser();
-  updNtfBtn();
-}
-async function subscribeUser(){
-  if(!_swReg){alert('Service worker não disponível.');return;}
-  try{
-    const r = await apiFetch('/api/vapid-public-key');
-    if(!r.key){alert('VAPID não configurado no servidor.\nAdicione VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY nas variáveis de ambiente do Railway.');return;}
-    const sub = await _swReg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(r.key)
-    });
-    await apiFetch('/api/subscribe',{method:'POST',body:JSON.stringify(sub)});
-    document.getElementById('ntf-status').textContent='✅ Notificações ativadas!';
-    document.getElementById('ntf-btn').textContent='🔕 Desativar Notificações';
-  }catch(e){document.getElementById('ntf-status').textContent='Erro: '+e.message;}
-  updNtfBtn();
-}
-function updNtfBtn(){
-  const btn=document.getElementById('ntf-btn'),st=document.getElementById('ntf-status');
-  if(!('Notification' in window)||!('PushManager' in window)){
-    btn.textContent='❌ Push não suportado neste navegador';btn.disabled=true;return;
-  }
-  if(Notification.permission==='denied'){btn.textContent='🚫 Notificações bloqueadas';btn.disabled=true;return;}
-  if(Notification.permission==='granted')btn.textContent='✅ Notificações Ativas – Toque para reativar';
-  else btn.textContent='🔔 Ativar Notificações Push';
-  btn.disabled=false;
-}
-function urlBase64ToUint8Array(base64String){
-  const padding='='.repeat((4-base64String.length%4)%4);
-  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
-  const raw=window.atob(base64);const out=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;
-}
-
-/* ── Init ─────────────────────────────────────────────────── */
-/* Manifest dinâmico */
-const mf={name:'Sniper Bot',short_name:'SniperBot',start_url:'/',display:'standalone',orientation:'portrait',background_color:'#06090f',theme_color:'#06090f',
-icons:[{src:'/icon-192.png',sizes:'192x192',type:'image/png',purpose:'any maskable'},{src:'/icon-512.png',sizes:'512x512',type:'image/png',purpose:'any maskable'}]};
-const mfBlob=new Blob([JSON.stringify(mf)],{type:'application/json'});
-const mfLink=document.createElement('link');mfLink.rel='manifest';mfLink.href=URL.createObjectURL(mfBlob);document.head.appendChild(mfLink);
-
-
-/* ── MELHORIA 3: Modo Apenas Sinais ── */
-function toggleSimpleMode(on){
-  document.body.classList.toggle('simple-mode',on);
-  document.querySelectorAll('.pg').forEach(p=>{p.style.display='none';p.classList.remove('on');});
-  if(on){
-    const sig=document.getElementById('pg-sig');
-    if(sig){sig.style.display='block';sig.classList.add('on');}
-    document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));
-    loadSigs();
-    localStorage.setItem('sniper_simple','1');
-  } else {
-    const dash=document.getElementById('pg-dash');
-    if(dash){dash.style.display='block';dash.classList.add('on');}
-    const nb0=document.querySelector('.nb');
-    if(nb0){document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));nb0.classList.add('on');}
-    localStorage.removeItem('sniper_simple');
-    loadDash();
-  }
-}
-
-/* ── MELHORIA 4: Fila de Pendentes com Swipe ── */
-let _pending=[];
-function renderPending(){
-  const el=document.getElementById('pendingQueue');
-  const cnt=document.getElementById('pendingCount');
-  if(!el||!cnt)return;
-  const active=_pending.filter(p=>!p.done&&!p.skipped);
-  cnt.textContent=active.length;
-  if(!active.length){el.innerHTML='<div class="empty-pending">Nenhum pendente</div>';return;}
-  el.innerHTML=active.map(p=>{
-    const m=SM[p.tipo]||SM.radar;
-    const sym=p.texto.match(/[A-Z]{2,8}[-=^]?[A-Z0-9]*/)?.[0]||'';
-    const clr=p.tipo==='sinal'?'var(--green)':p.tipo==='ct'?'var(--gold)':'var(--cyan)';
-    return `<div class="swipe-wrap" id="sw_${p.id}">
-      <div class="swipe-behind"><div class="ok">✅ Executado</div><div class="ng">❌ Ignorar</div></div>
-      <div class="swipe-card" id="sc_${p.id}">
-        <span class="sc-sym" style="color:${clr}">${m.icon}</span>
-        <div class="sc-info">
-          <div style="font-size:12px;font-weight:700;font-family:var(--mono)">${sym} <span style="font-size:9px;color:var(--muted2)">${m.lbl}</span></div>
-          <div class="sc-txt">${p.texto.split('\n')[1]||p.texto.split('\n')[0]}</div>
-          <div class="sc-ts">${p.ts}</div>
-        </div>
-        <div class="sc-act">
-          <button class="sc-btn ok" onclick="pendingAction('${p.id}',true)">✅</button>
-          <button class="sc-btn nk" onclick="pendingAction('${p.id}',false)">❌</button>
-        </div>
-      </div></div>`;
-  }).join('');
-  active.forEach(p=>initSwipe(p.id));
-}
-function pendingAction(id,exec){
-  const p=_pending.find(x=>x.id===id);if(!p)return;
-  p.done=exec;p.skipped=!exec;
-  const card=document.getElementById('sc_'+id);
-  if(card){card.classList.add(exec?'done':'skip');setTimeout(()=>renderPending(),300);}
-  savePending();
-}
-function initSwipe(id){
-  const card=document.getElementById('sc_'+id);if(!card)return;
-  let sx=0,cx=0,drag=false;
-  card.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;drag=true;},{passive:true});
-  card.addEventListener('touchmove',e=>{if(!drag)return;cx=e.touches[0].clientX-sx;card.style.transform=`translateX(${cx}px)`;card.style.transition='none';},{passive:true});
-  card.addEventListener('touchend',()=>{drag=false;card.style.transition='';
-    if(cx>60)pendingAction(id,true);else if(cx<-60)pendingAction(id,false);else card.style.transform='';cx=0;});
-}
-function savePending(){try{localStorage.setItem('sniper_pending',JSON.stringify(_pending.slice(-20)));}catch(e){}}
-function loadPendingData(){
-  try{const s=localStorage.getItem('sniper_pending');if(s){_pending=JSON.parse(s);renderPending();}}catch(e){_pending=[];}
-}
-function addToPending(sig){
-  if(!['sinal','gatilho','ct'].includes(sig.tipo))return;
-  const id=(sig.ts+sig.texto).replace(/\W/g,'').slice(0,20);
-  if(_pending.find(p=>p.id===id))return;
-  _pending.unshift({...sig,id,done:false,skipped:false});
-  _pending=_pending.slice(0,10);
-  savePending();renderPending();
-}
-/* Atualizar timers e pendentes a cada minuto */
-setInterval(()=>{renderSigs();renderPending();},60000);
-
-window.addEventListener('load',()=>{
-  // Restaurar modo simples e pendentes
-  if(localStorage.getItem('sniper_simple')==='1') toggleSimpleMode(true);
-  loadPendingData();
-  initSW();
-  // Forçar display correto em todas as pages na carga
-  document.querySelectorAll('.pg').forEach(p=>{ p.style.display=p.classList.contains('on')?'block':'none'; });
-  loadDash();
-  setInterval(()=>{loadDash();loadSigs();},30000);
-});
+window.addEventListener('load',()=>{loadDash();setInterval(()=>{loadDash();},30000);});
 </script>
 </body>
 </html>"""
@@ -1713,13 +1389,12 @@ def create_api(bot):
     @app.route("/icon-192.png")
     @app.route("/icon-512.png")
     def icon():
-        # Ícone SVG inline convertido para resposta
         size = 192 if "192" in request.path else 512
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
 
     @app.route("/api/health")
-    def api_health(): return jsonify({"status": "ok", "version": "7.1"})
+    def api_health(): return jsonify({"status": "ok", "version": "7.2"})
 
     @app.route("/api/status")
     def api_status():
@@ -1732,7 +1407,7 @@ def create_api(bot):
             pnl = (cur-t["entry"])/t["entry"]*100
             if t["dir"] == "SELL": pnl = -pnl
             trades_out.append({"symbol": t["symbol"], "name": t.get("name",""), "dir": t["dir"],
-                "tipo": t.get("tipo",""), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
+                "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
                 "current": cur, "pnl": round(pnl,2), "opened_at": t.get("opened_at","")})
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
@@ -1740,6 +1415,7 @@ def create_api(bot):
             "paused": bot.is_paused(), "cb_mins": max(0,int((bot.paused_until-time.time())/60)) if bot.is_paused() else 0,
             "active_trades": trades_out,
             "markets": {cat: mkt_open(cat) for cat in Config.MARKET_CATEGORIES.keys()},
+            "pending_count": len([o for o in bot.pending_operations if o["status"] == "PENDING"]),
         })
 
     @app.route("/api/config")
@@ -1747,49 +1423,25 @@ def create_api(bot):
         return jsonify({"atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP,
                         "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE})
 
-    @app.route("/api/history")
-    def api_history(): return jsonify(list(reversed(bot.history[-50:])))
+    @app.route("/api/pending")
+    def api_pending():
+        return jsonify(bot.pending_operations)
 
-    @app.route("/api/signals")
-    def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
+    @app.route("/api/confirm", methods=["POST","OPTIONS"])
+    def api_confirm():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        op_id = data.get("op_id","")
+        bot.confirm_pending_operation(op_id)
+        return jsonify({"ok": True})
 
-    @app.route("/api/news")
-    def api_news():
-        now = time.time()
-        if now - bot.news_cache_ts > 600 or not bot.news_cache:
-            try:
-                bot.news_cache    = {"fg": get_fear_greed(), "articles": get_news(15)}
-                bot.news_cache_ts = now
-            except Exception as e: log(f"[NEWS] {e}")
-        return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
-
-    @app.route("/api/trends")
-    def api_trends():
-        bot.update_trends_cache()
-        out = []
-        for sym, entry in bot.trend_cache.items():
-            d = entry["data"]
-            out.append({"symbol": sym, "name": d["name"], "category": asset_cat(sym),
-                "price": d["price"], "cenario": d["cenario"], "rsi": round(d["rsi"],1),
-                "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2),
-                "macd_bull": d["macd_bull"], "macd_bear": d["macd_bear"],
-                "h1_bull": d["h1_bull"], "h1_bear": d["h1_bear"]})
-        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))
-        return jsonify(out)
-
-    @app.route("/api/reversals")
-    def api_reversals():
-        bot.update_trends_cache()
-        out = []
-        for sym, entry in bot.trend_cache.items():
-            rev = entry.get("reversal", {})
-            if rev.get("has"):
-                d = entry["data"]
-                out.append({"symbol": sym, "name": d["name"], "price": d["price"],
-                    "rsi": round(d["rsi"],1), "adx": round(d["adx"],1),
-                    "direction": rev["dir"], "strength": rev["strength"], "reasons": rev["reasons"]})
-        out.sort(key=lambda x: -x["strength"])
-        return jsonify(out)
+    @app.route("/api/ignore", methods=["POST","OPTIONS"])
+    def api_ignore():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        op_id = data.get("op_id","")
+        bot.ignore_pending_operation(op_id)
+        return jsonify({"ok": True})
 
     @app.route("/api/mode", methods=["POST","OPTIONS"])
     def api_mode():
@@ -1837,13 +1489,11 @@ def run_api(bot):
 
 
 # ═══════════════════════════════════════════════════════════════
-# LOOP DO BOT (thread separada)
+# LOOP DO BOT
 # ═══════════════════════════════════════════════════════════════
 def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
-    try: bot.send_news()
-    except: pass
 
     while True:
         try:
@@ -1854,11 +1504,11 @@ def bot_loop(bot):
                     bot.last_id = u["update_id"]
                     if "message" in u:
                         txt = u["message"].get("text","").strip().lower()
-                        if txt in ("/noticias","/news"): bot.send_news()
-                        elif txt == "/status":           bot.send_status()
+                        if txt == "/status":           bot.send_status()
                         elif txt in ("/placar","/score"):bot.send_placar()
                         elif txt in ("/menu","/start"):  bot.build_menu()
                         elif txt == "/resetpausa":       bot.reset_pause()
+                        elif txt == "/pending":          bot.send_pending_count()
                     if "callback_query" in u:
                         cb = u["callback_query"]["data"]; cid = u["callback_query"]["id"]
                         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/answerCallbackQuery",
@@ -1867,9 +1517,9 @@ def bot_loop(bot):
                         elif cb.startswith("set_"):   bot.set_mode(cb.replace("set_",""))
                         elif cb == "tf_menu":         bot.build_tf_menu()
                         elif cb == "main_menu":       bot.build_menu()
-                        elif cb == "news":            bot.send_news()
                         elif cb == "status":          bot.send_status()
                         elif cb == "placar":          bot.send_placar()
+                        elif cb == "pending":         bot.send_pending_count()
             bot.update_trends_cache()
             bot.maybe_send_news()
             bot.scan()
@@ -1884,7 +1534,7 @@ def bot_loop(bot):
 # MAIN
 # ═══════════════════════════════════════════════════════════════
 def main():
-    log("🔌 Bot Sniper v7.1 — All-in-One + Push Notifications")
+    log("🔌 Bot Sniper v7.2 — Manual Operations + Copy SL/TP")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
     except: pass
 
@@ -1894,7 +1544,7 @@ def main():
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
     t.start()
 
-    run_api(bot)   # Flask na thread principal (Railway exige)
+    run_api(bot)
 
 
 if __name__ == "__main__":
