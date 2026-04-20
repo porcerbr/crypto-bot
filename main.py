@@ -963,7 +963,7 @@ self.addEventListener('notificationclick', e => {
 """
 
 # ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML (embutido)
+# DASHBOARD HTML (embutido) — BASE ORIGINAL PRESERVADA
 # ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1033,7 +1033,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .mg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .mkt{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between}
 .mktn{font-size:11px;font-weight:500}
-.mkts{font-size:8px;letter-spacing:.8px;text-transform:uppercase;padding:2px 8px;border-radius:px 8px;border-radius:20px;font-family:var(--mono)}
+.mkts{font-size:8px;letter-spacing:.8px;text-transform:uppercase;padding:2px 8px;border-radius:20px;font-family:var(--mono)}
 .mop{background:var(--g3);color:var(--green)}.mcl{background:var(--r3);color:var(--red)}
 .fchips{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px}
 .fchips::-webkit-scrollbar{display:none}
@@ -1463,6 +1463,8 @@ async function loadSigs(){
   try{
     const d=await apiFetch('/api/signals');
     if(d.length>_lastSigLen){
+      const novos=d.slice(0, d.length-_lastSigLen);
+      novos.forEach(s=>addToPending(s));
       _unread+=d.length-_lastSigLen;
       updBadge();
     }
@@ -1470,7 +1472,7 @@ async function loadSigs(){
   }catch(e){}
 }
 function setSigF(f,el){document.querySelectorAll('[data-sf]').forEach(x=>x.classList.remove('on'));el.classList.add('on');_sigf=f;renderSigs();}
-const SM={radar:{icon:'⚠',cls:'iradar',lbl:'RADAR',c:'var(--blue)'},gatilho:{icon:'🔔',cls:'igatilho',lbl:'GATILHO',c:'var(--cyan)')'},s)'},sinal:{icon:'🎯',cls:'isinal',lbl:'SINAL',c:'var(--green)'},ct:{icon:'⚡',cls:'ict',lbl:'CONTRA-T',c:'var(--gold)'},insuf:{icon:'❌',cls:'iinsuf',lbl:'INSUF.',c:'var(--muted2)'},close:{icon:'🏁',cls:'iclose',lbl:'FECHADO',c:'var(--muted2)'},cb:{icon:'⛔',cls:'icb',lbl:'CIRCUIT BR.',c:'var(--red)'}};
+const SM={radar:{icon:'⚠',cls:'iradar',lbl:'RADAR',c:'var(--blue)'},gatilho:{icon:'🔔',cls:'igatilho',lbl:'GATILHO',c:'var(--cyan)'},sinal:{icon:'🎯',cls:'isinal',lbl:'SINAL',c:'var(--green)'},ct:{icon:'⚡',cls:'ict',lbl:'CONTRA-T',c:'var(--gold)'},insuf:{icon:'❌',cls:'iinsuf',lbl:'INSUF.',c:'var(--muted2)'},close:{icon:'🏁',cls:'iclose',lbl:'FECHADO',c:'var(--muted2)'},cb:{icon:'⛔',cls:'icb',lbl:'CIRCUIT BR.',c:'var(--red)'}};
 /* ── MELHORIA 2: timer de expiração ── */
 function sigTimer(ts){
   try{const parts=ts.split(' ');const[d,m]=parts[0].split('/');const[hh,mm]=parts[1].split(':');
@@ -1649,7 +1651,67 @@ function toggleSimpleMode(on){
   }
 }
 
-/* ── Pendentes do Backend (Confirmação Manual + Copiar SL/TP) ── */
+/* ── MELHORIA 4: Fila de Pendentes com Swipe ── */
+let _pending=[];
+function renderPending(){
+  const el=document.getElementById('pendingQueue');
+  const cnt=document.getElementById('pendingCount');
+  if(!el||!cnt)return;
+  const active=_pending.filter(p=>!p.done&&!p.skipped);
+  cnt.textContent=active.length;
+  if(!active.length){el.innerHTML='<div class="empty-pending">Nenhum pendente</div>';return;}
+  el.innerHTML=active.map(p=>{
+    const m=SM[p.tipo]||SM.radar;
+    const sym=p.texto.match(/[A-Z]{2,8}[-=^]?[A-Z0-9]*/)?.[0]||'';
+    const clr=p.tipo==='sinal'?'var(--green)':p.tipo==='ct'?'var(--gold)':'var(--cyan)';
+    return `<div class="swipe-wrap" id="sw_${p.id}">
+      <div class="swipe-behind"><div class="ok">✅ Executado</div><div class="ng">❌ Ignorar</div></div>
+      <div class="swipe-card" id="sc_${p.id}">
+        <span class="sc-sym" style="color:${clr}">${m.icon}</span>
+        <div class="sc-info">
+          <div style="font-size:12px;font-weight:700;font-family:var(--mono)">${sym} <span style="font-size:9px;color:var(--muted2)">${m.lbl}</span></div>
+          <div class="sc-txt">${p.texto.split('\n')[1]||p.texto.split('\n')[0]}</div>
+          <div class="sc-ts">${p.ts}</div>
+        </div>
+        <div class="sc-act">
+          <button class="sc-btn ok" onclick="pendingAction('${p.id}',true)">✅</button>
+          <button class="sc-btn nk" onclick="pendingAction('${p.id}',false)">❌</button>
+        </div>
+      </div></div>`;
+  }).join('');
+  active.forEach(p=>initSwipe(p.id));
+}
+function pendingAction(id,exec){
+  const p=_pending.find(x=>x.id===id);if(!p)return;
+  p.done=exec;p.skipped=!exec;
+  const card=document.getElementById('sc_'+id);
+  if(card){card.classList.add(exec?'done':'skip');setTimeout(()=>renderPending(),300);}
+  savePending();
+}
+function initSwipe(id){
+  const card=document.getElementById('sc_'+id);if(!card)return;
+  let sx=0,cx=0,drag=false;
+  card.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;drag=true;},{passive:true});
+  card.addEventListener('touchmove',e=>{if(!drag)return;cx=e.touches[0].clientX-sx;card.style.transform=`translateX(${cx}px)`;card.style.transition='none';},{passive:true});
+  card.addEventListener('touchend',()=>{drag=false;card.style.transition='';
+    if(cx>60)pendingAction(id,true);else if(cx<-60)pendingAction(id,false);else card.style.transform='';cx=0;});
+}
+function savePending(){try{localStorage.setItem('sniper_pending',JSON.stringify(_pending.slice(-20)));}catch(e){}}
+function loadPendingData(){
+  try{const s=localStorage.getItem('sniper_pending');if(s){_pending=JSON.parse(s);renderPending();}}catch(e){_pending=[];}
+}
+function addToPending(sig){
+  if(!['sinal','gatilho','ct'].includes(sig.tipo))return;
+  const id=(sig.ts+sig.texto).replace(/\W/g,'').slice(0,20);
+  if(_pending.find(p=>p.id===id))return;
+  _pending.unshift({...sig,id,done:false,skipped:false});
+  _pending=_pending.slice(0,10);
+  savePending();renderPending();
+}
+/* Atualizar timers e pendentes a cada minuto */
+setInterval(()=>{renderSigs();renderPending();},60000);
+
+/* ── NOVO: Pendentes do Backend (Confirmação Manual + Copiar SL/TP) ── */
 async function loadPending(){
   try{
     const d=await apiFetch('/api/pending');
@@ -1707,6 +1769,7 @@ async function rejectPending(id,btn){
 
 window.addEventListener('load',()=>{
   if(localStorage.getItem('sniper_simple')==='1') toggleSimpleMode(true);
+  loadPendingData();
   initSW();
   document.querySelectorAll('.pg').forEach(p=>{ p.style.display=p.classList.contains('on')?'block':'none'; });
   loadDash();
