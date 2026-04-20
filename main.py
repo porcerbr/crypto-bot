@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-BOT SNIPER v7.2 — Multi-mercado + API HTTP + Dashboard PWA + Push Notifications
+BOT SNIPER v7.2 OTIMIZADO — Multi-mercado + Confirmação Manual + Copy SL/TP
 ═══════════════════════════════════════════════════════════════════════════════
-ARQUITETURA: Flask serve o HTML/API direto (1 único app no Railway)
-NOVIDADES v7.2 (sobre v7.1):
-  • ✅ CONFIRMAÇÃO MANUAL: Operações ficam pendentes até você confirmar
-  • 📋 COPIAR SL/TP: Um clique copia valores prontos para sua plataforma
-  • ⏳ FILA DE PENDENTES: Gerencie operações com swipe ou botões
-  • 🎯 Templates de Entrada: Dados estruturados para copy/paste
-  • 💾 Persistência: Fila restaura após recarregar
-  • 🔔 Badge de Pendentes: Mostra quantas aguardam confirmação
+MELHORIAS APLICADAS:
+  ✅ Operações Pendentes com Confirmação Manual
+  ✅ Botão "Copiar SL/TP" com Um Clique
+  ✅ Badge com Contador de Pendentes
+  ✅ Melhor Responsividade e UX
+  ✅ Templates Estruturados para Copy/Paste
+  ✅ Persistência Automática de Fila
+  ✅ Indicadores de Força em Cada Operação
+  ✅ Histórico de Operações Rejeitadas
 """
 import os, time, json, math, threading, requests
 import pandas as pd, xml.etree.ElementTree as ET
@@ -18,7 +19,7 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 # ═══════════════════════════════════════════════════════════════
-# CONFIGURA��ÕES
+# CONFIGURAÇÕES
 # ═══════════════════════════════════════════════════════════════
 class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
@@ -69,26 +70,21 @@ class Config:
         },
     }
 
-    # Risco
     ATR_MULT_SL    = 1.5
     ATR_MULT_TP    = 3.0
     ATR_MULT_TRAIL = 1.2
 
-    # Circuit Breaker
     MAX_CONSECUTIVE_LOSSES = 2
     PAUSE_DURATION         = 3600
 
-    # Filtros tendência
     ADX_MIN        = 22
     MAX_TRADES     = 3
     ASSET_COOLDOWN = 3600
     MIN_CONFLUENCE = 5
 
-    # Filtros CT
     MIN_CONFLUENCE_CT = 4
-    REVERSAL_COOLDOWN = 2700   # 45min entre alertas CT
+    REVERSAL_COOLDOWN = 2700
 
-    # Timers
     RADAR_COOLDOWN   = 1800
     GATILHO_COOLDOWN = 300
     TRENDS_INTERVAL  = 120
@@ -197,7 +193,8 @@ def load_state(bot):
         bot.asset_cooldown     = data.get("asset_cooldown", {})
         bot.history            = data.get("history", [])
         for t in bot.active_trades: t["session_alerted"] = False
-        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_operations)} pendente(s)")
+        pend_count = len([o for o in bot.pending_operations if o["status"] == "PENDING"])
+        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {pend_count} pendente(s)")
         if bot.active_trades:
             lines = ["♻️ <b>BOT REINICIADO – TRADES ATIVOS</b>\n"]
             for t in bot.active_trades:
@@ -206,10 +203,10 @@ def load_state(bot):
             bot._restore_msg = "\n".join(lines)
         elif bot.pending_operations:
             lines = ["⏳ <b>BOT REINICIADO – OPERAÇÕES PENDENTES</b>\n"]
-            for op in bot.pending_operations[:3]:
+            for op in [o for o in bot.pending_operations if o["status"] == "PENDING"][:3]:
                 dl = "BUY 🟢" if op["direction"] == "BUY" else "SELL 🔴"
                 lines.append(f"⏳ <b>{op['symbol']}</b> {dl} | Entrada: <code>{fmt(op['entry'])}</code> | SL: <code>{fmt(op['sl'])}</code> | TP: <code>{fmt(op['tp'])}</code>")
-            if len(bot.pending_operations) > 3: lines.append(f"\n... +{len(bot.pending_operations)-3} mais pendentes")
+            if len([o for o in bot.pending_operations if o["status"] == "PENDING"]) > 3: lines.append(f"\n... +{len([o for o in bot.pending_operations if o['status'] == 'PENDING'])-3} mais")
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
@@ -226,23 +223,25 @@ RSS_FEEDS = [
 ]
 
 def _parse_rss(url, src, mx=3):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-    r.raise_for_status()
-    root  = ET.fromstring(r.content)
-    items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
-    out = []
-    for item in items[:mx]:
-        title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-        link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or "").strip()
-        if title and link: out.append({"title": title, "url": link, "source": src})
-    return out
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        r.raise_for_status()
+        root  = ET.fromstring(r.content)
+        items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        out = []
+        for item in items[:mx]:
+            title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
+            link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or "").strip()
+            if title and link: out.append({"title": title, "url": link, "source": src})
+        return out
+    except: return []
 
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
         if len(arts) >= mx: break
         try: arts.extend(_parse_rss(url, name, 4))
-        except Exception as e: log(f"[RSS] {name}: {e}")
+        except: pass
     return arts[:mx]
 
 def get_fear_greed():
@@ -474,7 +473,6 @@ def calc_reversal_conf(res, d):
     return sc, len(checks), checks
 
 def detect_reversal(res):
-    """Versão rápida de detecção CT para o cache de tendências."""
     if not res: return (False, None, 0, [])
     motivos = []; forca = 0; dir_rev = None
     rsi = res["rsi"]; price = res["price"]; cen = res["cenario"]
@@ -500,10 +498,8 @@ def detect_reversal(res):
 _push_subscriptions = []
 
 def send_push(title, body, icon="/icon-192.png"):
-    """Envia push para todos os clientes inscritos via Web Push."""
     try:
         from pywebpush import webpush, WebPushException
-        import os
         priv_key = os.getenv("VAPID_PRIVATE_KEY", "")
         pub_key  = os.getenv("VAPID_PUBLIC_KEY", "")
         email    = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
@@ -527,7 +523,7 @@ def send_push(title, body, icon="/icon-192.png"):
 
 
 # ═══════════════════════════════════════════════════════════════
-# BOT PRINCIPAL
+# BOT PRINCIPAL — MODIFICADO PARA OPERAÇÕES PENDENTES
 # ═══════════════════════════════════════════════════════════════
 class TradingBot:
     def __init__(self):
@@ -547,7 +543,7 @@ class TradingBot:
         self.signals_feed = []
         self.news_cache   = []; self.news_cache_ts = 0
 
-    # ── Telegram + captura de sinais ──────────────────────────
+    # ── Telegram ──────────────────────────────────────────────
     def send(self, text, markup=None, disable_preview=False):
         import re
         clean = re.sub(r"<[^>]+>", "", text).strip()
@@ -582,6 +578,7 @@ class TradingBot:
     def build_menu(self):
         tfl = Config.TIMEFRAMES.get(self.timeframe, ("?",""))[0]
         ml  = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
+        pend_count = len([o for o in self.pending_operations if o["status"] == "PENDING"])
         markup = {"inline_keyboard": [
             [{"text": f"Mercado: {ml}", "callback_data": "ignore"}],
             [{"text": "FOREX", "callback_data": "set_FOREX"}, {"text": "CRIPTO", "callback_data": "set_CRYPTO"}],
@@ -589,12 +586,12 @@ class TradingBot:
             [{"text": "TUDO", "callback_data": "set_TUDO"}],
             [{"text": f"TF: {self.timeframe} {tfl}", "callback_data": "tf_menu"}],
             [{"text": "Status", "callback_data": "status"}, {"text": "Placar", "callback_data": "placar"}],
-            [{"text": "Pendentes", "callback_data": "pending"}, {"text": "Noticias", "callback_data": "news"}],
+            [{"text": f"Pendentes ({pend_count})", "callback_data": "pending"}, {"text": "Noticias", "callback_data": "news"}],
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min" if self.is_paused() else ""
-        pend = f"\n⏳ {len([o for o in self.pending_operations if o['status']=='PENDING'])} operação(ões) pendente(s)" if any(o['status']=='PENDING' for o in self.pending_operations) else ""
-        self.send(f"<b>BOT SNIPER v7.2</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend}", markup)
+        pend_info = f"\n⏳ {pend_count} pendente(s)" if pend_count > 0 else ""
+        self.send(f"<b>BOT SNIPER v7.2</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend_info}", markup)
 
     def build_tf_menu(self):
         rows = [[{"text": f"{tf} {lb}{'✅' if tf==self.timeframe else ''}", "callback_data": f"set_tf_{tf}"}]
@@ -638,9 +635,10 @@ class TradingBot:
         if not count:
             lines.append("Nenhuma operação aguardando confirmação.")
         else:
-            for op in [o for o in self.pending_operations if o["status"] == "PENDING"]:
+            for op in [o for o in self.pending_operations if o["status"] == "PENDING"][:5]:
                 dl = "BUY 🟢" if op["direction"] == "BUY" else "SELL 🔴"
-                lines.append(f"<code>{op['symbol']}</code> {dl} | Entrada: <code>{fmt(op['entry'])}</code>\n  SL: <code>{fmt(op['sl'])}</code> | TP: <code>{fmt(op['tp'])}</code>\n  ➜ Confirme no app!")
+                lines.append(f"<code>{op['symbol']}</code> {dl} | <code>{fmt(op['entry'])}</code> | SL: <code>{fmt(op['sl'])}</code> | TP: <code>{fmt(op['tp'])}</code>")
+            if count > 5: lines.append(f"\n... +{count-5} mais no app")
         self.send("\n".join(lines))
 
     def is_paused(self): return time.time() < self.paused_until
@@ -649,7 +647,6 @@ class TradingBot:
         self.paused_until = 0; self.consecutive_losses = 0
         save_state(self); self.send("✅ Circuit Breaker resetado.")
 
-    # ── Cache de tendências ───────────────────────────────────
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
         log("📡 Atualizando cache tendências...")
@@ -667,9 +664,8 @@ class TradingBot:
         self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
 
-    # ── Criar Operação Pendente (NOVO v7.2) ────────────────────────
+    # ── CRIAR OPERAÇÃO PENDENTE (NOVO) ────────────────────────
     def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):
-        """Cria operação pendente ao invés de trade automático"""
         op_id = f"{symbol}_{int(time.time()*1000)}"
         op = {
             "id": op_id,
@@ -687,13 +683,12 @@ class TradingBot:
             "confluence": confluence_data,
         }
         self.pending_operations.append(op)
-        log(f"[PENDENTE] {symbol} {direction} criada com ID {op_id}")
+        log(f"[PENDENTE] {symbol} {direction} criada")
         self._send_pending_alert(op)
         save_state(self)
         return op
 
     def _send_pending_alert(self, op):
-        """Envia alerta de operação pendente"""
         sl_pct = abs(op["entry"]-op["sl"])/op["entry"]*100
         tp_pct = abs(op["tp"]-op["entry"])/op["entry"]*100
         ratio = f"1:{tp_pct/sl_pct:.1f}" if sl_pct > 0 else "1:0"
@@ -716,7 +711,6 @@ class TradingBot:
         )
 
     def confirm_pending_operation(self, op_id):
-        """Confirma uma operação pendente e a move para trades ativos"""
         op = next((o for o in self.pending_operations if o["id"] == op_id), None)
         if not op:
             log(f"[CONFIRM] Operação {op_id} não encontrada")
@@ -725,7 +719,6 @@ class TradingBot:
         op["status"] = "CONFIRMED"
         op["confirmed_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
         
-        # Mover para trades ativos
         trade = {
             "symbol": op["symbol"],
             "name": op["name"],
@@ -749,7 +742,6 @@ class TradingBot:
         return True
 
     def ignore_pending_operation(self, op_id):
-        """Rejeita uma operação pendente"""
         op = next((o for o in self.pending_operations if o["id"] == op_id), None)
         if not op:
             log(f"[IGNORE] Operação {op_id} não encontrada")
@@ -757,16 +749,16 @@ class TradingBot:
         
         op["status"] = "IGNORED"
         op["ignored_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
-        log(f"[IGNORE] {op['symbol']} {op['direction']} rejeitada pelo usuário")
+        log(f"[IGNORE] {op['symbol']} {op['direction']} rejeitada")
         save_state(self)
         return True
 
-    # ── SCAN — 4 fases (MODIFICADO) ───────────────────────────
+    # ── SCAN — Criando Pendências ao invés de Trades Automáticos ──
     def scan(self):
         if self.is_paused(): return
         if len(self.active_trades) >= Config.MAX_TRADES: return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
-        log(f"🔎 Scan {self.mode} ({len(universe)} ativos, TF {self.timeframe})")
+        
         for s in universe:
             cat = asset_cat(s)
             if not mkt_open(cat): continue
@@ -776,16 +768,15 @@ class TradingBot:
 
             res = self.trend_cache.get(s, {}).get("data") or get_analysis(s, self.timeframe)
             if not res: continue
-            # Atualiza cache
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
                 self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
 
-            if res["cenario"] == "NEUTRO":
-                continue
+            if res["cenario"] == "NEUTRO": continue
 
             price = res["price"]; atr = res["atr"]; cen = res["cenario"]
             cl = asset_cat(s); cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
+            
             if cen == "ALTA":
                 gatilho = res["t_buy"]; dir_s = "BUY"
                 sl_est = gatilho - Config.ATR_MULT_SL * atr
@@ -801,7 +792,7 @@ class TradingBot:
             tp_p = abs(tp_est-gatilho)/gatilho*100
             ratio = f"1:{Config.ATR_MULT_TP/Config.ATR_MULT_SL:.1f}"
 
-            # FASE 1 — RADAR (preço ainda não chegou no gatilho)
+            # FASE 1 — RADAR
             if not preco_ok:
                 if time.time() - self.radar_list.get(s, 0) > Config.RADAR_COOLDOWN:
                     dist = abs(price-gatilho)/price*100
@@ -840,7 +831,6 @@ class TradingBot:
             # FASE 3 — Confluência
             sc, tot_c, checks = calc_confluence(res, dir_s)
             bar = cbar(sc, tot_c)
-            conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
 
             # FASE 4A — Insuficiente
             if sc < Config.MIN_CONFLUENCE:
@@ -854,7 +844,7 @@ class TradingBot:
                     + "\n".join(f"   ❌ {nm}" for nm in falhou)
                 ); continue
 
-            # FASE 4B — Criar Operação Pendente (NOVO - v7.2)
+            # FASE 4B — Criar Operação Pendente (CONFIRMAÇÃO MANUAL)
             sl_final = price - Config.ATR_MULT_SL * atr if dir_s == "BUY" else price + Config.ATR_MULT_SL * atr
             tp_final = price + Config.ATR_MULT_TP * atr if dir_s == "BUY" else price - Config.ATR_MULT_TP * atr
             
@@ -904,7 +894,6 @@ class TradingBot:
             cands.sort(key=lambda x: x[0], reverse=True)
             sc, tc, ch, dir_s, sinais = cands[0]
             bar = cbar(sc, tc)
-            conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
             sl_m = Config.ATR_MULT_SL; tp_m = Config.ATR_MULT_SL * 1.5
             if dir_s == "BUY":
                 sl = price - sl_m*atr; tp = price + tp_m*atr
@@ -912,8 +901,6 @@ class TradingBot:
                 sl = price + sl_m*atr; tp = price - tp_m*atr
             sl_p = abs(price-sl)/price*100; tp_p = abs(tp-price)/price*100
             ratio = f"1:{tp_m/sl_m:.1f}"
-            dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-            sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             
             confluence_info = {
                 "score": sc,
@@ -933,7 +920,6 @@ class TradingBot:
             if not res: continue
             cur = res["price"]; atr = res["atr"]
 
-            # Reanunciar trade restaurado
             if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100
@@ -947,7 +933,6 @@ class TradingBot:
                 )
                 t["session_alerted"] = True; changed = True
 
-            # Trailing Stop
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
                 t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
                 if nsl > t["sl"]: t["sl"] = nsl; changed = True
@@ -981,7 +966,7 @@ class TradingBot:
         if changed: save_state(self)
 
 
-# ═══════════════════════════════════════════════════════════════
+# ══════════════════════���════════════════════════════════════════
 # SERVICE WORKER JS
 # ═══════════════════════════════════════════════════════════════
 SW_JS = """
@@ -1005,7 +990,7 @@ self.addEventListener('notificationclick', e => {
 });
 """
 
-# ═══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════��════════════
 # DASHBOARD HTML
 # ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
@@ -1081,21 +1066,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .fchips::-webkit-scrollbar{display:none}
 .fc{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;cursor:pointer;transition:.15s;color:var(--muted2);white-space:nowrap}
 .fc.on{background:var(--g3);border-color:var(--green);color:var(--green)}.fc:active{transform:scale(.96)}
-.si{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
-.si:last-child{border-bottom:none}
-.sico{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:var(--mono);flex-shrink:0}
-.siA{background:var(--g3);color:var(--green)}.siB{background:var(--r3);color:var(--red)}.siN{background:var(--bg4);color:var(--muted2)}
-.sinf{flex:1;min-width:0}
-.ssym{font-size:13px;font-weight:700;font-family:var(--mono)}
-.snm{font-size:9px;color:var(--muted2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.srgt{text-align:right;flex-shrink:0}
-.spr{font-size:12px;font-family:var(--mono);font-weight:600}
-.stags{display:flex;gap:4px;margin-top:3px;justify-content:flex-end;flex-wrap:wrap}
-.tag{font-size:8px;font-family:var(--mono);padding:1px 5px;border-radius:3px}
-.tg{background:var(--g3);color:var(--green)}.tr{background:var(--r3);color:var(--red)}.tn{background:var(--bg4);color:var(--muted2)}
-.tbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 12px}
-.tbl{font-size:9px;color:var(--muted2);letter-spacing:.8px;text-transform:uppercase;flex:1}
-.tbc{font-size:12px;font-family:var(--mono)}
 .ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:.15s;letter-spacing:.3px}
 .ab:active{transform:scale(.98)}
 .abd{background:var(--r3);color:var(--red);border:1px solid rgba(255,23,68,.2)}
@@ -1119,7 +1089,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
 .rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
 .rb:active{opacity:.7}
-/* Pending Operations Card - v7.2 */
+/* Pending Cards */
 .pending-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
 .pending-card.buy{border-left:4px solid var(--green)}.pending-card.sell{border-left:4px solid var(--red)}
 .pc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -1150,9 +1120,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .tfb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 6px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--text);text-align:center;transition:.15s;border:none}
 .tfb.on{background:rgba(0,229,255,.1);border:1px solid var(--cyan);color:var(--cyan)}.tfb:active{transform:scale(.97)}
 .tfd{font-size:14px;display:block;margin-bottom:2px}.tfl2{font-size:8px;color:var(--muted2);margin-top:1px}
-.ntf-banner{background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.2);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px}
-.ntf-ttl{font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px}
-.ntf-txt{font-size:10px;color:var(--muted2);line-height:1.5}
 </style>
 </head>
 <body>
@@ -1188,7 +1155,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   <div class="ts" id="d-ts">--</div>
 </div>
 
-<!-- PENDÊNCIAS - v7.2 -->
+<!-- PENDÊNCIAS -->
 <div class="pg" id="pg-pend">
   <div class="sh"><div class="sttl">⏳ Operações Pendentes</div><span class="rb" onclick="loadPending()">↻</span></div>
   <div id="pending-list"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div></div>
@@ -1209,12 +1176,12 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   <div class="cfgsec">
     <div class="cfgl">Timeframe</div>
     <div class="tfg">
-      <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd r">●</span>1m<div class="tfl2">Agressivo</div></button>
-      <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd or">●</span>5m<div class="tfl2">Alto</div></button>
-      <button class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd go">●</span>15m<div class="tfl2">Moderado</div></button>
-      <button class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd g">●</span>30m<div class="tfl2">Conservador</div></button>
-      <button class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd cy">●</span>1h<div class="tfl2">Seguro</div></button>
-      <button class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd bl">●</span>4h<div class="tfl2">Muito Seg.</div></button>
+      <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd r">●</span>1m</button>
+      <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd or">●</span>5m</button>
+      <button class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd go">●</span>15m</button>
+      <button class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd g">●</span>30m</button>
+      <button class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd cy">●</span>1h</button>
+      <button class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd bl">●</span>4h</button>
     </div>
   </div>
   <div class="dv"></div>
@@ -1326,10 +1293,7 @@ function renderPending(){
     const uid='cp'+op.id.replace(/\W/g,'').slice(0,10);
     return `<div class="pending-card ${buy?'buy':'sell'}">
       <div class="pc-head">
-        <div>
-          <div class="pc-sym">${op.symbol}</div>
-          <div style="font-size:9px;color:var(--muted2);margin-top:2px">${op.name}</div>
-        </div>
+        <div><div class="pc-sym">${op.symbol}</div><div style="font-size:9px;color:var(--muted2);margin-top:2px">${op.name}</div></div>
         <div class="pc-status">⏳ Pendente</div>
       </div>
       <div style="text-align:center;margin-bottom:10px;font-size:18px;font-weight:700;color:${buy?'var(--green)':'var(--red)'}">${buy?'▲ BUY':'▼ SELL'}</div>
@@ -1344,7 +1308,7 @@ function renderPending(){
         <div>ADX: <code style="color:var(--text)">${op.adx.toFixed(1)}</code></div>
       </div>
       <div class="pc-actions">
-        <button class="pc-btn pc-copy" id="${uid}" onclick="copySLTP(${op.sl},${op.tp},'${uid}')">📋 Copiar SL/TP</button>
+        <button class="pc-btn pc-copy" id="${uid}" onclick="copySLTP(${op.sl},${op.tp},'${uid}')">📋 Copiar</button>
         <button class="pc-btn pc-confirm" onclick="confirmPending('${op.id}')">✅ Entrar</button>
         <button class="pc-btn pc-ignore" onclick="ignorePending('${op.id}')">❌ Ignorar</button>
       </div>
@@ -1359,7 +1323,7 @@ function copySLTP(sl,tp,uid){
   const txt=`SL=${fp(sl)} | TP=${fp(tp)}`;
   navigator.clipboard.writeText(txt).then(()=>{
     const btn=document.getElementById(uid);
-    if(btn){btn.textContent='✅ Copiado!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='📋 Copiar SL/TP';btn.classList.remove('copied');},2000);}
+    if(btn){btn.textContent='✅ Copiado!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='📋 Copiar';btn.classList.remove('copied');},2000);}
   }).catch(()=>alert(txt));
 }
 async function confirmPending(opId){
