@@ -2775,16 +2775,34 @@ function savePreferences(key, value) {
 // Init
 window.addEventListener('load', async () => {
   initServiceWorker();
+  
+  // Carregar preferências primeiro
   loadPreferences();
   
   // NOVO: Inicializar calculadora
   Calc.init();
   
+  // IMPORTANTE: Se estiver no modo Apenas Sinais, garantir estado correto
+  const prefs = JSON.parse(localStorage.getItem('sniper_prefs') || '{}');
+  if (prefs.signalsOnly) {
+    // Em vez de ativar direto, apenas marcar o checkbox e deixar o usuário ativar
+    // Isso evita o app travar no load
+    const toggle = document.getElementById('signalsOnlyToggle');
+    if (toggle) toggle.checked = false; // Não ativar automaticamente
+    savePreferences('signalsOnly', false); // Resetar para evitar travamento
+  }
+  
   // Carregar dados iniciais
   await loadDashboard();
-  window._status = await API.getStatus(); // Para referência nos botões
+  window._status = await API.getStatus();
   
-  // Auto-refresh a cada 30s (otimizado com visibilidade)
+  // Garantir que a página dashboard está ativa por padrão
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-dash').classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.nav-btn')?.classList.add('active');
+  
+  // Auto-refresh a cada 30s...
   setInterval(() => {
     if (document.visibilityState === 'visible') {
       loadDashboard();
@@ -2792,13 +2810,17 @@ window.addEventListener('load', async () => {
     }
   }, 30000);
   
-  // Listener para visibilidade (economiza recursos quando app está em background)
+  // Listener para visibilidade...
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       loadDashboard();
       loadSignals();
     }
-  });});
+  });
+});
+
+  
+  
 </script>
 </body>
 </html>"""
