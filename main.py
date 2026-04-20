@@ -1690,20 +1690,31 @@ function copyToClipboard(text) {
 
 // Cache inteligente no frontend
 const FrontendCache = {
-   {},
+  data: {},
   ttl: 30000, // 30 segundos
-  set(key, value) {
-    this.data[key] = { value, ts: Date.now() };
-  },
+
   get(key) {
-    const entry = this.data[key];
-    if (!entry) return null;
-    if (Date.now() - entry.ts > this.ttl) {
-      delete this.data[key];      return null;
+    const item = this.data[key];
+    if (!item) return null;
+
+    if (Date.now() - item.ts > this.ttl) {
+      delete this.data[key];
+      return null;
     }
-    return entry.value;
+
+    return item.value;
   },
-  clear() { this.data = {}; }
+
+  set(key, value) {
+    this.data[key] = {
+      value: value,
+      ts: Date.now()
+    };
+  },
+
+  clear() {
+    this.data = {};
+  }
 };
 
 /* ═══════════════════════════════════════════════════════════ */
