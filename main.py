@@ -198,7 +198,11 @@ def load_state(bot):
         bot.gatilho_list       = data.get("gatilho_list", {})
         bot.reversal_list      = data.get("reversal_list", {})
         bot.asset_cooldown     = data.get("asset_cooldown", {})
-        bot.history            = data.get("history", [])        for t in bot.active_trades: t["session_alerted"] = False
+        bot.history = data.get("history", [])
+
+        for t in bot.active_trades:
+            t["session_alerted"] = False
+          
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s)")
         if bot.active_trades:
             lines = ["♻️ <b>BOT REINICIADO – TRADES ATIVOS</b>\n"]
