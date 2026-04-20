@@ -2202,7 +2202,6 @@ async function loadDashboard() {
 // Carregar scanner com filtros e busca
 async function loadScanner() {
   try {
-    // Usar cache se disponível e recente
     let trends = FrontendCache.get('trends');
     if (!trends) {
       trends = await API.getTrends();
@@ -2253,7 +2252,8 @@ async function loadScanner() {
     }
     
   } catch (e) {
-    document.getElementById('scannerList').innerHTML = '<div class="virtual-content"></div><div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar dados</div></div>';
+    document.getElementById('scannerList').innerHTML =
+      '<div class="virtual-content"></div><div class="empty-state"><span class="empty-icon">⚠</span><div class="empty-text">Erro ao carregar dados</div></div>';
   }
 }
 
