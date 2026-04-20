@@ -640,28 +640,31 @@ class TradingBot:
     # No método de atualização da classe TradingBot
 
     def update_trends_cache(self):
-    # Inicializa a estrutura para incluir a lista de ativos
-        self.trends_data = {
-        "summary": {"high": 0, "low": 0, "neutral": 0},
-        "assets": []  # Lista para armazenar dados individuais
-    }
+    # Inicializa estrutura para resumo e para a lista detalhada
+    self.trend_summary = {"high": 0, "low": 0, "neutral": 0}
+    self.trend_list = [] # Nova lista para os detalhes
     
-        for symbol in self.symbols:
-        # Lógica de análise de tendência (exemplo simplificado)
-        trend_info = self.get_asset_trend(symbol) 
+    universe = all_syms() # Pega todos os símbolos
+    for s in universe:
+        res = get_analysis(s, self.timeframe)
+        if not res: continue
         
-        # Incrementa o resumo (o que já funcionava)
-        self.trends_data["summary"][trend_info['direction']] += 1
+        # Dados para o resumo (o que já tinha)
+        cen = res["cenario"]
+        if cen == "ALTA": self.trend_summary["high"] += 1
+        elif cen == "BAIXA": self.trend_summary["low"] += 1
+        else: self.trend_summary["neutral"] += 1
         
-        # Adiciona os dados detalhados do ativo
-        self.trends_data["assets"].append({
-            "symbol": symbol,
-            "price": trend_info['current_price'],
-            "trend": trend_info['direction'],
-            "rsi": trend_info['rsi_value'],
-            "change": trend_info['percent_change'],
-            "last_update": datetime.now().strftime("%H:%M:%S")
+        # Dados detalhados para o Scanner (o que falta)
+        self.trend_list.append({
+            "symbol": s,
+            "name": asset_name(s),
+            "price": fmt(res["price"]),
+            "trend": cen,
+            "rsi": round(res["rsi"], 1),
+            "change": round(res["change_pct"], 2)
         })
+
 
     # ── SCAN — 4 fases ───────────────────────────────────────
     def scan(self):
