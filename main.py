@@ -2013,7 +2013,16 @@ const UI = {
 
 // Navigate — controle direto de pages SEM style.display inline
 function navigate(page, btn) {
-  // Esconder todas as pages (apenas classes, sem inline style)
+  // SEMPRE sair do modo Apenas Sinais ao navegar manualmente
+  const app = document.getElementById('app');
+  if (app && app.classList.contains('signals-only-mode')) {
+    app.classList.remove('signals-only-mode');
+    const toggle = document.getElementById('signalsOnlyToggle');
+    if (toggle) toggle.checked = false;
+    savePreferences('signalsOnly', false);
+  }
+  
+  // Esconder todas as pages
   document.querySelectorAll('.page').forEach(function(p) {
     p.classList.remove('active');
   });
@@ -2021,6 +2030,7 @@ function navigate(page, btn) {
   document.querySelectorAll('.nav-btn').forEach(function(b) {
     b.classList.remove('active');
   });
+  
   // Mostrar a page destino
   var target = document.getElementById('page-' + page);
   if (target) {
@@ -2028,14 +2038,28 @@ function navigate(page, btn) {
   }
   // Ativar o botão clicado
   if (btn) btn.classList.add('active');
+  
   // Carregar dados da página
   try {
     if (page === 'scan') loadScanner();
-    if (page === 'sig') { loadSignals(); if(UI && UI.state) UI.state.newSignalIds.clear(); updateBadge(); }
-    if (page === 'ct')  { loadCT(); loadNews(); }
+    if (page === 'sig') { 
+      loadSignals(); 
+      if(UI && UI.state) UI.state.newSignalIds.clear(); 
+      updateBadge(); 
+    }
+    if (page === 'ct')  { 
+      loadCT(); 
+      loadNews(); 
+      // Garantir que a sub-página correta esteja visível
+      showSubPage('ct'); 
+    }
     if (page === 'cfg') loadConfig();
-  } catch(e) { console.warn('navigate load error:', e); }
+  } catch(e) { 
+    console.warn('navigate load error:', e); 
+  }
 }
+
+
 
 // NOVO: Marcar sinal como executado
 function markExecuted(btn, text) {
