@@ -2,10 +2,11 @@
 """
 BOT SNIPER v7.2 — Multi-mercado + API HTTP + Dashboard PWA + Push Notifications
 ═══════════════════════════════════════════════════════════════════════════════
+ARQUITETURA: Flask serve o HTML/API direto (1 único app no Railway)
 NOVIDADES v7.2 (sobre v7.1):
   • ✅ CONFIRMAÇÃO MANUAL: Operações ficam pendentes até você confirmar
   • 📋 COPIAR SL/TP: Um clique copia valores prontos para sua plataforma
-  • ⏳ FILA DE PENDENTES: Gerencie operações com botões ou swipe
+  • ⏳ FILA DE PENDENTES: Gerencie operações com swipe ou botões
   • 🎯 Templates de Entrada: Dados estruturados para copy/paste
   • 💾 Persistência: Fila restaura após recarregar
   • 🔔 Badge de Pendentes: Mostra quantas aguardam confirmação
@@ -17,7 +18,7 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 # ═══════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES
+# CONFIGURA��ÕES
 # ═══════════════════════════════════════════════════════════════
 class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
@@ -85,7 +86,7 @@ class Config:
 
     # Filtros CT
     MIN_CONFLUENCE_CT = 4
-    REVERSAL_COOLDOWN = 2700
+    REVERSAL_COOLDOWN = 2700   # 45min entre alertas CT
 
     # Timers
     RADAR_COOLDOWN   = 1800
@@ -371,7 +372,7 @@ def cbar(sc, tot):
 
 # ═══════════════════════════════════════════════════════════════
 # MOTOR DE CONTRA-TENDÊNCIA (FOREX)
-# ═════════��═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 def detect_candle_patterns(df):
     if len(df) < 3: return False, False, ""
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
@@ -473,6 +474,7 @@ def calc_reversal_conf(res, d):
     return sc, len(checks), checks
 
 def detect_reversal(res):
+    """Versão rápida de detecção CT para o cache de tendências."""
     if not res: return (False, None, 0, [])
     motivos = []; forca = 0; dir_rev = None
     rsi = res["rsi"]; price = res["price"]; cen = res["cenario"]
@@ -498,6 +500,7 @@ def detect_reversal(res):
 _push_subscriptions = []
 
 def send_push(title, body, icon="/icon-192.png"):
+    """Envia push para todos os clientes inscritos via Web Push."""
     try:
         from pywebpush import webpush, WebPushException
         import os
@@ -544,6 +547,7 @@ class TradingBot:
         self.signals_feed = []
         self.news_cache   = []; self.news_cache_ts = 0
 
+    # ── Telegram + captura de sinais ──────────────────────────
     def send(self, text, markup=None, disable_preview=False):
         import re
         clean = re.sub(r"<[^>]+>", "", text).strip()
@@ -589,7 +593,7 @@ class TradingBot:
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min" if self.is_paused() else ""
-        pend = f"\n⏳ {len(self.pending_operations)} operação(ões) pendente(s)" if self.pending_operations else ""
+        pend = f"\n⏳ {len([o for o in self.pending_operations if o['status']=='PENDING'])} operação(ões) pendente(s)" if any(o['status']=='PENDING' for o in self.pending_operations) else ""
         self.send(f"<b>BOT SNIPER v7.2</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}{pend}", markup)
 
     def build_tf_menu(self):
@@ -645,6 +649,7 @@ class TradingBot:
         self.paused_until = 0; self.consecutive_losses = 0
         save_state(self); self.send("✅ Circuit Breaker resetado.")
 
+    # ── Cache de tendências ───────────────────────────────────
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
         log("📡 Atualizando cache tendências...")
@@ -662,6 +667,7 @@ class TradingBot:
         self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
 
+    # ── Criar Operação Pendente (NOVO v7.2) ────────────────────────
     def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):
         """Cria operação pendente ao invés de trade automático"""
         op_id = f"{symbol}_{int(time.time()*1000)}"
@@ -719,6 +725,7 @@ class TradingBot:
         op["status"] = "CONFIRMED"
         op["confirmed_at"] = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S")
         
+        # Mover para trades ativos
         trade = {
             "symbol": op["symbol"],
             "name": op["name"],
@@ -754,6 +761,7 @@ class TradingBot:
         save_state(self)
         return True
 
+    # ── SCAN — 4 fases (MODIFICADO) ───────────────────────────
     def scan(self):
         if self.is_paused(): return
         if len(self.active_trades) >= Config.MAX_TRADES: return
@@ -768,6 +776,7 @@ class TradingBot:
 
             res = self.trend_cache.get(s, {}).get("data") or get_analysis(s, self.timeframe)
             if not res: continue
+            # Atualiza cache
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
                 self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
@@ -845,7 +854,7 @@ class TradingBot:
                     + "\n".join(f"   ❌ {nm}" for nm in falhou)
                 ); continue
 
-            # FASE 4B — Criar Operação Pendente (v7.2)
+            # FASE 4B — Criar Operação Pendente (NOVO - v7.2)
             sl_final = price - Config.ATR_MULT_SL * atr if dir_s == "BUY" else price + Config.ATR_MULT_SL * atr
             tp_final = price + Config.ATR_MULT_TP * atr if dir_s == "BUY" else price - Config.ATR_MULT_TP * atr
             
@@ -858,6 +867,7 @@ class TradingBot:
             
             self.create_pending_operation(s, dir_s, price, sl_final, tp_final, res, confluence_info)
 
+    # ── Scan Contra-Tendência FOREX ────────────────────────────
     def scan_reversal_forex(self):
         if self.is_paused(): return
         if not mkt_open("FOREX"): return
@@ -893,6 +903,8 @@ class TradingBot:
             if not cands: continue
             cands.sort(key=lambda x: x[0], reverse=True)
             sc, tc, ch, dir_s, sinais = cands[0]
+            bar = cbar(sc, tc)
+            conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
             sl_m = Config.ATR_MULT_SL; tp_m = Config.ATR_MULT_SL * 1.5
             if dir_s == "BUY":
                 sl = price - sl_m*atr; tp = price + tp_m*atr
@@ -900,17 +912,20 @@ class TradingBot:
                 sl = price + sl_m*atr; tp = price - tp_m*atr
             sl_p = abs(price-sl)/price*100; tp_p = abs(tp-price)/price*100
             ratio = f"1:{tp_m/sl_m:.1f}"
+            dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
+            sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             
             confluence_info = {
                 "score": sc,
                 "total": tc,
-                "bar": cbar(sc, tc),
+                "bar": bar,
                 "tipo": "CONTRA-TENDÊNCIA",
                 "razoes": sinais,
             }
             
             self.create_pending_operation(s, dir_s, price, sl, tp, res, confluence_info)
 
+    # ── Monitor + Trailing Stop ───────────────────────────────
     def monitor_trades(self):
         changed = False
         for t in self.active_trades[:]:
@@ -918,6 +933,7 @@ class TradingBot:
             if not res: continue
             cur = res["price"]; atr = res["atr"]
 
+            # Reanunciar trade restaurado
             if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100
@@ -931,6 +947,7 @@ class TradingBot:
                 )
                 t["session_alerted"] = True; changed = True
 
+            # Trailing Stop
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
                 t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
                 if nsl > t["sl"]: t["sl"] = nsl; changed = True
@@ -989,7 +1006,7 @@ self.addEventListener('notificationclick', e => {
 """
 
 # ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML (COMPLETO - v7.2)
+# DASHBOARD HTML
 # ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1038,7 +1055,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .sv{font-size:22px;font-weight:700;font-family:var(--mono);line-height:1}
 .ss{font-size:9px;color:var(--muted2);margin-top:3px}
 .g{color:var(--green)}.r{color:var(--red)}.go{color:var(--gold)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.or{color:var(--orange)}
-.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid var(--border)}
+.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px}
 .tc.buy{border-left:3px solid var(--green)}.tc.sell{border-left:3px solid var(--red)}
 .tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
 .tc-sym{font-size:17px;font-weight:700;font-family:var(--mono)}
@@ -1064,10 +1081,33 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .fchips::-webkit-scrollbar{display:none}
 .fc{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;cursor:pointer;transition:.15s;color:var(--muted2);white-space:nowrap}
 .fc.on{background:var(--g3);border-color:var(--green);color:var(--green)}.fc:active{transform:scale(.96)}
-.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
-.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
-.rb:active{opacity:.7}
+.si{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
+.si:last-child{border-bottom:none}
+.sico{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:var(--mono);flex-shrink:0}
+.siA{background:var(--g3);color:var(--green)}.siB{background:var(--r3);color:var(--red)}.siN{background:var(--bg4);color:var(--muted2)}
+.sinf{flex:1;min-width:0}
+.ssym{font-size:13px;font-weight:700;font-family:var(--mono)}
+.snm{font-size:9px;color:var(--muted2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srgt{text-align:right;flex-shrink:0}
+.spr{font-size:12px;font-family:var(--mono);font-weight:600}
+.stags{display:flex;gap:4px;margin-top:3px;justify-content:flex-end;flex-wrap:wrap}
+.tag{font-size:8px;font-family:var(--mono);padding:1px 5px;border-radius:3px}
+.tg{background:var(--g3);color:var(--green)}.tr{background:var(--r3);color:var(--red)}.tn{background:var(--bg4);color:var(--muted2)}
+.tbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 12px}
+.tbl{font-size:9px;color:var(--muted2);letter-spacing:.8px;text-transform:uppercase;flex:1}
+.tbc{font-size:12px;font-family:var(--mono)}
+.ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:.15s;letter-spacing:.3px}
+.ab:active{transform:scale(.98)}
+.abd{background:var(--r3);color:var(--red);border:1px solid rgba(255,23,68,.2)}
+.abp{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.abn{background:rgba(68,138,255,.1);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
+.plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.pval{font-size:16px;font-family:var(--mono);font-weight:700}
+.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
+.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
+.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
 .empty{text-align:center;padding:40px 20px;color:var(--muted)}
 .empi{font-size:40px;margin-bottom:10px;display:block}
 .empt{font-size:12px;line-height:1.6;color:var(--muted2)}
@@ -1075,10 +1115,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .dv{height:1px;background:var(--border);margin:14px 0}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
-.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
-.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
-/* Pending Operations Card */
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
+.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
+.rb:active{opacity:.7}
+/* Pending Operations Card - v7.2 */
 .pending-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
 .pending-card.buy{border-left:4px solid var(--green)}.pending-card.sell{border-left:4px solid var(--red)}
 .pc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -1109,15 +1150,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 .tfb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 6px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--text);text-align:center;transition:.15s;border:none}
 .tfb.on{background:rgba(0,229,255,.1);border:1px solid var(--cyan);color:var(--cyan)}.tfb:active{transform:scale(.97)}
 .tfd{font-size:14px;display:block;margin-bottom:2px}.tfl2{font-size:8px;color:var(--muted2);margin-top:1px}
-.ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:.15s;letter-spacing:.3px}
-.ab:active{transform:scale(.98)}
-.abd{background:var(--r3);color:var(--red);border:1px solid rgba(255,23,68,.2)}
-.abp{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
-.abn{background:rgba(68,138,255,.1);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
-.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
-.plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
-.pval{font-size:16px;font-family:var(--mono);font-weight:700}
 .ntf-banner{background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.2);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px}
 .ntf-ttl{font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px}
 .ntf-txt{font-size:10px;color:var(--muted2);line-height:1.5}
@@ -1156,7 +1188,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   <div class="ts" id="d-ts">--</div>
 </div>
 
-<!-- PENDÊNCIAS -->
+<!-- PENDÊNCIAS - v7.2 -->
 <div class="pg" id="pg-pend">
   <div class="sh"><div class="sttl">⏳ Operações Pendentes</div><span class="rb" onclick="loadPending()">↻</span></div>
   <div id="pending-list"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma operação pendente</div></div></div>
@@ -1254,8 +1286,7 @@ async function loadDash(){
     const mn={FOREX:'📈 FOREX',CRYPTO:'₿ Cripto',COMMODITIES:'🏅 Commodities',INDICES:'📊 Índices'};
     document.getElementById('d-mkts').innerHTML=Object.entries(_st.markets).map(([k,v])=>`<div class="mkt"><span class="mktn">${mn[k]||k}</span><span class="mkts ${v?'mop':'mcl'}">${v?'Aberto':'Fechado'}</span></div>`).join('');
     document.getElementById('d-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    updCfgBtns();
-    updBadges();
+    updCfgBtns();updBadges();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
 function renderTC(t){
@@ -1494,6 +1525,8 @@ def run_api(bot):
 def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
+    try: bot.send_news()
+    except: pass
 
     while True:
         try:
@@ -1504,7 +1537,8 @@ def bot_loop(bot):
                     bot.last_id = u["update_id"]
                     if "message" in u:
                         txt = u["message"].get("text","").strip().lower()
-                        if txt == "/status":           bot.send_status()
+                        if txt in ("/noticias","/news"): bot.send_news()
+                        elif txt == "/status":           bot.send_status()
                         elif txt in ("/placar","/score"):bot.send_placar()
                         elif txt in ("/menu","/start"):  bot.build_menu()
                         elif txt == "/resetpausa":       bot.reset_pause()
@@ -1517,6 +1551,7 @@ def bot_loop(bot):
                         elif cb.startswith("set_"):   bot.set_mode(cb.replace("set_",""))
                         elif cb == "tf_menu":         bot.build_tf_menu()
                         elif cb == "main_menu":       bot.build_menu()
+                        elif cb == "news":            bot.send_news()
                         elif cb == "status":          bot.send_status()
                         elif cb == "placar":          bot.send_placar()
                         elif cb == "pending":         bot.send_pending_count()
