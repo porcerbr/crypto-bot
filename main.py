@@ -641,11 +641,11 @@ class TradingBot:
 
     def update_trends_cache(self):
     # Inicializa estrutura para resumo e para a lista detalhada
-    self.trend_summary = {"high": 0, "low": 0, "neutral": 0}
-    self.trend_list = [] # Nova lista para os detalhes
+        self.trend_summary = {"high": 0, "low": 0, "neutral": 0}
+        self.trend_list = [] # Nova lista para os detalhes
     
-    universe = all_syms() # Pega todos os símbolos
-    for s in universe:
+        universe = all_syms() # Pega todos os símbolos
+        for s in universe:
         res = get_analysis(s, self.timeframe)
         if not res: continue
         
