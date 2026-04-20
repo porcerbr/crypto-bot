@@ -145,8 +145,12 @@ def asset_name(s):
 
 def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 
-def all_syms():    out = []
-    for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
+def all_syms():
+    out = []
+
+    for c in Config.MARKET_CATEGORIES.values():
+        out.extend(c["assets"].keys())
+
     return out
 
 def mkt_open(cat):
