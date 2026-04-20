@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 BOT SNIPER v8.0 PRODUCTION — PWA Ready + APK Otimizado + Gestão Avançada
-═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 ✅ PWA Completo (Manifest + SW) para empacotamento APK/TWA
 ✅ Copiar Inteligente: MT4/MT5, TradingView, Raw
 ✅ Calculadora Avançada: Forex (Lotes), Crypto (Unidades), Índices (Contratos)
@@ -17,9 +17,9 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-═══════════════════════════════════════════════════════════════
-CONFIGURAÇÕES
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# CONFIGURAÇÕES
+# ═══════════════════════════════════════════════════════════════
 class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
@@ -47,7 +47,8 @@ class Config:
     ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600
     MIN_CONFLUENCE = 5; MIN_CONFLUENCE_CT = 4; REVERSAL_COOLDOWN = 2700
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
-    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; SCAN_INTERVAL = 30    TIMEFRAMES = {
+    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; SCAN_INTERVAL = 30
+    TIMEFRAMES = {
         "1m": ("Agressivo", "7d"), "5m": ("Alto", "5d"), "15m": ("Moderado", "5d"),
         "30m": ("Conservador", "5d"), "1h": ("Seguro", "60d"), "4h": ("Muito Seguro", "60d")
     }
@@ -68,9 +69,9 @@ def fmt(p: float) -> str:
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
 
-═══════════════════════════════════════════════════════════════
-HELPERS & RATE LIMITER
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# HELPERS & RATE LIMITER
+# ═══════════════════════════════════════════════════════════════
 class RateLimiter:
     def __init__(self, max_calls=30, period=60):
         self.max_calls = max_calls; self.period = period; self.calls = []
@@ -111,9 +112,9 @@ def mkt_open(cat):
     if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
     return True
 
-═══════════════════════════════════════════════════════════════
-PERSISTÊNCIA ASSÍNCRONA
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# PERSISTÊNCIA ASSÍNCRONA
+# ═══════════════════════════════════════════════════════════════
 _save_queue = queue.Queue()
 def _save_worker():
     while True:
@@ -145,7 +146,8 @@ def load_state(bot):
         with open(Config.STATE_FILE) as f: data = json.load(f)
         bot.mode = data.get("mode", "CRYPTO")
         bot.timeframe = data.get("timeframe", Config.TIMEFRAME)
-        bot.wins = data.get("wins", 0); bot.losses = data.get("losses", 0)        bot.consecutive_losses = data.get("consecutive_losses", 0)
+        bot.wins = data.get("wins", 0); bot.losses = data.get("losses", 0)
+        bot.consecutive_losses = data.get("consecutive_losses", 0)
         bot.paused_until = data.get("paused_until", 0)
         bot.active_trades = data.get("active_trades", [])
         bot.pending_operations = data.get("pending_operations", [])
@@ -167,9 +169,9 @@ def load_state(bot):
             bot._restore_msg = "\n".join(lines)
     except Exception as e: log(f"[STATE] Erro: {e}")
 
-═══════════════════════════════════════════════════════════════
-NOTÍCIAS / FEAR & GREED
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# NOTÍCIAS / FEAR & GREED
+# ═══════════════════════════════════════════════════════════════
 RSS_FEEDS = [
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
@@ -194,7 +196,8 @@ def _parse_rss(url, src, mx=3):
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
-        if len(arts) >= mx: break        try: arts.extend(_parse_rss(url, name, 4))
+        if len(arts) >= mx: break
+        try: arts.extend(_parse_rss(url, name, 4))
         except: pass
     return arts[:mx]
 
@@ -213,9 +216,9 @@ def build_news_msg():
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
-═══════════════════════════════════════════════════════════════
-MOTOR DE ANÁLISE (SINTAXE CORRIGIDA)
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# MOTOR DE ANÁLISE (SINTAXE CORRIGIDA)
+# ═══════════════════════════════════════════════════════════════
 def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
@@ -243,7 +246,8 @@ def get_analysis(symbol, timeframe=None):
         macd_bear = bool(mh.iloc[-1] < 0 and mh.iloc[-1] < mh.iloc[-2])
         if use_vol and volume.sum() > 0:
             va = volume.rolling(20).mean().iloc[-1]; vc = volume.iloc[-1]
-            vol_ok = bool(vc > va) if va > 0 else False; vol_ratio = float(vc/va) if va > 0 else 0        else: vol_ok = True; vol_ratio = 0
+            vol_ok = bool(vc > va) if va > 0 else False; vol_ratio = float(vc/va) if va > 0 else 0
+        else: vol_ok = True; vol_ratio = 0
         tr  = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()], axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
         hd = highs.diff(); ld = lows.diff()
@@ -283,16 +287,17 @@ def get_analysis(symbol, timeframe=None):
     except Exception as e:
         log(f"[ANÁLISE] {symbol}: {e}"); return None
 
-═══════════════════════════════════════════════════════════════
-CONFLUÊNCIA & REVERSAL
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# CONFLUÊNCIA & REVERSAL
+# ═══════════════════════════════════════════════════════════════
 def calc_confluence(res, d):
     if d == "BUY":
         checks = [
             ("EMA 200 acima", res["price"] > res["ema200"]), ("EMA 9 > 21", res["ema9"] > res["ema21"]),
             ("MACD Alta", res["macd_bull"]), ("Volume OK", res["vol_ok"]), ("RSI < 65", res["rsi"] < 65),
             ("TF Superior Alta", res["h1_bull"]), ("ADX tendência", res["adx"] > Config.ADX_MIN),
-        ]    else:
+        ]
+    else:
         checks = [
             ("EMA 200 abaixo", res["price"] < res["ema200"]), ("EMA 9 < 21", res["ema9"] < res["ema21"]),
             ("MACD Baixa", res["macd_bear"]), ("Volume OK", res["vol_ok"]), ("RSI > 35", res["rsi"] > 35),
@@ -341,7 +346,8 @@ def get_reversal_analysis(symbol, timeframe=None):
         mh = (ema12-ema26)-(ema12-ema26).ewm(span=9,adjust=False).mean()
         tr = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()],axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
-        hd = highs.diff(); ld = lows.diff()        pdm = hd.where((hd>0)&(hd>-ld),0.0); mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
+        hd = highs.diff(); ld = lows.diff()
+        pdm = hd.where((hd>0)&(hd>-ld),0.0); mdm = (-ld).where((-ld>0)&(-ld>hd),0.0)
         as_ = tr.ewm(alpha=1/14,adjust=False).mean()
         pdi = 100*pdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
         mdi = 100*mdm.ewm(alpha=1/14,adjust=False).mean()/(as_+1e-10)
@@ -390,7 +396,8 @@ def detect_reversal(res):
     if cen == "ALTA" or res["ema9"] > res["ema21"]:
         if rsi >= 70: motivos.append(f"RSI sobrecomprado ({rsi:.0f})"); forca += 30; dir_rev = "SELL"
         if rsi >= 75: motivos.append("RSI extremo"); forca += 15
-        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
+        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"
+        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
         if res["adx"] < 20 and cen == "ALTA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
     if cen == "BAIXA" or res["ema9"] < res["ema21"]:
         if rsi <= 30: motivos.append(f"RSI sobrevendido ({rsi:.0f})"); forca += 30; dir_rev = "BUY"
@@ -401,9 +408,9 @@ def detect_reversal(res):
     forca = min(forca, 100)
     return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
 
-═══════════════════════════════════════════════════════════════
-PUSH NOTIFICATIONS
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# PUSH NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════
 _push_subscriptions = []
 def send_push(title, body, icon="/icon-192.png"):
     try:
@@ -424,9 +431,9 @@ def send_push(title, body, icon="/icon-192.png"):
     except ImportError: pass
     except Exception as e: log(f"[PUSH] {e}")
 
-═══════════════════════════════════════════════════════════════
-BOT PRINCIPAL
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# BOT PRINCIPAL
+# ═══════════════════════════════════════════════════════════════
 class TradingBot:
     def __init__(self):
         self.mode = "CRYPTO"; self.timeframe = Config.TIMEFRAME
@@ -439,7 +446,8 @@ class TradingBot:
         self.signals_feed = []
 
     def send(self, text, markup=None, disable_preview=False):
-        import re        clean = re.sub(r"<[^>]+>", "", text).strip()
+        import re
+        clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text: tipo="radar"; push_title="⚠ RADAR"
         elif "GATILHO ATINGIDO" in text: tipo="gatilho"; push_title="🔔 GATILHO ATINGIDO!"
@@ -488,7 +496,8 @@ class TradingBot:
         if tf not in Config.TIMEFRAMES: return
         old = self.timeframe; self.timeframe = tf; save_state_async(self); self.send(f"✅ TF: {old} → {tf}")
 
-    def set_mode(self, mode):        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
+    def set_mode(self, mode):
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
         self.mode = mode; save_state_async(self); self.send(f"✅ Modo: {mode}")
 
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
@@ -537,10 +546,11 @@ class TradingBot:
             except Exception as e: log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
 
-    def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):        op_id = f"{symbol}_{int(time.time()*1000)}"
+    def create_pending_operation(self, symbol, direction, price, sl, tp, res, confluence_data):
+        op_id = f"{symbol}_{int(time.time()*1000)}"
         op = {
             "id": op_id, "symbol": symbol, "name": res["name"], "direction": direction, "entry": price,
-            "sl": sl, "tp": tp, "atr": res["atr"], "rsi": res["rsi"], "adx": res["adx"],
+            "sl": tp, "tp": tp, "atr": res["atr"], "rsi": res["rsi"], "adx": res["adx"],
             "created_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M:%S"), "status": "PENDING", "confluence": confluence_data,
         }
         self.pending_operations.append(op)
@@ -586,7 +596,8 @@ class TradingBot:
         save_state_async(self)
         return True
 
-    def scan(self):        if self.is_paused() or len(self.active_trades) >= Config.MAX_TRADES: return
+    def scan(self):
+        if self.is_paused() or len(self.active_trades) >= Config.MAX_TRADES: return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
         for s in universe:
             cat = asset_cat(s)
@@ -635,7 +646,8 @@ class TradingBot:
             if sc < Config.MIN_CONFLUENCE:
                 falhou = [nm for nm, ok in checks if not ok]
                 self.send(f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\nGatilho atingido mas bot NÃO entrou.\n"
-                          f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"                          f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)); continue
+                          f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
+                          f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)); continue
             sl_final = price - Config.ATR_MULT_SL * atr if dir_s == "BUY" else price + Config.ATR_MULT_SL * atr
             tp_final = price + Config.ATR_MULT_TP * atr if dir_s == "BUY" else price - Config.ATR_MULT_TP * atr
             confluence_info = {"score": sc, "total": tot_c, "bar": bar, "checks": [{"name": nm, "passed": ok} for nm, ok in checks]}
@@ -684,7 +696,8 @@ class TradingBot:
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res: continue
-            cur = res["price"]; atr = res["atr"]            if not t.get("session_alerted", True):
+            cur = res["price"]; atr = res["atr"]
+            if not t.get("session_alerted", True):
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100; tp_p = abs(t["tp"]-t["entry"])/t["entry"]*100
                 self.send(f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\nAção: <b>{dl}</b> | Aberto: {t.get('opened_at','?')}\n"
@@ -717,9 +730,9 @@ class TradingBot:
                               f"Pausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
         if changed: save_state_async(self)
 
-═══════════════════════════════════════════════════════════════
-PWA MANIFEST & SERVICE WORKER
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# PWA MANIFEST & SERVICE WORKER
+# ═══════════════════════════════════════════════════════════════
 MANIFEST_JSON = json.dumps({
     "name": "Sniper Bot Pro", "short_name": "SniperBot", "description": "Dashboard de operações multi-mercado",
     "start_url": "/", "display": "standalone", "background_color": "#06090f", "theme_color": "#00e676",
@@ -740,7 +753,7 @@ self.addEventListener('push', e => {
   try { data = JSON.parse(e.data.text()); } catch(_) {}
   e.waitUntil(self.registration.showNotification(data.title, {
     body: data.body, icon: data.icon || '/icon-192.png', badge: '/icon-192.png',
-    vibrate: [200, 100, 200],  { url: '/' }
+    vibrate: [200, 100, 200], data: { url: '/' }
   }));
 });
 self.addEventListener('notificationclick', e => {
@@ -751,9 +764,9 @@ self.addEventListener('notificationclick', e => {
 });
 """
 
-═══════════════════════════════════════════════════════════════
-DASHBOARD HTML v8.0 (PWA + APK READY)
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD HTML v8.0 (PWA + APK READY)
+# ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -880,7 +893,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </head>
 <body>
 <div id="app">
-  <div id="conn-bar">⚠ Sem conexão. Dados em cache.</div>  <div id="hdr">
+  <div id="conn-bar">⚠ Sem conexão. Dados em cache.</div>
+  <div id="hdr">
     <div class="hdr-l"><div class="logo">S</div><div><div class="t1">Sniper Bot</div><div class="t2">v8.0 Pro</div></div></div>
     <div class="hdr-r"><div class="lpill"><div class="ldot"></div>LIVE</div><div class="ibtn" id="refbtn" onclick="refreshAll()">↻</div></div>
   </div>
@@ -1000,9 +1014,9 @@ window.addEventListener('load',()=>{loadDash();loadPending();setInterval(()=>{if
 </body>
 </html>"""
 
-═══════════════════════════════════════════════════════════════
-FLASK API
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# FLASK API
+# ═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
@@ -1028,6 +1042,7 @@ def create_api(bot):
         size = 192 if "192" in request.path else 512
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
+    
     @app.route("/api/health")
     def api_health(): return jsonify({"status": "ok", "version": "8.0"})
 
@@ -1038,8 +1053,10 @@ def create_api(bot):
         wr    = round(bot.wins/total*100, 1) if total > 0 else 0
         trades_out = []
         for t in bot.active_trades:
-            try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
-            except: cur = t["entry"]
+            try: 
+                res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
+            except: 
+                cur = t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
             if t["dir"] == "SELL": pnl = -pnl
             trades_out.append({"symbol": t["symbol"], "name": t.get("name", ""), "dir": t["dir"],
@@ -1076,7 +1093,8 @@ def create_api(bot):
                     "dir": d["cenario"], "rsi": d["rsi"], "adx": d["adx"],
                     "score": cache.get("score", 0), "ts": cache["ts"]
                 })
-        trends.sort(key=lambda x: x["ts"], reverse=True)        return jsonify(trends[:20])
+        trends.sort(key=lambda x: x["ts"], reverse=True)
+        return jsonify(trends[:20])
 
     @app.route("/api/history")
     def api_history():
@@ -1125,7 +1143,8 @@ def create_api(bot):
     @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
     def api_subscribe():
         if request.method == "OPTIONS": return jsonify({}), 200
-        sub = request.get_json(force=True)        if sub and sub not in _push_subscriptions:
+        sub = request.get_json(force=True)
+        if sub and sub not in _push_subscriptions:
             _push_subscriptions.append(sub)
             log(f"[PUSH] Nova inscrição. Total: {len(_push_subscriptions)}")
         return jsonify({"ok": True})
@@ -1138,9 +1157,9 @@ def run_api(bot):
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
-═══════════════════════════════════════════════════════════════
-LOOP DO BOT & MAIN
-═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# LOOP DO BOT & MAIN
+# ═══════════════════════════════════════════════════════════════
 def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
@@ -1174,7 +1193,8 @@ def bot_loop(bot):
                         elif cb == "placar": bot.send_placar()
                         elif cb == "pending": bot.send_pending_count()
             bot.update_trends_cache()
-            bot.maybe_send_news()            bot.scan()
+            bot.maybe_send_news()
+            bot.scan()
             bot.scan_reversal_forex()
             bot.monitor_trades()
             time.sleep(Config.SCAN_INTERVAL)
