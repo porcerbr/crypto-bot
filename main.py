@@ -2240,15 +2240,17 @@ async function loadScanner() {
     });
     
     // Renderizar com virtual scroll
-    const list = document.getElementById('scannerList');
-    if (!filtered.length) {
-      list.innerHTML = '<div class="virtual-content"></div><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-text">Nenhum ativo neste filtro.</div></div>';
-    } else {
-      ensureVirtualContainer('scannerList');
-      UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64);
-      // Re-renderizar no scroll
-      list.onscroll = debounce(() => UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64), 16);
-    }
+const list = document.getElementById('scannerList');
+if (!filtered.length) {
+  list.innerHTML = '<div class="virtual-content"></div><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-text">Nenhum ativo neste filtro.</div></div>';
+} else {
+  const hasContent = list.querySelector('.virtual-content');
+  if (!hasContent) {
+    list.innerHTML = '<div class="virtual-content"></div>';
+  }
+  UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64);
+  list.onscroll = debounce(() => UI.virtualScroll('scannerList', filtered, UI.renderAsset, 64), 16);
+}
     
   } catch (e) {
     document.getElementById('scannerList').innerHTML =
