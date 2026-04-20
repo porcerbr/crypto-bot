@@ -935,19 +935,20 @@ self.addEventListener('fetch', e => {
 });
 
 self.addEventListener('push', e => {
-  let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
-  try { data = JSON.parse(e.data.text()); } catch(_) {}
-  
+  let data = { title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png' };
+  try { data = JSON.parse(e.data.text()); } catch (_) {}
+
   e.waitUntil(
-  self.registration.showNotification(data.title, {
-    body: data.body,
-    icon: data.icon || '/icon-192.png',
-    badge: '/icon-192.png',
-    vibrate: [200, 100, 200],
-    data: { url: '/' }
-  })
-);
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon || '/icon-192.png',
+      badge: '/icon-192.png',
+      vibrate: [200, 100, 200],
+      data: { url: '/' }
+    })
+  );
 });
+
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
