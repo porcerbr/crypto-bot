@@ -2533,11 +2533,25 @@ async function loadNews() {
 
 // Sub-páginas (CT/News)
 function showSubPage(page) {
-  document.getElementById('subCT').style.display = page === 'ct' ? '' : 'none';
-  document.getElementById('subNews').style.display = page === 'news' ? '' : 'none';
-  document.getElementById('tabCT').classList.toggle('active', page === 'ct');  document.getElementById('tabNews').classList.toggle('active', page === 'news');
+  const subCT = document.getElementById('subCT');
+  const subNews = document.getElementById('subNews');
+  const tabCT = document.getElementById('tabCT');
+  const tabNews = document.getElementById('tabNews');
+  
+  if (page === 'ct') {
+    if (subCT) subCT.style.setProperty('display', 'block', 'important');
+    if (subNews) subNews.style.setProperty('display', 'none', 'important');
+  } else {
+    if (subCT) subCT.style.setProperty('display', 'none', 'important');
+    if (subNews) subNews.style.setProperty('display', 'block', 'important');
+  }
+  
+  if (tabCT) tabCT.classList.toggle('active', page === 'ct');
+  if (tabNews) tabNews.classList.toggle('active', page === 'news');
+  
   if (page === 'news') loadNews();
 }
+
 
 // Carregar config
 async function loadConfig() {
