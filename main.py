@@ -1284,6 +1284,61 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 
 .exec-done-btn { margin-top: 6px; width: 100%; padding: 6px; border: 1px dashed var(--border); background: var(--bg4); color: var(--text-muted); border-radius: 6px; font-size: 10px; cursor: pointer; transition: 0.2s; }
 .exec-done-btn:hover { background: var(--border); color: var(--text); }
+
+/* === MELHORIA 1: Card de sinal com copiar dados === */
+.signal-item { position: relative; }
+.signal-card-data { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 8px; font-family: var(--font-mono); font-size: 11px; line-height: 1.8; }
+.signal-card-data .card-row { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; }
+.signal-card-data .card-row .label { color: var(--text-dim); font-size: 10px; }
+.signal-card-data .card-row .value { color: var(--text); font-weight: 600; }
+.signal-copy-btn { margin-top: 8px; width: 100%; padding: 8px; border: 1px solid var(--cyan-border); background: var(--cyan-soft); color: var(--cyan); border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.signal-copy-btn:hover { background: var(--cyan); color: var(--bg); }
+.signal-copy-btn.copied { background: var(--green-soft); color: var(--green); border-color: var(--green-border); }
+
+/* === MELHORIA 2: Timer de expiracao melhorado === */
+.timer-container { margin-top: 6px; }
+.timer-bar-bg { width: 100%; height: 4px; background: var(--bg4); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.timer-bar { height: 100%; border-radius: 2px; transition: width 1s linear, background 2s ease; }
+.timer-bar.green { background: var(--green); }
+.timer-bar.yellow { background: var(--gold); }
+.timer-bar.red { background: var(--red); }
+.timer-text { font-family: var(--font-mono); font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 4px; }
+.timer-text.green { color: var(--green); }
+.timer-text.yellow { color: var(--gold); }
+.timer-text.red { color: var(--red); }
+.signal-item.expired { opacity: 0.45; filter: grayscale(0.3); }
+.expired-badge { background: var(--red-soft); color: var(--red); border: 1px solid var(--red-border); padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; }
+
+/* === MELHORIA 3: Modo Apenas Sinais === */
+.signals-only-mode #hdr,
+.signals-only-mode #nav,
+.signals-only-mode .calc-panel,
+.signals-only-mode .chip-group,
+.signals-only-mode .section-header { display: none !important; }
+.signals-only-mode #pages { padding: 0; margin: 0; }
+.signals-only-mode #page-sig { padding: 10px; }
+.signals-only-mode .page:not(#page-sig) { display: none !important; }
+.signals-only-mode #page-sig { display: block !important; }
+.signals-only-mode .signal-item { padding: 16px 12px; }
+.signals-only-mode .signal-text { font-size: 13px; -webkit-line-clamp: 10; }
+.signals-only-mode .signal-icon { width: 44px; height: 44px; font-size: 20px; }
+.signals-only-mode .signal-card-data { font-size: 13px; padding: 14px; }
+.signals-only-toggle { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); cursor: pointer; }
+.signals-only-toggle input { accent-color: var(--cyan); }
+#exitSignalsOnly { position: fixed; bottom: 24px; right: 24px; z-index: 1000; background: var(--cyan); color: var(--bg); border: none; border-radius: 50%; width: 56px; height: 56px; font-size: 24px; cursor: pointer; box-shadow: 0 4px 20px rgba(0,212,255,0.4); display: none; align-items: center; justify-content: center; transition: 0.2s; }
+#exitSignalsOnly:hover { transform: scale(1.1); }
+.signals-only-mode #exitSignalsOnly { display: flex !important; }
+
+/* === MELHORIA 4: Fila de pendentes com swipe === */
+.pending-counter { display: flex; align-items: center; gap: 6px; background: var(--cyan-soft); border: 1px solid var(--cyan-border); color: var(--cyan); padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+.pending-counter .count { background: var(--cyan); color: var(--bg); border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.signal-item.swiping { transition: transform 0.05s ease; }
+.signal-item.swipe-dismiss { transition: transform 0.3s ease, opacity 0.3s ease; transform: translateX(200%); opacity: 0; }
+.signal-item.swipe-dismiss-left { transition: transform 0.3s ease, opacity 0.3s ease; transform: translateX(-200%); opacity: 0; }
+.swipe-hint { position: absolute; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 4px; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 2; }
+.swipe-hint-right { right: 8px; background: var(--green-soft); color: var(--green); border: 1px solid var(--green-border); }
+.swipe-hint-left { left: 8px; background: var(--red-soft); color: var(--red); border: 1px solid var(--red-border); }
+.signal-item.swiping .swipe-hint { opacity: 1; }
 </style>
 </head>
 <body>
@@ -1404,7 +1459,15 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 <div class="page" id="page-sig">
   <div class="section-header">
     <span class="section-title">🔔 Feed de Sinais</span>
-    <button class="refresh-btn" onclick="loadSignals()">↻ Atualizar</button>
+    <div style="display:flex;align-items:center;gap:10px">
+      <label class="signals-only-toggle"><input type="checkbox" id="signalsOnlyToggle" onchange="toggleSignalsOnly(this.checked)">Apenas Sinais</label>
+      <button class="refresh-btn" onclick="loadSignals()">↻ Atualizar</button>
+    </div>
+  </div>
+  <!-- MELHORIA 4: Contador de pendentes -->
+  <div class="pending-counter" id="pendingCounter" style="display:none">
+    🔔 Pendentes: <span class="count" id="pendingCount">0</span>
+    <span style="font-size:10px;color:var(--text-muted);margin-left:auto">← swipe → para gerenciar</span>
   </div>
   
   <!-- NOVO: Calculadora de Risco/Lote -->
@@ -1539,6 +1602,9 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 </div>
 
 </div>
+
+<!-- MELHORIA 3: Botão flutuante para sair do modo Apenas Sinais -->
+<button id="exitSignalsOnly" onclick="toggleSignalsOnly(false)" title="Sair do modo Apenas Sinais">✕</button>
 
 <!-- Navigation -->
 <nav id="nav">
@@ -1819,7 +1885,26 @@ const UI = {
     `;
   },
   
-  // NOVO: Renderizar sinal com melhorias de execução
+  // MELHORADO: Extrair dados estruturados do texto do sinal
+  parseSignalData(texto) {
+    const data = {};
+    // Extrair ativo
+    const ativoMatch = texto.match(/(?:SINAL|GATILHO|CONFIRMADO)[^\n]*?([A-Z]{3,}[\/\-]?[A-Z]{2,})/i);
+    if (ativoMatch) data.ativo = ativoMatch[1];
+    // Extrair direção
+    if (/\bBUY\b|\bCOMPRA\b|🟢/i.test(texto)) data.dir = 'BUY 🟢';
+    else if (/\bSELL\b|\bVENDA\b|🔴/i.test(texto)) data.dir = 'SELL 🔴';
+    // Extrair preços
+    const entryMatch = texto.match(/Entrada[:\s]*([\d.,]+)/i);
+    if (entryMatch) data.entry = entryMatch[1];
+    const slMatch = texto.match(/Stop\s*Loss[:\s]*([\d.,]+)/i);
+    if (slMatch) data.sl = slMatch[1];
+    const tpMatch = texto.match(/Take\s*Profit[:\s]*([\d.,]+)/i);
+    if (tpMatch) data.tp = tpMatch[1];
+    return data;
+  },
+
+  // MELHORADO: Renderizar sinal com card de dados, timer melhorado e swipe
   renderSignal(signal, isNew = false) {
     const types = {
       radar: { icon:'⚠', cls:'radar', label:'RADAR', color:'var(--blue)' },
@@ -1832,29 +1917,67 @@ const UI = {
     };    const t = types[signal.tipo] || types.radar;
     const newClass = isNew ? 'new-signal' : '';
     
-    // NOVO: Verificar se é sinal executável e se já foi marcado como feito
     const isExec = ['gatilho', 'sinal'].includes(signal.tipo);
     const isDone = Calc.executed.includes(signal.texto);
+    const isDiscarded = (JSON.parse(localStorage.getItem('discarded_sigs') || '[]')).includes(signal.unix_ts);
     
-    // NOVO: Badge de win rate do ativo
-    const wr = UI.state.assetWR[signal.symbol] || '--';
+    // Verificar expiração
+    const now = Date.now() / 1000;
+    const elapsed = now - (signal.unix_ts || 0);
+    const isExpired = isExec && elapsed >= 900;
+    const expiredClass = isExpired ? 'expired' : '';
     
-    // NOVO: Timer de validade (15min = 900s)
-    const timer = isExec ? `<div class="exec-badge"><span class="exec-timer" data-uts="${signal.unix_ts || 0}">⏱️ --:--</span></div>` : '';
+    // MELHORIA 1: Card de dados para sinais executáveis
+    let cardData = '';
+    if (isExec && !isDone && !isDiscarded) {
+      const parsed = this.parseSignalData(signal.texto);
+      if (parsed.entry || parsed.sl || parsed.tp) {
+        const safeTexto = signal.texto.replace(/'/g, "\\'");
+        cardData = `
+          <div class="signal-card-data">
+            ${parsed.ativo ? `<div class="card-row"><span class="label">Ativo</span><span class="value">${parsed.ativo}</span></div>` : ''}
+            ${parsed.dir ? `<div class="card-row"><span class="label">Direção</span><span class="value">${parsed.dir}</span></div>` : ''}
+            ${parsed.entry ? `<div class="card-row"><span class="label">Entrada</span><span class="value">${parsed.entry}</span></div>` : ''}
+            ${parsed.sl ? `<div class="card-row"><span class="label">Stop Loss</span><span class="value" style="color:var(--red)">${parsed.sl}</span></div>` : ''}
+            ${parsed.tp ? `<div class="card-row"><span class="label">Take Profit</span><span class="value" style="color:var(--green)">${parsed.tp}</span></div>` : ''}
+            <button class="signal-copy-btn" onclick="copySignalData(this, '${safeTexto}')">📋 Copiar Dados</button>
+          </div>`;
+      }
+    }
+    
+    // MELHORIA 2: Timer melhorado com barra de progresso
+    let timerHtml = '';
+    if (isExec && !isDone && !isDiscarded) {
+      if (isExpired) {
+        timerHtml = '<div class="expired-badge">⚠️ Expirado</div>';
+      } else {
+        timerHtml = `
+          <div class="timer-container">
+            <div class="timer-text" data-timer-text="${signal.unix_ts || 0}">⏱️ --:--</div>
+            <div class="timer-bar-bg"><div class="timer-bar" data-timer-bar="${signal.unix_ts || 0}"></div></div>
+          </div>`;
+      }
+    }
+    
+    // MELHORIA 4: Swipe hints para sinais pendentes
+    const isPending = isExec && !isDone && !isDiscarded && !isExpired;
+    const swipeHints = isPending ? `
+      <div class="swipe-hint swipe-hint-right">✅ Executado</div>
+      <div class="swipe-hint swipe-hint-left">❌ Ignorar</div>` : '';
     
     return `
-      <div class="signal-item ${newClass}" data-id="${signal.unix_ts || ''}" ${isDone ? 'style="opacity:0.6"' : ''}>
+      <div class="signal-item ${newClass} ${expiredClass}" data-id="${signal.unix_ts || ''}" data-tipo="${signal.tipo}" data-pending="${isPending}" ${isDone || isDiscarded ? 'style="opacity:0.5"' : ''}>
+        ${swipeHints}
         <div class="signal-icon ${t.cls}">${t.icon}</div>
         <div class="signal-body">
           <div class="signal-type ${signal.tipo}" style="color:${t.color}">${t.label}</div>
           <div class="signal-text">${signal.texto}</div>
-          <div class="signal-meta">
-            <span class="asset-stat">📊 ${signal.symbol}: ${wr} WR</span>
-            ${timer}
-          </div>
-          ${isExec && !isDone ? `<button class="exec-done-btn" onclick="markExecuted(this, '${signal.texto}')">✅ Já operei (esconder)</button>` : ''}
+          ${timerHtml}
+          ${cardData}
+          ${isExec && !isDone && !isDiscarded && !isExpired ? `<button class="exec-done-btn" onclick="markExecuted(this, '${signal.texto.replace(/'/g, "\\'")}')">✅ Já operei (esconder)</button>` : ''}
         </div>
         ${isDone ? '<div class="exec-overlay"><span>✅ Já operado</span></div>' : ''}
+        ${isDiscarded ? '<div class="exec-overlay"><span>❌ Ignorado</span></div>' : ''}
       </div>
     `;
   },
@@ -1923,21 +2046,53 @@ function markExecuted(btn, text) {
   btn.disabled = true;
 }
 
-// NOVO: Atualizar timers de validade em tempo real
+// MELHORADO: Atualizar timers com barra de progresso e cores dinâmicas
 function updateTimers() {
   const now = Date.now() / 1000;
-  document.querySelectorAll('.exec-timer').forEach(el => {
-    const uts = parseFloat(el.dataset.uts);    if (!uts) return;
-    const left = 900 - (now - uts); // 15min = 900s
+  // Atualizar textos dos timers
+  document.querySelectorAll('[data-timer-text]').forEach(el => {
+    const uts = parseFloat(el.dataset.timerText);
+    if (!uts) return;
+    const left = 900 - (now - uts);
     if (left <= 0) {
       el.textContent = '⚠️ Expirado';
-      el.style.color = 'var(--red)';
+      el.className = 'timer-text red';
+      // Marcar o signal-item como expirado
+      const item = el.closest('.signal-item');
+      if (item && !item.classList.contains('expired')) {
+        item.classList.add('expired');
+        // Substituir timer por badge
+        const container = el.closest('.timer-container');
+        if (container) container.outerHTML = '<div class="expired-badge">⚠️ Expirado</div>';
+      }
     } else {
       const m = Math.floor(left / 60);
       const s = Math.floor(left % 60);
       el.textContent = `⏱️ ${m}:${s.toString().padStart(2, '0')}`;
-      el.style.color = 'var(--cyan)';
+      // Cores dinâmicas: verde > amarelo > vermelho
+      const pct = left / 900;
+      if (pct > 0.5) el.className = 'timer-text green';
+      else if (pct > 0.2) el.className = 'timer-text yellow';
+      else el.className = 'timer-text red';
     }
+  });
+  // Atualizar barras de progresso
+  document.querySelectorAll('[data-timer-bar]').forEach(bar => {
+    const uts = parseFloat(bar.dataset.timerBar);
+    if (!uts) return;
+    const left = 900 - (now - uts);
+    const pct = Math.max(0, Math.min(100, (left / 900) * 100));
+    bar.style.width = pct + '%';
+    if (pct > 50) { bar.className = 'timer-bar green'; }
+    else if (pct > 20) { bar.className = 'timer-bar yellow'; }
+    else { bar.className = 'timer-bar red'; }
+  });
+  // Também atualizar timers legados (.exec-timer)
+  document.querySelectorAll('.exec-timer').forEach(el => {
+    const uts = parseFloat(el.dataset.uts);    if (!uts) return;
+    const left = 900 - (now - uts);
+    if (left <= 0) { el.textContent = '⚠️ Expirado'; el.style.color = 'var(--red)'; }
+    else { const m = Math.floor(left / 60); const s = Math.floor(left % 60); el.textContent = `⏱️ ${m}:${s.toString().padStart(2, '0')}`; el.style.color = 'var(--cyan)'; }
   });
 }
 setInterval(updateTimers, 1000);
@@ -2109,6 +2264,11 @@ async function loadSignals() {
     } else {
       container.innerHTML = filtered.map(s => UI.renderSignal(s, UI.state.newSignalIds.has(s.unix_ts))).reverse().join('');
       setTimeout(() => UI.state.newSignalIds.clear(), 1000);
+      // MELHORIA 2: Atualizar timers imediatamente
+      updateTimers();
+      // MELHORIA 4: Atualizar pendentes e inicializar swipe
+      updatePendingCounter();
+      initSwipe();
     }
     
     // Atualizar badge
@@ -2124,6 +2284,136 @@ function setSignalFilter(type, btn) {
   document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
   UI.state.signalFilter = type;  loadSignals();
+}
+
+// MELHORIA 1: Copiar dados do sinal para clipboard
+function copySignalData(btn, texto) {
+  // Limpar HTML tags e extrair texto puro
+  const tmp = document.createElement('div');
+  tmp.innerHTML = texto;
+  const clean = tmp.textContent || tmp.innerText || '';
+  navigator.clipboard.writeText(clean).then(() => {
+    if (navigator.vibrate) navigator.vibrate(50);
+    btn.innerHTML = '✅ Copiado!';
+    btn.classList.add('copied');
+    showToast('📋 Dados copiados!');
+    setTimeout(() => { btn.innerHTML = '📋 Copiar Dados'; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = clean;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('📋 Copiado!');
+  });
+}
+
+// MELHORIA 3: Toggle modo Apenas Sinais
+function toggleSignalsOnly(enabled) {
+  const app = document.getElementById('app');
+  const toggle = document.getElementById('signalsOnlyToggle');
+  if (enabled) {
+    app.classList.add('signals-only-mode');
+    // Navegar para sinais
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-sig').classList.add('active');
+    loadSignals();
+  } else {
+    app.classList.remove('signals-only-mode');
+  }
+  if (toggle) toggle.checked = enabled;
+  savePreferences('signalsOnly', enabled);
+}
+
+// MELHORIA 4: Descartar sinal (swipe left)
+function discardSignal(unixTs) {
+  const discarded = JSON.parse(localStorage.getItem('discarded_sigs') || '[]');
+  if (!discarded.includes(unixTs)) {
+    discarded.push(unixTs);
+    localStorage.setItem('discarded_sigs', JSON.stringify(discarded));
+  }
+}
+
+// MELHORIA 4: Atualizar contador de pendentes
+function updatePendingCounter() {
+  const items = document.querySelectorAll('.signal-item[data-pending="true"]');
+  const counter = document.getElementById('pendingCounter');
+  const countEl = document.getElementById('pendingCount');
+  if (items.length > 0) {
+    counter.style.display = 'flex';
+    countEl.textContent = items.length;
+  } else {
+    counter.style.display = 'none';
+  }
+}
+
+// MELHORIA 4: Inicializar swipe nos sinais pendentes
+function initSwipe() {
+  const container = document.getElementById('signalsList');
+  if (!container) return;
+  
+  let startX = 0, startY = 0, currentItem = null, swiping = false;
+  const THRESHOLD = 80;
+  
+  container.addEventListener('touchstart', function(e) {
+    const item = e.target.closest('.signal-item[data-pending="true"]');
+    if (!item) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    currentItem = item;
+    swiping = false;
+  }, { passive: true });
+  
+  container.addEventListener('touchmove', function(e) {
+    if (!currentItem) return;
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    
+    // Só ativar swipe se movimento horizontal > vertical
+    if (!swiping && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+      swiping = true;
+      currentItem.classList.add('swiping');
+    }
+    
+    if (swiping) {
+      e.preventDefault();
+      currentItem.style.transform = `translateX(${dx}px)`;
+      currentItem.style.opacity = Math.max(0.3, 1 - Math.abs(dx) / 300);
+    }
+  }, { passive: false });
+  
+  container.addEventListener('touchend', function(e) {
+    if (!currentItem || !swiping) { currentItem = null; return; }
+    
+    const dx = e.changedTouches[0].clientX - startX;
+    currentItem.classList.remove('swiping');
+    
+    if (dx > THRESHOLD) {
+      // Swipe direita = executado
+      currentItem.classList.add('swipe-dismiss');
+      const texto = currentItem.querySelector('.signal-text')?.textContent || '';
+      Calc.executed.push(texto);
+      localStorage.setItem('exec_sigs', JSON.stringify(Calc.executed));
+      showToast('✅ Marcado como executado');
+      if (navigator.vibrate) navigator.vibrate(50);
+      setTimeout(() => { currentItem.remove(); updatePendingCounter(); }, 300);
+    } else if (dx < -THRESHOLD) {
+      // Swipe esquerda = descartar
+      currentItem.classList.add('swipe-dismiss-left');
+      const unixTs = parseFloat(currentItem.dataset.id);
+      if (unixTs) discardSignal(unixTs);
+      showToast('❌ Sinal ignorado');
+      if (navigator.vibrate) navigator.vibrate([30, 30]);
+      setTimeout(() => { currentItem.remove(); updatePendingCounter(); }, 300);
+    } else {
+      // Voltar ao lugar
+      currentItem.style.transform = '';
+      currentItem.style.opacity = '';
+    }
+    currentItem = null;
+    swiping = false;
+  }, { passive: true });
 }
 
 // Atualizar badge de notificação
@@ -2429,6 +2719,10 @@ function loadPreferences() {  const saved = localStorage.getItem('sniper_prefs')
           document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
           btn.classList.add('active');
         }
+      }
+      // MELHORIA 3: Restaurar modo Apenas Sinais
+      if (prefs.signalsOnly) {
+        setTimeout(() => toggleSignalsOnly(true), 100);
       }
     } catch (_) {}
   }
