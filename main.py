@@ -2846,47 +2846,128 @@ window.addEventListener('load', async () => {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('.nav-btn')?.classList.add('active');
   
-  // Auto-refresh a cada 30s...
+  // ================================
+  // AUTO-REFRESH DASHBOARD
+  // ================================
+
   setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      loadDashboard();
-      if (document.querySelector('.page.active')?.id === 'page-sig') loadSignals();
+
+    try {
+
+      if (document.visibilityState === 'visible') {
+
+        if (typeof loadDashboard === "function") {
+          loadDashboard();
+        }
+
+        const activePage =
+          document.querySelector('.page.active');
+
+        if (
+          activePage &&
+          activePage.id === 'page-sig'
+        ) {
+          if (typeof loadSignals === "function") {
+            loadSignals();
+          }
+        }
+
+      }
+
+    } catch (err) {
+
+      console.error(
+        "Erro no auto-refresh:",
+        err
+      );
+
     }
+
   }, 30000);
-  
-  // Listener para visibilidade...
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      loadDashboard();
-      loadSignals();
+
+
+
+  // ================================
+  // VISIBILITY LISTENER
+  // ================================
+
+  document.addEventListener(
+    'visibilitychange',
+    () => {
+
+      try {
+
+        if (
+          document.visibilityState === 'visible'
+        ) {
+
+          if (typeof loadDashboard === "function") {
+            loadDashboard();
+          }
+
+          const activePage =
+            document.querySelector('.page.active');
+
+          if (
+            activePage &&
+            activePage.id === 'page-sig'
+          ) {
+
+            if (typeof loadSignals === "function") {
+              loadSignals();
+            }
+
+          }
+
+        }
+
+      } catch (err) {
+
+        console.error(
+          "Erro ao voltar para aba:",
+          err
+        );
+
+      }
+
     }
+  );
 
-// Inicializar navegação ao carregar
-  document.addEventListener("DOMContentLoaded", () => {
 
-  document.querySelectorAll(".nav-btn").forEach(btn => {
 
-    btn.addEventListener("click", () => {
+  // ================================
+  // INICIALIZAÇÃO FINAL
+  // ================================
 
-      const page = btn.dataset.page;
-      if (!page) return;
+  window.addEventListener(
+    'load',
+    () => {
 
-      document.querySelectorAll(".page")
-        .forEach(p => p.classList.remove("active"));
+      try {
 
-      document.querySelectorAll(".nav-btn")
-        .forEach(b => b.classList.remove("active"));
+        console.log(
+          "🚀 Dashboard inicializado"
+        );
 
-      document.getElementById(page)
-        ?.classList.add("active");
+        if (typeof loadDashboard === "function") {
+          loadDashboard();
+        }
 
-      btn.classList.add("active");
+        if (typeof loadSignals === "function") {
+          loadSignals();
+        }
 
-    });
+      } catch (err) {
 
-  });
+        console.error(
+          "Erro na inicialização:",
+          err
+        );
 
-});
+      }
+
+    }
+  );
   
 
 
