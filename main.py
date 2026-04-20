@@ -47,8 +47,7 @@ class Config:
                 "SOL-USD":  "Solana",    "BNB-USD":  "BNB",
                 "XRP-USD":  "XRP",       "ADA-USD":  "Cardano",
                 "DOGE-USD": "Dogecoin",  "AVAX-USD": "Avalanche",
-                "LINK-USD": "Chainlink", "DOT-USD":  "Polkadot",
-                "POL-USD":  "Polygon",   "LTC-USD":  "Litecoin",
+                "LINK-USD": "Chainlink", "DOT-USD":  "Polkadot",                "POL-USD":  "Polygon",   "LTC-USD":  "Litecoin",
             },
         },
         "COMMODITIES": {
@@ -98,7 +97,6 @@ class Config:
     TRENDS_INTERVAL  = 120
     NEWS_INTERVAL    = 7200
     SCAN_INTERVAL    = 30
-
     TIMEFRAMES = {
         "1m":  ("Agressivo",    "7d"),
         "5m":  ("Alto",         "5d"),
@@ -147,8 +145,7 @@ def asset_name(s):
 
 def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 
-def all_syms():
-    out = []
+def all_syms():    out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
     return out
 
@@ -197,8 +194,7 @@ def load_state(bot):
         bot.gatilho_list       = data.get("gatilho_list", {})
         bot.reversal_list      = data.get("reversal_list", {})
         bot.asset_cooldown     = data.get("asset_cooldown", {})
-        bot.history            = data.get("history", [])
-        for t in bot.active_trades: t["session_alerted"] = False
+        bot.history            = data.get("history", [])        for t in bot.active_trades: t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s)")
         if bot.active_trades:
             lines = ["♻️ <b>BOT REINICIADO – TRADES ATIVOS</b>\n"]
@@ -247,8 +243,7 @@ def get_fear_greed():
     except: return {"value": "N/D", "label": ""}
 
 def build_news_msg():
-    arts = get_news(5); fg = get_fear_greed()
-    lines = ["📰 <b>NOTÍCIAS</b>\n"]
+    arts = get_news(5); fg = get_fear_greed()    lines = ["📰 <b>NOTÍCIAS</b>\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "")
         lines.append(f"{i}. <a href='{a['url']}'>{t}</a> <i>({a['source']})</i>")
@@ -297,8 +292,7 @@ def get_analysis(symbol, timeframe=None):
         pdm = hd.where((hd>0)&(hd>-ld), 0.0)
         mdm = (-ld).where((-ld>0)&(-ld>hd), 0.0)
         as_ = tr.ewm(alpha=1/14, adjust=False).mean()
-        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
-        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
+        pdi = 100*pdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)        mdi = 100*mdm.ewm(alpha=1/14, adjust=False).mean()/(as_+1e-10)
         dx  = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
         price = float(closes.iloc[-1])
@@ -347,8 +341,7 @@ def calc_confluence(res, d):
             ("TF Superior Alta", res["h1_bull"]),
             ("ADX tendência",    res["adx"] > Config.ADX_MIN),
         ]
-    else:
-        checks = [
+    else:        checks = [
             ("EMA 200 abaixo",   res["price"]  < res["ema200"]),
             ("EMA 9 < 21",       res["ema9"]   < res["ema21"]),
             ("MACD Baixa",       res["macd_bear"]),
@@ -397,8 +390,7 @@ def get_reversal_analysis(symbol, timeframe=None):
         w = min(20, len(closes)-1)
         sma = closes.rolling(w).mean(); std = closes.rolling(w).std()
         ub = float((sma+std*2).iloc[-1]); lb = float((sma-std*2).iloc[-1])
-        delta = closes.diff()
-        gain  = delta.where(delta>0,0).rolling(14).mean()
+        delta = closes.diff()        gain  = delta.where(delta>0,0).rolling(14).mean()
         loss  = (-delta.where(delta<0,0)).rolling(14).mean()
         rsi_s = 100-100/(1+gain/loss)
         rsi   = float(rsi_s.iloc[-1])
@@ -447,8 +439,7 @@ def get_reversal_analysis(symbol, timeframe=None):
 def calc_reversal_conf(res, d):
     if d == "SELL":
         checks = [
-            ("RSI sobrecomprado",  res["rsi_overbought"]),
-            ("Banda Superior BB",  res["near_upper"]),
+            ("RSI sobrecomprado",  res["rsi_overbought"]),            ("Banda Superior BB",  res["near_upper"]),
             ("RSI div. bearish",   res["div_bear"]),
             ("MACD div. bearish",  res["macd_div_bear"]),
             ("Candle de baixa",    res["pat_bear"]),
@@ -497,8 +488,7 @@ _push_subscriptions = []  # lista de subscription dicts
 def send_push(title, body, icon="/icon-192.png"):
     """Envia push para todos os clientes inscritos via Web Push."""
     try:
-        from pywebpush import webpush, WebPushException
-        import os
+        from pywebpush import webpush, WebPushException        import os
         priv_key = os.getenv("VAPID_PRIVATE_KEY", "")
         pub_key  = os.getenv("VAPID_PUBLIC_KEY", "")
         email    = os.getenv("VAPID_EMAIL", "mailto:admin@sniperbot.app")
@@ -547,8 +537,7 @@ class TradingBot:
         clean = re.sub(r"<[^>]+>", "", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text:            tipo = "radar";   push_title = "⚠ RADAR"
-        elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"
-        elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
+        elif "GATILHO ATINGIDO" in text: tipo = "gatilho"; push_title = "🔔 GATILHO ATINGIDO!"        elif "SINAL CONFIRMADO" in text: tipo = "sinal";   push_title = "🎯 SINAL CONFIRMADO!"
         elif "CONTRA-TENDÊNCIA" in text: tipo = "ct";      push_title = "⚡ Contra-Tendência!"
         elif "CONFLUÊNCIA INSUF" in text: tipo = "insuf"
         elif "OPERAÇÃO ENCERRADA" in text:
@@ -557,9 +546,11 @@ class TradingBot:
             push_body  = clean[:80]
         elif "CIRCUIT BREAKER" in text: tipo = "cb"; push_title = "⛔ Circuit Breaker Ativado"
         if tipo:
+            # NOVO: Adicionar unix_ts para timer de validade no frontend
             self.signals_feed.append({
                 "tipo": tipo, "texto": clean[:300],
                 "ts": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "unix_ts": time.time()  # ← NOVO: timestamp Unix para cálculo de validade
             })
             self.signals_feed = self.signals_feed[-50:]
             # Push notification para sinais importantes
@@ -595,8 +586,7 @@ class TradingBot:
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
 
-    def set_timeframe(self, tf):
-        if tf not in Config.TIMEFRAMES: return
+    def set_timeframe(self, tf):        if tf not in Config.TIMEFRAMES: return
         old = self.timeframe; self.timeframe = tf; save_state(self)
         self.send(f"✅ TF: {old} → {tf}")
 
@@ -645,8 +635,7 @@ class TradingBot:
                         "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
                         "ts": time.time(),
                     }
-            except Exception as e: log(f"[TRENDS] {s}: {e}")
-        self.last_trends_update = time.time()
+            except Exception as e: log(f"[TRENDS] {s}: {e}")        self.last_trends_update = time.time()
         log(f"📡 Cache: {len(self.trend_cache)} ativos")
 
     # ── SCAN — 4 fases ───────────────────────────────────────
@@ -695,8 +684,7 @@ class TradingBot:
                     dist = abs(price-gatilho)/price*100
                     dl = "COMPRA" if dir_s=="BUY" else "VENDA"
                     self.send(
-                        f"⚠️ <b>RADAR – {s}</b> ({res['name']})\n"
-                        f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
+                        f"⚠️ <b>RADAR – {s}</b> ({res['name']})\n"                        f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
                         f"Tendência de <b>{cen}</b> detectada\n"
                         f"Aguardando gatilho de <b>{dl}</b>\n\n"
                         f"🎯 Gatilho: <code>{fmt(gatilho)}</code>\n"
@@ -745,8 +733,7 @@ class TradingBot:
             # FASE 4B — SINAL CONFIRMADO
             if dir_s == "BUY":
                 sl = price - Config.ATR_MULT_SL * atr
-                tp = price + Config.ATR_MULT_TP * atr
-            else:
+                tp = price + Config.ATR_MULT_TP * atr            else:
                 sl = price + Config.ATR_MULT_SL * atr
                 tp = price - Config.ATR_MULT_TP * atr
             sl_pct = abs(price-sl)/price*100; tp_pct = abs(tp-price)/price*100
@@ -795,8 +782,7 @@ class TradingBot:
                     if d == "SELL":
                         if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
                         if res["near_upper"]:     sinais.append("BB Superior atingida")
-                        if res["div_bear"]:       sinais.append("RSI divergência bearish")
-                        if res["macd_div_bear"]:  sinais.append("MACD divergência bearish")
+                        if res["div_bear"]:       sinais.append("RSI divergência bearish")                        if res["macd_div_bear"]:  sinais.append("MACD divergência bearish")
                         if res["wick_bear"]:      sinais.append("Wick de rejeição")
                         if res["pat_bear"] and res["pat_name"]: sinais.append(res["pat_name"])
                     else:
@@ -846,7 +832,6 @@ class TradingBot:
                 "session_alerted": True,
             })
             save_state(self)
-
     # ── Monitor + Trailing Stop ───────────────────────────────
     def monitor_trades(self):
         changed = False
@@ -895,8 +880,7 @@ class TradingBot:
                     f"🔚 Saída:   <code>{fmt(cur)}</code>\n"
                     f"P&amp;L:   <code>{pnl:+.2f}%</code>"
                 )
-                self.active_trades.remove(t); changed = True
-                if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
+                self.active_trades.remove(t); changed = True                if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                     self.paused_until = time.time() + Config.PAUSE_DURATION
                     mins = Config.PAUSE_DURATION // 60
                     self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\nPausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
@@ -938,20 +922,19 @@ self.addEventListener('push', e => {
   e.waitUntil(self.registration.showNotification(data.title, {
     body: data.body, icon: data.icon || '/icon-192.png',
     badge: '/icon-192.png', vibrate: [200, 100, 200],
-    data: { url: '/' }
+     { url: '/' }
   }));
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
     if (cs.length) cs[0].focus();
-    else clients.openWindow('/');
-  }));
+    else clients.openWindow('/');  }));
 });
 """
 
 # ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML — VERSÃO OTIMIZADA v7.2 (NAVEGAÇÃO CORRIGIDA)
+# DASHBOARD HTML — VERSÃO OTIMIZADA v7.2 (COM MELHORIAS DE EXECUÇÃO)
 # ═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -995,7 +978,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 /* Reset e base */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
@@ -1045,8 +1027,7 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .card:hover { border-color: var(--border-soft); }
 .card-header { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
 
-/* Stats Grid */
-.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+/* Stats Grid */.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
 .stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 10px; text-align: center; transition: var(--transition); }
 .stat-box:hover { transform: translateY(-2px); border-color: var(--border-soft); }
 .stat-label { font-size: 8px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
@@ -1095,8 +1076,7 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 /* Signal Item */
 .signal-item { display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); animation: fadeIn 0.2s ease; }
 .signal-item:last-child { border-bottom: none; }
-.signal-item.new { animation: pulseNew 0.6s ease; }
-@keyframes pulseNew { 0% { background: transparent; } 50% { background: var(--blue-soft); } 100% { background: transparent; } }
+.signal-item.new { animation: pulseNew 0.6s ease; }@keyframes pulseNew { 0% { background: transparent; } 50% { background: var(--blue-soft); } 100% { background: transparent; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .signal-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
 .signal-icon.radar { background: var(--blue-soft); color: var(--blue); }
@@ -1145,7 +1125,6 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .indicator-dot.rsi-bad { background: var(--red); }
 .indicator-dot.adx-strong { background: var(--green); }
 .indicator-dot.adx-weak { background: var(--text-dim); }
-
 /* Chips/Filters */
 .chip-group { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
 .chip-group::-webkit-scrollbar { display: none; }
@@ -1195,8 +1174,7 @@ body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-in
 .action-btn.primary { background: var(--blue-soft); color: var(--blue); border: 1px solid var(--blue-border); }
 
 /* Empty State */
-.empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
-.empty-icon { font-size: 42px; margin-bottom: 12px; display: block; opacity: 0.6; }
+.empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }.empty-icon { font-size: 42px; margin-bottom: 12px; display: block; opacity: 0.6; }
 .empty-text { font-size: 12px; line-height: 1.6; }
 
 /* Circuit Breaker Banner */
@@ -1245,8 +1223,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 /* Market status */
 .market-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 7px; }
 .market-name { font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.market-status { font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 10px; border-radius: 20px; font-family: var(--font-mono); font-weight: 600; }
-.market-status.open { background: var(--green-soft); color: var(--green); }
+.market-status { font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 10px; border-radius: 20px; font-family: var(--font-mono); font-weight: 600; }.market-status.open { background: var(--green-soft); color: var(--green); }
 .market-status.closed { background: var(--red-soft); color: var(--red); }
 
 /* Confluence bar */
@@ -1265,14 +1242,37 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 /* New signal pulse animation */
 @keyframes newSignal { 0% { box-shadow: 0 0 0 0 rgba(77,166,255,0.4); } 70% { box-shadow: 0 0 0 8px rgba(77,166,255,0); } 100% { box-shadow: 0 0 0 0 rgba(77,166,255,0); } }
 .signal-item.new-signal { animation: newSignal 0.8s ease-out; }
+
+/* ═══════════════════════════════════════════════════════════ */
+/* NOVAS CLASSES PARA MELHORIAS DE EXECUÇÃO */
+/* ═══════════════════════════════════════════════════════════ */
+.copy-btn { cursor: pointer; opacity: 0.7; transition: 0.2s; font-size: 14px; margin-left: 4px; }
+.copy-btn:hover { opacity: 1; transform: scale(1.1); }
+.copy-btn.copied { color: var(--green); opacity: 1; }
+
+.calc-panel { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.calc-input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 6px; width: 100%; font-family: var(--font-mono); font-size: 12px; }
+.calc-result { grid-column: span 2; background: var(--green-soft); border: 1px solid var(--green-border); padding: 8px; border-radius: 6px; text-align: center; font-weight: 700; color: var(--green); font-family: var(--font-mono); }
+
+.exec-badge { font-size: 9px; background: var(--cyan-soft); color: var(--cyan); padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+.exec-timer { font-family: var(--font-mono); font-size: 10px; font-weight: 600; }
+.asset-stat { font-size: 9px; color: var(--text-dim); background: var(--bg4); padding: 2px 6px; border-radius: 4px; }
+
+.toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--green-border); color: var(--green); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 500; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 999; white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+.exec-overlay { position: absolute; inset: 0; background: rgba(6,9,15,0.85); display: flex; align-items: center; justify-content: center; border-radius: var(--radius); z-index: 5; backdrop-filter: blur(3px); }
+.exec-overlay span { background: var(--green-soft); color: var(--green); padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; border: 1px solid var(--green-border); }
+
+.exec-done-btn { margin-top: 6px; width: 100%; padding: 6px; border: 1px dashed var(--border); background: var(--bg4); color: var(--text-muted); border-radius: 6px; font-size: 10px; cursor: pointer; transition: 0.2s; }
+.exec-done-btn:hover { background: var(--border); color: var(--text); }
 </style>
 </head>
 <body>
 <div id="app">
 <!-- Header -->
 <div id="hdr">
-  <div class="hdr-left">
-    <div class="logo">S</div>
+  <div class="hdr-left">    <div class="logo">S</div>
     <div class="app-title">
       <span class="main">Sniper Bot</span>
       <span class="sub">Multi-Mercado v7.2</span>
@@ -1321,8 +1321,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
       <span class="toggle-label" style="font-size:10px">Mostrar fechados</span>
       <label class="toggle-switch">
         <input type="checkbox" id="toggleClosed" onchange="toggleClosedTrades()">
-        <span class="toggle-slider"></span>
-      </label>
+        <span class="toggle-slider"></span>      </label>
     </label>
   </div>
   <div id="tradesContainer">
@@ -1371,8 +1370,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
     <button class="chip" data-filter="idx" onclick="setScanFilter('idx',this)">📊 Índices</button>
   </div>
   
-  <!-- Asset List with Virtual Scroll -->
-  <div class="card" style="padding:4px 14px">
+  <!-- Asset List with Virtual Scroll -->  <div class="card" style="padding:4px 14px">
     <div id="scannerList" class="virtual-container">
       <div class="virtual-content" id="scannerContent">
         <!-- Skeleton loading -->
@@ -1391,9 +1389,17 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
     <button class="refresh-btn" onclick="loadSignals()">↻ Atualizar</button>
   </div>
   
-  <!-- Signal Filters -->
+  <!-- NOVO: Calculadora de Risco/Lote -->
+  <div class="calc-panel" id="calcPanel">
+    <input type="number" class="calc-input" id="calcBal" placeholder="Saldo ($)" step="10">
+    <input type="number" class="calc-input" id="calcRisk" placeholder="Risco (%)" step="0.5" value="2">
+    <div class="calc-result" id="calcRes">Ajuste saldo/risco para calcular lote</div>
+  </div>
+  
+  <!-- Signal Filters (com novo filtro "Executar Agora") -->
   <div class="chip-group" id="signalFilters">
     <button class="chip active" data-type="all" onclick="setSignalFilter('all',this)">Todos</button>
+    <button class="chip" data-type="exec" onclick="setSignalFilter('exec',this)">🟢 Executar Agora</button>
     <button class="chip" data-type="sinal" onclick="setSignalFilter('sinal',this)">🎯 Sinal</button>
     <button class="chip" data-type="gatilho" onclick="setSignalFilter('gatilho',this)">🔔 Gatilho</button>
     <button class="chip" data-type="radar" onclick="setSignalFilter('radar',this)">⚠ Radar</button>
@@ -1413,8 +1419,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 <div class="page" id="page-ct">
   <div class="sub-tabs">
     <button class="sub-tab active" id="tabCT" onclick="showSubPage('ct')">⚡ Contra-Tendência</button>
-    <button class="sub-tab" id="tabNews" onclick="showSubPage('news')">📰 Notícias</button>
-  </div>
+    <button class="sub-tab" id="tabNews" onclick="showSubPage('news')">📰 Notícias</button>  </div>
   
   <!-- Contra-Tendência -->
   <div id="subCT">
@@ -1463,8 +1468,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
   </div>
   
   <!-- Timeframe Selection -->
-  <div class="config-section">
-    <div class="config-label">Timeframe</div>
+  <div class="config-section">    <div class="config-label">Timeframe</div>
     <div class="tf-grid">
       <button class="tf-btn" data-tf="1m" onclick="setTimeframe('1m')"><span class="tf-value red">●</span>1m<div class="tf-label">Agressivo</div></button>
       <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')"><span class="tf-value orange">●</span>5m<div class="tf-label">Alto</div></button>
@@ -1513,8 +1517,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
       <b style="color:var(--text)">Android Chrome:</b> ⋮ → "Adicionar à tela inicial"<br>
       <b style="color:var(--text)">iOS Safari:</b> 📤 → "Adicionar à Tela de Início"<br>
       <b style="color:var(--cyan)">Dica:</b> Ative notificações após instalar para alertas offline.
-    </div>
-  </div>
+    </div>  </div>
 </div>
 
 </div>
@@ -1528,6 +1531,9 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
   <button class="nav-btn" onclick="navigate('cfg',this)"><span class="icon">⚙</span>Config</button>
 </nav>
 </div>
+
+<!-- NOVO: Toast para feedback de cópia -->
+<div id="toast" class="toast">📋 Copiado!</div>
 
 <script>
 /* ═══════════════════════════════════════════════════════════ */
@@ -1560,16 +1566,47 @@ function smoothUpdate(fn) {
   });
 }
 
-// Highlight de texto para busca
-function highlightText(text, query) {
+// Highlight de texto para buscafunction highlightText(text, query) {
   if (!query) return text;
   const regex = new RegExp(`(${query})`, 'gi');
   return text.replace(regex, '<span class="highlight">$1</span>');
 }
 
+// NOVO: Toast para feedback visual
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1200);
+}
+
+// NOVO: Copiar para clipboard com feedback
+function copyToClipboard(text) {
+  // Limpa o texto para copiar apenas números e ponto/vírgula
+  const clean = String(text).replace(/[^0-9.,]/g, '').replace(',', '.');
+  navigator.clipboard.writeText(clean).then(() => {
+    // Vibração háptica se suportado
+    if (navigator.vibrate) navigator.vibrate(50);
+    showToast('📋 Valor copiado!');
+    // Feedback visual no botão
+    document.querySelectorAll('.copy-btn.copied').forEach(b => b.classList.remove('copied'));
+    const btns = document.querySelectorAll(`.copy-btn[data-val="${clean}"]`);
+    btns.forEach(b => b.classList.add('copied'));
+  }).catch(() => {
+    // Fallback para navegadores antigos
+    const ta = document.createElement('textarea');
+    ta.value = clean;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('📋 Copiado!');
+  });
+}
+
 // Cache inteligente no frontend
 const FrontendCache = {
-  data: {},
+   {},
   ttl: 30000, // 30 segundos
   set(key, value) {
     this.data[key] = { value, ts: Date.now() };
@@ -1578,13 +1615,45 @@ const FrontendCache = {
     const entry = this.data[key];
     if (!entry) return null;
     if (Date.now() - entry.ts > this.ttl) {
-      delete this.data[key];
-      return null;
+      delete this.data[key];      return null;
     }
     return entry.value;
   },
   clear() { this.data = {}; }
 };
+
+/* ═══════════════════════════════════════════════════════════ */
+/* NOVO: Calculadora de Risco/Lote (persistente) */
+/* ═══════════════════════════════════════════════════════════ */
+const Calc = {
+  bal: parseFloat(localStorage.getItem('calc_bal') || '1000'),
+  risk: parseFloat(localStorage.getItem('calc_risk') || '2'),
+  execMode: false,
+  executed: JSON.parse(localStorage.getItem('exec_sigs') || '[]'),
+  
+  update() {
+    localStorage.setItem('calc_bal', this.bal);
+    localStorage.setItem('calc_risk', this.risk);
+    calcLot();
+  },
+  
+  init() {
+    document.getElementById('calcBal').value = this.bal || '';
+    document.getElementById('calcRisk').value = this.risk || '';
+    calcLot();
+  }
+};
+
+function calcLot() {
+  const bal = Calc.bal, risk = Calc.risk;
+  if (!bal || !risk) return document.getElementById('calcRes').textContent = "Insira saldo e risco";
+  const amt = (bal * risk / 100).toFixed(2);
+  document.getElementById('calcRes').innerHTML = `💰 Risco: <b>$${amt}</b> | Ajuste lote na corretora conforme SL`;
+}
+
+// Listeners para calculadora
+document.getElementById('calcBal')?.addEventListener('input', e => { Calc.bal = parseFloat(e.target.value) || 0; Calc.update(); });
+document.getElementById('calcRisk')?.addEventListener('input', e => { Calc.risk = parseFloat(e.target.value) || 0; Calc.update(); });
 
 /* ═══════════════════════════════════════════════════════════ */
 /* API CLIENT — Comunicação com backend */
@@ -1595,8 +1664,7 @@ const API = {
     try {
       const response = await fetch(path, {
         headers: { 'Content-Type': 'application/json' },
-        mode: 'same-origin',
-        ...options
+        mode: 'same-origin',        ...options
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
@@ -1633,7 +1701,8 @@ const UI = {
     showClosed: false,
     searchQuery: '',
     lastSignals: [],
-    newSignalIds: new Set()
+    newSignalIds: new Set(),
+    assetWR: {}  // NOVO: win rate por ativo
   },
   
   // Navegação entre páginas
@@ -1644,8 +1713,7 @@ const UI = {
     if (btn) btn.classList.add('active');
     
     // Carregar dados sob demanda
-    if (page === 'scan') loadScanner();
-    if (page === 'sig') { loadSignals(); this.state.newSignalIds.clear(); updateBadge(); }
+    if (page === 'scan') loadScanner();    if (page === 'sig') { loadSignals(); this.state.newSignalIds.clear(); updateBadge(); }
     if (page === 'ct') { loadCT(); loadNews(); }
     if (page === 'cfg') loadConfig();
   },
@@ -1680,9 +1748,9 @@ const UI = {
         </div>
         <div class="sparkline">${sparkBars}</div>
         <div class="trade-levels">
-          <div class="level-box"><div class="level-label">Entrada</div><div class="level-value">${fmtPrice(trade.entry)}</div></div>
-          <div class="level-box"><div class="level-label">SL 🛡</div><div class="level-value sl">${fmtPrice(trade.sl)}</div></div>
-          <div class="level-box"><div class="level-label">TP 🎯</div><div class="level-value tp">${fmtPrice(trade.tp)}</div></div>
+          <div class="level-box"><div class="level-label">Entrada</div><div class="level-value">${fmtPrice(trade.entry)}<span class="copy-btn" data-val="${trade.entry}" onclick="copyToClipboard('${trade.entry}')">📋</span></div></div>
+          <div class="level-box"><div class="level-label">SL 🛡</div><div class="level-value sl">${fmtPrice(trade.sl)}<span class="copy-btn" data-val="${trade.sl}" onclick="copyToClipboard('${trade.sl}')">📋</span></div></div>
+          <div class="level-box"><div class="level-label">TP 🎯</div><div class="level-value tp">${fmtPrice(trade.tp)}<span class="copy-btn" data-val="${trade.tp}" onclick="copyToClipboard('${trade.tp}')">📋</span></div></div>
         </div>
         <div class="trade-footer">
           <span class="trade-pnl ${isPos ? 'pos' : 'neg'}">${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}%</span>
@@ -1694,8 +1762,7 @@ const UI = {
   },
   
   // Renderizar ativo no scanner com indicadores visuais
-  renderAsset(asset) {
-    const trend = asset.cenario || 'NEUTRO';
+  renderAsset(asset) {    const trend = asset.cenario || 'NEUTRO';
     const icon = trend === 'ALTA' ? '↑' : trend === 'BAIXA' ? '↓' : '–';
     const iconClass = trend === 'ALTA' ? 'up' : trend === 'BAIXA' ? 'down' : 'neutral';
     const changeClass = asset.change_pct >= 0 ? 'pos' : 'neg';
@@ -1734,7 +1801,7 @@ const UI = {
     `;
   },
   
-  // Renderizar sinal com animação de novo
+  // NOVO: Renderizar sinal com melhorias de execução
   renderSignal(signal, isNew = false) {
     const types = {
       radar: { icon:'⚠', cls:'radar', label:'RADAR', color:'var(--blue)' },
@@ -1744,18 +1811,32 @@ const UI = {
       insuf: { icon:'❌', cls:'insuf', label:'INSUF.', color:'var(--text-dim)' },
       close: { icon:'🏁', cls:'close', label:'FECHADO', color:'var(--text-muted)' },
       cb: { icon:'⛔', cls:'cb', label:'CIRCUIT BR.', color:'var(--red)' }
-    };
-    const t = types[signal.tipo] || types.radar;
+    };    const t = types[signal.tipo] || types.radar;
     const newClass = isNew ? 'new-signal' : '';
     
+    // NOVO: Verificar se é sinal executável e se já foi marcado como feito
+    const isExec = ['gatilho', 'sinal'].includes(signal.tipo);
+    const isDone = Calc.executed.includes(signal.texto);
+    
+    // NOVO: Badge de win rate do ativo
+    const wr = UI.state.assetWR[signal.symbol] || '--';
+    
+    // NOVO: Timer de validade (15min = 900s)
+    const timer = isExec ? `<div class="exec-badge"><span class="exec-timer" data-uts="${signal.unix_ts || 0}">⏱️ --:--</span></div>` : '';
+    
     return `
-      <div class="signal-item ${newClass}" data-id="${signal.id || ''}">
+      <div class="signal-item ${newClass}" data-id="${signal.unix_ts || ''}" ${isDone ? 'style="opacity:0.6"' : ''}>
         <div class="signal-icon ${t.cls}">${t.icon}</div>
         <div class="signal-body">
           <div class="signal-type ${signal.tipo}" style="color:${t.color}">${t.label}</div>
           <div class="signal-text">${signal.texto}</div>
-          <div class="signal-time">${signal.ts}</div>
+          <div class="signal-meta">
+            <span class="asset-stat">📊 ${signal.symbol}: ${wr} WR</span>
+            ${timer}
+          </div>
+          ${isExec && !isDone ? `<button class="exec-done-btn" onclick="markExecuted(this, '${signal.texto}')">✅ Já operei (esconder)</button>` : ''}
         </div>
+        ${isDone ? '<div class="exec-overlay"><span>✅ Já operado</span></div>' : ''}
       </div>
     `;
   },
@@ -1779,8 +1860,7 @@ const UI = {
       const div = document.createElement('div');
       div.innerHTML = renderItem(items[i], i);
       fragment.appendChild(div.firstElementChild || div);
-    }
-    
+    }    
     content.innerHTML = '';
     content.appendChild(fragment);
   }
@@ -1816,14 +1896,33 @@ function navigate(page, btn) {
   } catch(e) { console.warn('navigate load error:', e); }
 }
 
-// Garantir que o container virtual-scroll existe antes de usar
-function ensureVirtualContainer(containerId) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  if (!container.querySelector('.virtual-content')) {
-    container.innerHTML = '<div class="virtual-content"></div>';
-  }
+// NOVO: Marcar sinal como executado
+function markExecuted(btn, text) {
+  Calc.executed.push(text);
+  localStorage.setItem('exec_sigs', JSON.stringify(Calc.executed));
+  btn.closest('.signal-item').style.opacity = '0.5';
+  btn.textContent = '✅ Marcado';
+  btn.disabled = true;
 }
+
+// NOVO: Atualizar timers de validade em tempo real
+function updateTimers() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll('.exec-timer').forEach(el => {
+    const uts = parseFloat(el.dataset.uts);    if (!uts) return;
+    const left = 900 - (now - uts); // 15min = 900s
+    if (left <= 0) {
+      el.textContent = '⚠️ Expirado';
+      el.style.color = 'var(--red)';
+    } else {
+      const m = Math.floor(left / 60);
+      const s = Math.floor(left % 60);
+      el.textContent = `⏱️ ${m}:${s.toString().padStart(2, '0')}`;
+      el.style.color = 'var(--cyan)';
+    }
+  });
+}
+setInterval(updateTimers, 1000);
 
 /* ═══════════════════════════════════════════════════════════ */
 /* LÓGICA PRINCIPAL DO APP */
@@ -1843,6 +1942,9 @@ async function loadDashboard() {
     document.getElementById('statActive').textContent = `${status.active_trades.length}/3`;
     document.getElementById('statMode').textContent = `${status.mode} ${status.timeframe}`;
     
+    // NOVO: Win rate por ativo
+    UI.state.assetWR = status.asset_wr || {};
+    
     // Circuit breaker
     const cbBanner = document.getElementById('cbBanner');
     if (status.paused) {
@@ -1856,8 +1958,7 @@ async function loadDashboard() {
     const tradesContainer = document.getElementById('tradesContainer');
     const trades = UI.state.showClosed ? status.active_trades : status.active_trades.filter(t => !t.closed);
     if (trades.length) {
-      tradesContainer.innerHTML = trades.map(UI.renderTrade).join('');
-    } else {
+      tradesContainer.innerHTML = trades.map(UI.renderTrade).join('');    } else {
       tradesContainer.innerHTML = '<div class="empty-state"><span class="empty-icon">📭</span><div class="empty-text">Nenhum trade aberto</div></div>';
     }
     
@@ -1906,8 +2007,7 @@ async function loadScanner() {
     const f = UI.state.currentFilter;
     if (f === 'up') filtered = filtered.filter(x => x.cenario === 'ALTA');
     else if (f === 'down') filtered = filtered.filter(x => x.cenario === 'BAIXA');
-    else if (f === 'forex') filtered = filtered.filter(x => x.category === 'FOREX');
-    else if (f === 'crypto') filtered = filtered.filter(x => x.category === 'CRYPTO');
+    else if (f === 'forex') filtered = filtered.filter(x => x.category === 'FOREX');    else if (f === 'crypto') filtered = filtered.filter(x => x.category === 'CRYPTO');
     else if (f === 'comm') filtered = filtered.filter(x => x.category === 'COMMODITIES');
     else if (f === 'idx') filtered = filtered.filter(x => x.category === 'INDICES');
     
@@ -1957,25 +2057,30 @@ function setScanFilter(filter, btn) {
   document.getElementById('searchInput').value = '';
   loadScanner();
 }
-
 // Carregar sinais
 async function loadSignals() {
   try {
     const signals = await API.getSignals();
     
     // Detectar novos sinais para animação
-    const currentIds = signals.map(s => s.texto + s.ts).slice(0, 20);
+    const currentIds = signals.map(s => s.unix_ts).slice(0, 20);
     signals.forEach((s, i) => {
-      const id = s.texto + s.ts;
-      if (!UI.state.lastSignals.includes(id) && i < 5) {
-        UI.state.newSignalIds.add(id);
+      if (!UI.state.lastSignals.includes(s.unix_ts) && i < 5) {
+        UI.state.newSignalIds.add(s.unix_ts);
       }
     });
     UI.state.lastSignals = currentIds;
     
     // Filtrar
     let filtered = [...signals];
-    if (UI.state.signalFilter !== 'all') {
+    
+    // NOVO: Filtro "Executar Agora" — apenas gatilho/sinal com <15min
+    if (UI.state.signalFilter === 'exec') {
+      filtered = filtered.filter(s => 
+        ['gatilho', 'sinal'].includes(s.tipo) && 
+        (s.unix_ts > (Date.now()/1000 - 900))
+      );
+    } else if (UI.state.signalFilter !== 'all') {
       filtered = filtered.filter(s => s.tipo === UI.state.signalFilter);
     }
     
@@ -1984,12 +2089,7 @@ async function loadSignals() {
     if (!filtered.length) {
       container.innerHTML = '<div class="empty-state"><span class="empty-icon">🔔</span><div class="empty-text">Nenhum sinal neste filtro.</div></div>';
     } else {
-      container.innerHTML = filtered.map(s => {
-        const id = s.texto + s.ts;
-        return UI.renderSignal(s, UI.state.newSignalIds.has(id));
-      }).reverse().join('');
-      
-      // Remover marcação de novo após animação
+      container.innerHTML = filtered.map(s => UI.renderSignal(s, UI.state.newSignalIds.has(s.unix_ts))).reverse().join('');
       setTimeout(() => UI.state.newSignalIds.clear(), 1000);
     }
     
@@ -2005,8 +2105,7 @@ async function loadSignals() {
 function setSignalFilter(type, btn) {
   document.querySelectorAll('#signalFilters .chip').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
-  UI.state.signalFilter = type;
-  loadSignals();
+  UI.state.signalFilter = type;  loadSignals();
 }
 
 // Atualizar badge de notificação
@@ -2055,8 +2154,7 @@ async function loadCT() {
             <div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">RSI</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700" class="${rsiClass}">${r.rsi.toFixed(1)}</div></div>
             <div style="text-align:center"><div style="font-size:8px;color:var(--text-muted)">Força</div><div style="font-size:13px;font-family:var(--font-mono);font-weight:700;color:var(--gold)">${r.strength}%</div></div>
           </div>
-        </div>
-      `;
+        </div>      `;
     }).join('');
     
   } catch (e) {
@@ -2105,8 +2203,7 @@ async function loadNews() {
 function showSubPage(page) {
   document.getElementById('subCT').style.display = page === 'ct' ? '' : 'none';
   document.getElementById('subNews').style.display = page === 'news' ? '' : 'none';
-  document.getElementById('tabCT').classList.toggle('active', page === 'ct');
-  document.getElementById('tabNews').classList.toggle('active', page === 'news');
+  document.getElementById('tabCT').classList.toggle('active', page === 'ct');  document.getElementById('tabNews').classList.toggle('active', page === 'news');
   if (page === 'news') loadNews();
 }
 
@@ -2155,8 +2252,7 @@ async function setTimeframe(tf) {
 async function resetCircuitBreaker() {
   if (!confirm('Resetar Circuit Breaker?')) return;
   try {
-    await API.resetPause();
-    await loadDashboard();
+    await API.resetPause();    await loadDashboard();
   } catch (e) { alert('Erro: ' + e.message); }
 }
 
@@ -2205,8 +2301,7 @@ async function toggleNotifications() {
   if (Notification.permission === 'denied') {
     alert('Notificações bloqueadas. Habilite nas configurações do navegador.');
     return;
-  }
-  
+  }  
   if (Notification.permission === 'granted') {
     await subscribeUser();
     return;
@@ -2255,8 +2350,7 @@ function updateNotificationButton() {
     return;
   }
   
-  if (Notification.permission === 'denied') {
-    btn.textContent = '🚫 Notificações bloqueadas';
+  if (Notification.permission === 'denied') {    btn.textContent = '🚫 Notificações bloqueadas';
     btn.disabled = true;
     return;
   }
@@ -2305,8 +2399,7 @@ manifestLink.href = URL.createObjectURL(manifestBlob);
 document.head.appendChild(manifestLink);
 
 // Carregar preferências salvas
-function loadPreferences() {
-  const saved = localStorage.getItem('sniper_prefs');
+function loadPreferences() {  const saved = localStorage.getItem('sniper_prefs');
   if (saved) {
     try {
       const prefs = JSON.parse(saved);
@@ -2334,6 +2427,9 @@ window.addEventListener('load', async () => {
   initServiceWorker();
   loadPreferences();
   
+  // NOVO: Inicializar calculadora
+  Calc.init();
+  
   // Carregar dados iniciais
   await loadDashboard();
   window._status = await API.getStatus(); // Para referência nos botões
@@ -2352,15 +2448,14 @@ window.addEventListener('load', async () => {
       loadDashboard();
       loadSignals();
     }
-  });
-});
+  });});
 </script>
 </body>
 </html>"""
 
 
 # ═══════════════════════════════════════════════════════════════
-# FLASK API (INALTERADA - Estrutura preservada)
+# FLASK API (COM MELHORIAS ADICIONADAS)
 # ═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
@@ -2402,12 +2497,21 @@ def create_api(bot):
             trades_out.append({"symbol": t["symbol"], "name": t.get("name",""), "dir": t["dir"],
                 "tipo": t.get("tipo",""), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
                 "current": cur, "pnl": round(pnl,2), "opened_at": t.get("opened_at","")})
+                # NOVO: Calcular win rate por ativo para exibir no frontend
+        asset_wr = {}
+        for h in bot.history:
+            s = h["symbol"]
+            if s not in asset_wr: asset_wr[s] = {"w":0, "l":0}
+            asset_wr[s]["w" if h["result"]=="WIN" else "l"] += 1
+        asset_wr_out = {k: f"{int(v['w']/(v['w']+v['l'])*100) if v['w']+v['l']>0 else 0}%" for k,v in asset_wr.items()}
+        
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
             "consecutive_losses": bot.consecutive_losses, "mode": bot.mode, "timeframe": bot.timeframe,
             "paused": bot.is_paused(), "cb_mins": max(0,int((bot.paused_until-time.time())/60)) if bot.is_paused() else 0,
             "active_trades": trades_out,
             "markets": {cat: mkt_open(cat) for cat in Config.MARKET_CATEGORIES.keys()},
+            "asset_wr": asset_wr_out  # ← NOVO: win rate por ativo
         })
 
     @app.route("/api/config")
@@ -2442,8 +2546,7 @@ def create_api(bot):
                 "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2),
                 "macd_bull": d["macd_bull"], "macd_bear": d["macd_bear"],
                 "h1_bull": d["h1_bull"], "h1_bear": d["h1_bear"]})
-        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))
-        return jsonify(out)
+        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))        return jsonify(out)
 
     @app.route("/api/reversals")
     def api_reversals():
@@ -2493,7 +2596,6 @@ def create_api(bot):
             _push_subscriptions.append(sub)
             log(f"[PUSH] Nova inscrição. Total: {len(_push_subscriptions)}")
         return jsonify({"ok": True})
-
     return app
 
 
@@ -2542,8 +2644,7 @@ def bot_loop(bot):
             bot.maybe_send_news()
             bot.scan()
             bot.scan_reversal_forex()
-            bot.monitor_trades()
-            time.sleep(Config.SCAN_INTERVAL)
+            bot.monitor_trades()            time.sleep(Config.SCAN_INTERVAL)
         except Exception as e:
             log(f"Erro loop: {e}"); time.sleep(10)
 
