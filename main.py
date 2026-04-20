@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-═══════════════════════════════════════════════════════════════
-CONFIGURAÇÕES
-═══════════════════════════════════════════════════════════════
+####################
+#CONFIGURAÇÕES
+#══════════════════════════════════════════════════════════════
 class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
@@ -66,9 +66,9 @@ def fmt(p: float) -> str:
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
 
-═══════════════════════════════════════════════════════════════
-HELPERS DE MERCADO
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#HELPERS DE MERCADO
+#═══════════════════════════════════════════════════════════════
 def to_yf(s):
     if "-" in s or s.startswith("^") or s.endswith("=F"): return s
     return f"{s}=X"
@@ -94,9 +94,9 @@ def mkt_open(cat):
     if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
     return True
 
-═══════════════════════════════════════════════════════════════
-PERSISTÊNCIA (ATUALIZADA PARA PENDENTES)
-═══════════════════════════════════════════════════════════════def save_state(bot):
+#═══════════════════════════════════════════════════════════════
+#PERSISTÊNCIA (ATUALIZADA PARA PENDENTES)
+#═══════════════════════════════════════════════════════════════def save_state(bot):
     data = {
         "mode": bot.mode, "timeframe": bot.timeframe,
         "wins": bot.wins, "losses": bot.losses,
@@ -137,9 +137,9 @@ def load_state(bot):
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
 
-═══════════════════════════════════════════════════════════════
-NOTÍCIAS / FEAR & GREED (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#NOTÍCIAS / FEAR & GREED (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 RSS_FEEDS = [
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("Cointelegraph", "https://cointelegraph.com/rss"),
@@ -179,9 +179,9 @@ def build_news_msg():
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
-═══════════════════════════════════════════════════════════════
-MOTOR DE ANÁLISE PRINCIPAL (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#MOTOR DE ANÁLISE PRINCIPAL (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
@@ -247,9 +247,9 @@ def get_analysis(symbol, timeframe=None):
     except Exception as e:
         log(f"[ANÁLISE] {symbol}: {e}"); return None
 
-═══════════════════════════════════════════════════════════════
-CONFLUÊNCIA (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#CONFLUÊNCIA (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 def calc_confluence(res, d):
     if d == "BUY":
         checks = [("EMA 200 acima", res["price"] > res["ema200"]), ("EMA 9 > 21", res["ema9"] > res["ema21"]),
@@ -265,9 +265,9 @@ def cbar(sc, tot):
     f = math.floor(sc/tot*5)
     return "█"*f + "░"*(5-f)
 
-═══════════════════════════════════════════════════════════════
-MOTOR DE CONTRA-TENDÊNCIA (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#MOTOR DE CONTRA-TENDÊNCIA (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 def detect_candle_patterns(df):
     if len(df) < 3: return False, False, ""
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
@@ -364,9 +364,9 @@ def detect_reversal(res):
     forca = min(forca, 100)
     return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
 
-═══════════════════════════════════════════════════════════════
-PUSH NOTIFICATIONS (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#PUSH NOTIFICATIONS (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 _push_subscriptions = []
 def send_push(title, body, icon="/icon-192.png"):
     try:
@@ -387,10 +387,11 @@ def send_push(title, body, icon="/icon-192.png"):
     except ImportError: pass
     except Exception as e: log(f"[PUSH] {e}")
 
-═══════════════════════════════════════════════════════════════
-BOT PRINCIPAL (MODIFICADO APENAS NO FLUXO DE ENTRADA)
-═══════════════════════════════════════════════════════════════
-class TradingBot:    def __init__(self):
+#═══════════════════════════════════════════════════════════════
+#BOT PRINCIPAL (MODIFICADO APENAS NO FLUXO DE ENTRADA)
+#═══════════════════════════════════════════════════════════════
+def __init__(self):
+    class TradingBot:    def __init__(self):
         self.mode = "CRYPTO"; self.timeframe = Config.TIMEFRAME
         self.wins = 0; self.losses = 0; self.consecutive_losses = 0
         self.paused_until = 0; self.active_trades = []; self.pending_operations = []
@@ -688,9 +689,9 @@ class TradingBot:    def __init__(self):
                     self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\nPausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
         if changed: save_state(self)
 
-═══════════════════════════════════════════════════════════════
-SERVICE WORKER JS (INALTERADO)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#SERVICE WORKER JS (INALTERADO)
+#═══════════════════════════════════════════════════════════════
 SW_JS = """
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => clients.claim());
@@ -712,9 +713,9 @@ else clients.openWindow('/');
 });
 """
 
-═══════════════════════════════════════════════════════════════
-DASHBOARD HTML (ATUALIZADO: ABA PENDENTES + CÓPIA INDIVIDUAL)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#DASHBOARD HTML (ATUALIZADO: ABA PENDENTES + CÓPIA INDIVIDUAL)
+#═══════════════════════════════════════════════════════════════
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -952,9 +953,9 @@ window.addEventListener('load',()=>{loadDash();loadPending();setInterval(()=>{lo
 </body>
 </html>"""
 
-═══════════════════════════════════════════════════════════════
-FLASK API (ATUALIZADA COM ENDPOINTS DE PENDENTES)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#FLASK API (ATUALIZADA COM ENDPOINTS DE PENDENTES)
+#═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
@@ -1095,9 +1096,9 @@ def run_api(bot):
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
-═══════════════════════════════════════════════════════════════
-LOOP DO BOT & MAIN (INALTERADOS)
-═══════════════════════════════════════════════════════════════
+#═══════════════════════════════════════════════════════════════
+#LOOP DO BOT & MAIN (INALTERADOS)
+#═══════════════════════════════════════════════════════════════
 def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
