@@ -1420,8 +1420,7 @@ input:checked + .toggle-slider:before { transform: translateX(20px); background:
 <div class="page" id="page-scan">
   <div class="section-header">
     <span class="section-title">📡 Scanner em Tempo Real</span>
-    <button class="refresh-btn" onclick="loadScanner()">↻ Atualizar</button>
-  </div>
+    <button class="refresh-btn" onclick="FrontendCache.clear(); loadScanner()">↻ Atualizar</button>
   
   <!-- Trend Summary -->
   <div class="card" style="padding:10px 14px;margin-bottom:12px">
