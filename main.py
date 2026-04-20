@@ -937,11 +937,16 @@ self.addEventListener('fetch', e => {
 self.addEventListener('push', e => {
   let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
   try { data = JSON.parse(e.data.text()); } catch(_) {}
-  e.waitUntil(self.registration.showNotification(data.title, {
-    body: data.body, icon: data.icon || '/icon-192.png',
-    badge: '/icon-192.png', vibrate: [200, 100, 200],
-     { url: '/' }
-  }));
+  
+  e.waitUntil(
+  self.registration.showNotification(data.title, {
+    body: data.body,
+    icon: data.icon || '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: [200, 100, 200],
+    data: { url: '/' }
+  })
+);
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
@@ -2855,8 +2860,35 @@ window.addEventListener('load', async () => {
       loadDashboard();
       loadSignals();
     }
+
+// Inicializar navegação ao carregar
+  document.addEventListener("DOMContentLoaded", () => {
+
+  document.querySelectorAll(".nav-btn").forEach(btn => {
+
+    btn.addEventListener("click", () => {
+
+      const page = btn.dataset.page;
+      if (!page) return;
+
+      document.querySelectorAll(".page")
+        .forEach(p => p.classList.remove("active"));
+
+      document.querySelectorAll(".nav-btn")
+        .forEach(b => b.classList.remove("active"));
+
+      document.getElementById(page)
+        ?.classList.add("active");
+
+      btn.classList.add("active");
+
+    });
+
   });
+
 });
+  
+
 
   
   
