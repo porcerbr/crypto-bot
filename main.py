@@ -16,7 +16,6 @@ import pandas as pd, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES & HELPERS (100% PRESERVADOS)
 # ═══════════════════════════════════════════════════════════════
@@ -49,7 +48,18 @@ class Config:
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
     TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; 
     SCAN_INTERVAL = 30
-
+    BROKER_NAME = "Tickmill"
+    INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
+    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "10"))
+    RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
+    MIN_LOT = 0.01
+    LOT_STEP = 0.01
+    CONTRACT_SIZES = {
+        "FOREX": 100000,
+        "CRYPTO": 1,
+        "COMMODITIES": 100,
+        "INDICES": 1,
+    }
     TIMEFRAMES = {
     "1m": ("Agressivo", "7d"),
     "5m": ("Alto", "5d"),
@@ -58,15 +68,11 @@ class Config:
     "1h": ("Seguro", "60d"),
     "4h": ("Muito Seguro", "60d")
     }
-
     TIMEFRAME = "15m"
     FOREX_OPEN_UTC = 7; FOREX_CLOSE_UTC = 17
     COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
     IDX_OPEN_UTC   = 7; IDX_CLOSE_UTC   = 21
     STATE_FILE = "bot_state.json"
-    RISK_BALANCE = float(os.getenv("RISK_BALANCE", "1000"))
-    RISK_PCT_PER_TRADE = float(os.getenv("RISK_PCT_PER_TRADE", "1.0"))
-
 def fmt(p: float) -> str:
     if not p: return "0"
     if p >= 10000: return f"{p:,.2f}"
@@ -74,81 +80,69 @@ def fmt(p: float) -> str:
     if p >= 10:    return f"{p:.4f}"
     if p >= 1:     return f"{p:.5f}"
     return f"{p:.6f}"
-
-def _contract_size(symbol: str) -> float:
-    cat = asset_cat(symbol)
-    if cat == "FOREX":
-        return 100000.0
-    if cat == "CRYPTO":
-        return 1.0
-    if cat == "COMMODITIES":
-        return {
-            "GC=F": 100.0,
-            "SI=F": 5000.0,
-            "CL=F": 1000.0,
-            "BZ=F": 1000.0,
-            "NG=F": 10000.0,
-            "HG=F": 25000.0,
-            "ZC=F": 5000.0,
-            "ZW=F": 5000.0,
-            "ZS=F": 5000.0,
-            "PL=F": 50.0,
-        }.get(symbol, 1.0)
-    if cat == "INDICES":
-        return {
-            "ES=F": 50.0,
-            "NQ=F": 20.0,
-            "YM=F": 5.0,
-            "RTY=F": 50.0,
-            "^GDAXI": 1.0,
-            "^FTSE": 1.0,
-            "^N225": 1.0,
-            "^BVSP": 1.0,
-            "^HSI": 1.0,
-            "^STOXX50E": 1.0,
-        }.get(symbol, 1.0)
-    return 1.0
-
-
-def calc_risk_profile(symbol: str, entry: float, sl: float, tp: float | None = None) -> dict:
-    stop = abs(entry - sl)
-    risk_money = float(Config.RISK_BALANCE) * float(Config.RISK_PCT_PER_TRADE) / 100.0
-    contract = _contract_size(symbol)
-    lot = (risk_money / (stop * contract)) if stop > 0 else 0.0
-    rr = (abs(tp - entry) / stop) if (tp is not None and stop > 0) else 0.0
-    return {
-        "risk_money": round(risk_money, 2),
-        "risk_pct": round(float(Config.RISK_PCT_PER_TRADE), 2),
-        "contract_size": contract,
-        "lot": round(max(lot, 0.0), 4),
-        "rr": round(rr, 2),
-    }
-
-
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
-
 def to_yf(s):
     if "-" in s or s.startswith("^") or s.endswith("=F"): return s
     return f"{s}=X"
-
 def asset_cat(s):
     for cat, info in Config.MARKET_CATEGORIES.items():
         if s in info["assets"]: return cat
     return "CRYPTO"
-
 def asset_name(s):
     for info in Config.MARKET_CATEGORIES.values():
         if s in info["assets"]: return info["assets"][s]
     return s
-
 def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
-
+def contract_size_for(symbol):
+    specific = {"GC=F": 100, "SI=F": 5000, "CL=F": 1000, "BZ=F": 1000, "NG=F": 10000, "HG=F": 25000, "ZC=F": 50, "ZW=F": 50, "ZS=F": 50, "PL=F": 50, "ES=F": 50, "NQ=F": 20, "YM=F": 5, "RTY=F": 50, "^GDAXI": 1, "^FTSE": 1, "^N225": 1, "^BVSP": 1, "^HSI": 1, "^STOXX50E": 1}
+    return specific.get(symbol, Config.CONTRACT_SIZES.get(asset_cat(symbol), 1))
+def normalize_lot(lot):
+    if lot <= 0:
+        return 0.0
+    step = Config.LOT_STEP
+    return round(math.floor(lot / step) * step, 4)
+def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
+    amount = float(amount or 0)
+    leverage = float(leverage or 1)
+    entry = float(entry or 0)
+    sl = float(sl or 0)
+    tp = float(tp or 0)
+    contract_size = contract_size_for(symbol)
+    if amount <= 0:
+        return {"ok": False, "error": "Valor da operação precisa ser maior que zero."}
+    if entry <= 0 or sl <= 0 or tp <= 0:
+        return {"ok": False, "error": "Preço de entrada/SL/TP inválido."}
+    if leverage <= 0:
+        return {"ok": False, "error": "Alavancagem inválida."}
+    sl_distance = abs(entry - sl)
+    if sl_distance <= 0:
+        return {"ok": False, "error": "Distância do stop inválida."}
+    margin_cap = amount * leverage
+    max_lot_by_margin = margin_cap / (entry * contract_size)
+    risk_money_target = amount * (float(risk_pct) / 100.0)
+    lot_by_risk = risk_money_target / (sl_distance * contract_size)
+    raw_lot = min(max_lot_by_margin, lot_by_risk)
+    lot = normalize_lot(raw_lot)
+    note = []
+    if lot < Config.MIN_LOT and max_lot_by_margin >= Config.MIN_LOT:
+        note.append(f"Lote calculado abaixo do mínimo; ajustado para {Config.MIN_LOT:.2f}.")
+        lot = Config.MIN_LOT
+    if lot > max_lot_by_margin + 1e-12:
+        lot = normalize_lot(max_lot_by_margin)
+    if lot < Config.MIN_LOT or lot <= 0:
+        return {"ok": False, "error": f"Valor insuficiente para abrir o lote mínimo de {Config.MIN_LOT:.2f}."}
+    margin_required = entry * contract_size * lot / leverage
+    if margin_required > amount + 1e-9:
+        return {"ok": False, "error": "Margem insuficiente para o lote mínimo."}
+    risk_loss = sl_distance * contract_size * lot
+    tp_gain = abs(tp - entry) * contract_size * lot
+    potential_pnl_ratio = tp_gain / margin_required * 100 if margin_required else 0
+    return {"ok": True, "symbol": symbol, "contract_size": contract_size, "entry": entry, "sl": sl, "tp": tp, "amount": amount, "leverage": leverage, "risk_pct": float(risk_pct), "lot_by_risk": round(lot_by_risk, 4), "max_lot_by_margin": round(max_lot_by_margin, 4), "lot": round(lot, 4), "margin_required": round(margin_required, 2), "risk_money_target": round(risk_money_target, 2), "risk_loss": round(risk_loss, 2), "tp_gain": round(tp_gain, 2), "potential_pnl_ratio": round(potential_pnl_ratio, 2), "note": note}
 def all_syms():
     out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
     return out
-
 def mkt_open(cat):
     now = datetime.now(timezone.utc); h = now.hour; wd = now.weekday()
     if cat == "CRYPTO": return True
@@ -157,7 +151,6 @@ def mkt_open(cat):
     if cat == "COMMODITIES": return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
     if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
     return True
-
 # ═══════════════════════════════════════════════════════════════# PERSISTÊNCIA, NOTÍCIAS, ANÁLISE, CONFLUÊNCIA, CT, PUSH
 # ═══════════════════════════════════════════════════════════════
 # (TUDO PRESERVADO EXATAMENTE COMO NA VERSÃO ANTERIOR)
@@ -173,12 +166,14 @@ def save_state(bot):
         "radar_list": bot.radar_list, "gatilho_list": bot.gatilho_list,
         "reversal_list": bot.reversal_list, "asset_cooldown": bot.asset_cooldown,
         "history": bot.history,
-        "signals_feed": bot.signals_feed
+        "signals_feed": bot.signals_feed,
+        "balance": bot.balance,
+        "leverage": bot.leverage,
+        "risk_pct": bot.risk_pct,
     }
     try:
         with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
     except Exception as e: log(f"[STATE] {e}")
-
 def load_state(bot):
     if not os.path.exists(Config.STATE_FILE): return
     try:
@@ -195,6 +190,9 @@ def load_state(bot):
         bot.reversal_list = data.get("reversal_list", {}); bot.asset_cooldown = data.get("asset_cooldown", {})
         bot.history = data.get("history", [])
         bot.signals_feed = data.get("signals_feed", [])
+        bot.balance = float(data.get("balance", Config.INITIAL_BALANCE))
+        bot.leverage = int(data.get("leverage", Config.DEFAULT_LEVERAGE))
+        bot.risk_pct = float(data.get("risk_pct", Config.RISK_PERCENT_PER_TRADE))
         for t in bot.active_trades: t["session_alerted"] = False
         for t in bot.pending_trades: t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
@@ -202,18 +200,14 @@ def load_state(bot):
             lines = ["♻️ BOT REINICIADO – TRADES ATIVOS\n"]
             for t in bot.active_trades:
                 dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
-                risk = calc_risk_profile(t["symbol"], t["entry"], t["sl"], t.get("tp"))
-                lot_txt = fmt(t.get("lot", risk["lot"]))
-                lines.append(f"📌 {t['symbol']} {dl} | Entrada: `{fmt(t['entry'])}` | TP: `{fmt(t['tp'])}` | SL: `{fmt(t['sl'])}` | Lote: `{lot_txt}`")
+                lines.append(f"📌 {t['symbol']} {dl} | Entrada: `{fmt(t['entry'])}` | TP: `{fmt(t['tp'])}` | SL: `{fmt(t['sl'])}`")
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
-
 RSS_FEEDS = [    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"), ("Cointelegraph", "https://cointelegraph.com/rss"),
     ("Decrypt", "https://decrypt.co/feed"),
     ("Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories"),
 ]
-
 def _parse_rss(url, src, mx=3):
     try:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
@@ -227,7 +221,6 @@ def _parse_rss(url, src, mx=3):
             if title and link: out.append({"title": title, "url": link, "source": src})
         return out
     except: return []
-
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
@@ -235,13 +228,11 @@ def get_news(mx=15):
         try: arts.extend(_parse_rss(url, name, 4))
         except Exception as e: log(f"[RSS] {name}: {e}")
     return arts[:mx]
-
 def get_fear_greed():
     try:
         d = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6).json()["data"][0]
         return {"value": d["value"], "label": d["value_classification"]}
     except: return {"value": "N/D", "label": " "}
-
 def build_news_msg():
     arts = get_news(5); fg = get_fear_greed()
     lines = ["📰 NOTÍCIAS\n"]
@@ -250,7 +241,6 @@ def build_news_msg():
         lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})")
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
-
 def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
@@ -319,7 +309,6 @@ def get_analysis(symbol, timeframe=None):
         }
     except Exception as e:
         log(f"[ANÁLISE] {symbol}: {e}"); return None
-
 def calc_confluence(res, d):
     if d == "BUY":
         checks = [("EMA 200 acima", res["price"] > res["ema200"]), ("EMA 9 > 21", res["ema9"] > res["ema21"]),
@@ -331,11 +320,9 @@ def calc_confluence(res, d):
                   ("TF Superior Baixa", res["h1_bear"]), ("ADX tendência", res["adx"] > Config.ADX_MIN)]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
-
 def cbar(sc, tot):
     f = math.floor(sc/tot*5)
     return "█"*f + "░"*(5-f)
-
 def detect_candle_patterns(df):
     if len(df) < 3: return False, False, " "
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
@@ -351,7 +338,6 @@ def detect_candle_patterns(df):
     elif lw>rng0*0.6 and body0<rng0*0.25: pb=True; nm="Pin Bar Alta"
     elif uw>rng0*0.6 and body0<rng0*0.25: pb2=True; nm="Pin Bar Baixa"
     return pb, pb2, nm
-
 def get_reversal_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
@@ -402,7 +388,6 @@ def get_reversal_analysis(symbol, timeframe=None):
             "signal_sell_ct": sig_sell, "signal_buy_ct": sig_buy,
         }
     except Exception as e: log(f"[CT] {symbol}: {e}"); return None
-
 def calc_reversal_conf(res, d):
     if d == "SELL":
         checks = [("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
@@ -413,7 +398,6 @@ def calc_reversal_conf(res, d):
                   ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),                  ("Candle de alta", res["pat_bull"]), ("Wick inferior", res["wick_bull"]), ("ADX maduro", res["adx_mature"])]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
-
 def detect_reversal(res):
     if not res: return (False, None, 0, [])
     motivos = []; forca = 0; dir_rev = None
@@ -432,7 +416,6 @@ def detect_reversal(res):
         if res["adx"] < 20 and cen == "BAIXA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
     forca = min(forca, 100)
     return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
-
 _push_subscriptions = []
 def send_push(title, body, icon="/icon-192.png"):
     try:
@@ -452,7 +435,6 @@ def send_push(title, body, icon="/icon-192.png"):
         for d in dead: _push_subscriptions.remove(d)
     except ImportError: pass
     except Exception as e: log(f"[PUSH] {e}")
-
 # ═══════════════════════════════════════════════════════════════
 # BOT PRINCIPAL (100% PRESERVADO)
 # ═══════════════════════════════════════════════════════════════
@@ -466,7 +448,10 @@ class TradingBot:
         self.last_id = 0; self.last_news_ts = 0; self._restore_msg = None
         self.trend_cache = {}; self.last_trends_update = 0
         self.signals_feed = []; self.news_cache = []; self.news_cache_ts = 0
-
+        self.balance = Config.INITIAL_BALANCE
+        self.leverage = Config.DEFAULT_LEVERAGE
+        self.risk_pct = Config.RISK_PERCENT_PER_TRADE
+        self.awaiting_custom_amount = None
     def send(self, text, markup=None, disable_preview=False):
         import re
         clean = re.sub(r"<[^>]+>", " ", text).strip()
@@ -490,34 +475,93 @@ class TradingBot:
         if markup: payload["reply_markup"] = json.dumps(markup)
         try: requests.post(url, json=payload, timeout=8)
         except Exception as e: log(f"[SEND] {e}")
-
     def send_pending_notification(self, t):
-        dl = "COMPRAR (BUY) 🟢" if t["dir"]=="BUY" else "VENDER (SELL) 🔴"
-        sl_pct = abs(t["entry"]-t["sl"])/t["entry"]*100
-        tp_pct = abs(t["tp"]-t["entry"])/t["entry"]*100
+        dl = "COMPRAR (BUY) 🟢" if t["dir"] == "BUY" else "VENDER (SELL) 🔴"
+        sl_pct = abs(t["entry"] - t["sl"]) / t["entry"] * 100
+        tp_pct = abs(t["tp"] - t["entry"]) / t["entry"] * 100
         is_ct = "CONTRA-TENDÊNCIA" in (t.get("tipo") or "  ")
         header = "⚡ SINAL CT PENDENTE" if is_ct else "🎯 SINAL PENDENTE"
-        text = (f"{header} – <b>{t['symbol']}</b> ({t['name']})\nAguardando sua confirmação…\n\n▶️ <b>{dl}</b>\n\n"
-                f"💰 <b>Entrada:</b> <code>{fmt(t['entry'])}</code>\n🛡 <b>SL:</b> <code>{fmt(t['sl'])}</code> ({-sl_pct:.2f}%)\n"
-                f"🎯 <b>TP:</b> <code>{fmt(t['tp'])}</code> ({tp_pct:+.2f}%)\n"
-                f"📦 <b>Lote recomendado:</b> <code>{fmt(t.get('lot', 0))}</code>\n"
-                f"⚖️ <b>Risco por trade:</b> <code>{t.get('risk_pct', Config.RISK_PCT_PER_TRADE):.2f}%</code>\n\n")
-        if is_ct and t.get("sinais"): text += "<b>Sinais de exaustão:</b>\n" + "\n".join(f"   ⚡ {sg}" for sg in t["sinais"]) + "\n\n"
-        if t.get("conf_txt"): text += f"<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
-        markup = {"inline_keyboard": [[{"text": "✅ Aceitar", "callback_data": f"confirm_{t['pending_id']}"}, {"text": "❌ Recusar", "callback_data": f"reject_{t['pending_id']}"}]]}
+        text = "\n".join([
+            f"{header} – <b>{t['symbol']}</b> ({t['name']})",
+            "Aguardando sua escolha de valor…",
+            "",
+            f"▶️ <b>{dl}</b>",
+            "",
+            f"💰 <b>Entrada:</b> <code>{fmt(t['entry'])}</code>",
+            f"🛡 <b>SL:</b> <code>{fmt(t['sl'])}</code> ({-sl_pct:.2f}%)",
+            f"🎯 <b>TP:</b> <code>{fmt(t['tp'])}</code> ({tp_pct:+.2f}%)",
+            "",
+            f"🏦 <b>Conta:</b> <code>{fmt(self.balance)}</code> | <b>Alavancagem:</b> <code>{self.leverage}x</code> | <b>Risco:</b> <code>{self.risk_pct:.1f}%</code>",
+            "",
+        ])
+        if is_ct and t.get("sinais"):
+            text += "\n<b>Sinais de exaustão:</b>\n" + "\n".join(f"   ⚡ {sg}" for sg in t["sinais"]) + "\n"
+        if t.get("conf_txt"):
+            text += f"\n<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
+        markup = {"inline_keyboard": [[
+            {"text": "25%", "callback_data": f"amtpct_25_{t['pending_id']}"},
+            {"text": "50%", "callback_data": f"amtpct_50_{t['pending_id']}"},
+            {"text": "100%", "callback_data": f"amtpct_100_{t['pending_id']}"}
+        ], [
+            {"text": "Valor custom", "callback_data": f"amtcustom_{t['pending_id']}"},
+            {"text": "❌ Recusar", "callback_data": f"reject_{t['pending_id']}"}
+        ]]}
         self.send(text, markup=markup)
-
-    def confirm_pending(self, pending_id):
+    def _open_trade_with_plan(self, pending_trade, plan, source="telegram"):
+        trade = {k: v for k, v in pending_trade.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
+        trade.update({
+            "capital_base": plan["amount"],
+            "margin_required": plan["margin_required"],
+            "lot": plan["lot"],
+            "contract_size": plan["contract_size"],
+            "risk_pct": plan["risk_pct"],
+            "risk_money_target": plan["risk_money_target"],
+            "risk_loss": plan["risk_loss"],
+            "tp_gain": plan["tp_gain"],
+            "leverage": plan["leverage"],
+            "risk_note": plan.get("note", []),
+            "source": source,
+        })
+        self.balance -= plan["margin_required"]
+        self.balance = round(self.balance, 2)
+        self.active_trades.append(trade)
+        save_state(self)
+        return trade
+    def execute_pending_with_amount(self, pending_id, amount, source="telegram"):
         for t in self.pending_trades[:]:
-            if t.get("pending_id") == pending_id:
-                self.pending_trades.remove(t)
-                trade = {k: v for k, v in t.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}                
-                self.active_trades.append(trade); save_state(self)
-                dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
-                self.send(f"✅ <b>TRADE CONFIRMADO – {t['symbol']}</b>\n{dl} | Entrada: <code>{fmt(t['entry'])}</code>\nSL: <code>{fmt(t['sl'])}</code> | TP: <code>{fmt(t['tp'])}</code> | Lote: <code>{fmt(t.get('lot', 0))}</code>")
-                return True
+            if t.get("pending_id") != pending_id:
+                continue
+            plan = calc_trade_plan(t["symbol"], t["entry"], t["sl"], t["tp"], amount, self.leverage, self.risk_pct)
+            if not plan.get("ok"):
+                self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\n{plan.get('error','Erro desconhecido')}")
+                return False
+            self.pending_trades.remove(t)
+            opened = self._open_trade_with_plan(t, plan, source=source)
+            dl = "BUY 🟢" if opened["dir"] == "BUY" else "SELL 🔴"
+            warn = ""
+            if plan.get("note"):
+                warn = "\n" + "\n".join(f"⚠ {n}" for n in plan["note"])
+            self.send(
+                f"✅ <b>TRADE ABERTO – {opened['symbol']}</b>\n"
+                f"{dl} | Entrada: <code>{fmt(opened['entry'])}</code>\n"
+                f"💵 Base escolhida: <code>{fmt(plan['amount'])}</code> | Alavancagem: <code>{int(plan['leverage'])}x</code>\n"
+                f"📦 Lote: <code>{plan['lot']:.2f}</code> | Margem usada: <code>{fmt(plan['margin_required'])}</code>\n"
+                f"🛡 SL: <code>{fmt(opened['sl'])}</code> | 🎯 TP: <code>{fmt(opened['tp'])}</code>\n"
+                f"📉 Risco até SL: <code>{fmt(plan['risk_loss'])}</code> | 📈 Potencial no TP: <code>{fmt(plan['tp_gain'])}</code>\n"
+                f"🏦 Saldo após reservar margem: <code>{fmt(self.balance)}</code>{warn}"
+            )
+            return True
         return False
-
+    def request_custom_amount(self, pending_id):
+        self.awaiting_custom_amount = pending_id
+        self.send(
+            f"💬 <b>Valor custom solicitado</b>\n\nEnvie agora o valor que deseja negociar em dólares.\n"
+            f"Exemplo: <code>500</code>\n\nVocê pode cancelar enviando <code>cancelar</code>."
+        )
+    def confirm_pending(self, pending_id, amount=None):
+        if amount is None:
+            amount = min(self.balance, max(self.balance * 0.25, Config.MIN_LOT * 10))
+        return self.execute_pending_with_amount(pending_id, amount, source="dashboard")
     def reject_pending(self, pending_id):
         for t in self.pending_trades[:]:
             if t.get("pending_id") == pending_id:
@@ -525,7 +569,6 @@ class TradingBot:
                 self.send(f"❌ <b>TRADE RECUSADO – {t['symbol']}</b>\nSinal ignorado.")
                 return True
         return False
-
     def build_menu(self):
         tfl = Config.TIMEFRAMES.get(self.timeframe, ("?", "  "))[0]
         ml  = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
@@ -541,63 +584,50 @@ class TradingBot:
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min  " if self.is_paused() else "  "
         self.send(f"<b>BOT SNIPER v7.2 PRO</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}", markup)
-
     def build_tf_menu(self):
         rows = [[{"text": f"{tf} {lb}{'✅' if tf==self.timeframe else ''}", "callback_data": f"set_tf_{tf}"}] for tf, (lb, _) in Config.TIMEFRAMES.items()]
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
-
     def set_timeframe(self, tf):
         if tf not in Config.TIMEFRAMES: return
         old = self.timeframe; self.timeframe = tf; save_state(self); self.send(f"✅ TF: {old} → {tf}")
-
     def set_mode(self, mode):
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
         self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
-
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
-
     def send_status(self):
-        lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
-
+        lines = [
+            "<b>OPERAÇÕES ABERTAS</b>",
+            f"🏦 Saldo: <code>{fmt(self.balance)}</code> | Alavancagem: <code>{self.leverage}x</code> | Risco: <code>{self.risk_pct:.1f}%</code>",
+            ""
+        ]
         if not self.active_trades:
             lines.append("Nenhuma.")
             self.send("\n".join(lines))
             return
-
         for t in self.active_trades:
             res = get_analysis(t["symbol"], self.timeframe)
             cur = res["price"] if res else t["entry"]
-
             pnl = (cur - t["entry"]) / t["entry"] * 100
-
             if t["dir"] == "SELL":
                 pnl = -pnl
-
+            pnl_money = t.get("pnl_money")
+            money_txt = f" | R$ <code>{fmt(pnl_money)}</code>" if pnl_money is not None else ""
             lines.append(
                 f"{'🟢' if pnl>=0 else '🔴'} "
                 f"{t['symbol']} {t['dir']} "
-                f"P&L: {pnl:+.2f}%"
+                f"P&L: {pnl:+.2f}%{money_txt}"
             )
-
-        self.send("\n".join(lines))
-
-    def send_placar(self):
-        tot = self.wins + self.losses
-        wr = (self.wins / tot * 100) if tot > 0 else 0
-        self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
-
+            self.send("\n".join(lines))
     def is_paused(self):
         return time.time() < self.paused_until
-
     def reset_pause(self):
         self.paused_until = 0
         self.consecutive_losses = 0
         save_state(self)
         self.send("✅ Circuit Breaker resetado.")
-
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL:
             return
@@ -615,7 +645,6 @@ class TradingBot:
             except Exception as e:
                 log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
-
     def scan(self):
         if self.is_paused():
             return
@@ -714,7 +743,6 @@ class TradingBot:
             else:
                 sl = price + Config.ATR_MULT_SL * atr
                 tp = price - Config.ATR_MULT_TP * atr
-            risk = calc_risk_profile(s, price, sl, tp)
             sl_pct = abs(price - sl) / price * 100
             tp_pct = abs(tp - price) / price * 100
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
@@ -738,17 +766,11 @@ class TradingBot:
                 "bar": bar,
                 "ratio": ratio,
                 "vol_txt": vol_txt,
-                "lot": risk["lot"],
-                "risk_money": risk["risk_money"],
-                "risk_pct": risk["risk_pct"],
-                "contract_size": risk["contract_size"],
-                "rr": risk["rr"],
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.radar_list[s] = self.gatilho_list[s] = time.time()
             save_state(self)
-
     def scan_reversal_forex(self):
         if self.is_paused():
             return
@@ -804,7 +826,6 @@ class TradingBot:
             else:
                 sl = price + sl_m * atr
                 tp = price - tp_m * atr
-            risk = calc_risk_profile(s, price, sl, tp)
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
@@ -827,17 +848,11 @@ class TradingBot:
                 "bar": bar,
                 "ratio": f"1:{tp_m/sl_m:.1f}",
                 "sinais": sinais,
-                "lot": risk["lot"],
-                "risk_money": risk["risk_money"],
-                "risk_pct": risk["risk_pct"],
-                "contract_size": risk["contract_size"],
-                "rr": risk["rr"],
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.reversal_list[s] = time.time()
             save_state(self)
-
     def monitor_trades(self):
         changed = False
         for t in self.active_trades[:]:
@@ -874,9 +889,15 @@ class TradingBot:
             is_win = (t["dir"] == "BUY" and cur >= t["tp"]) or (t["dir"] == "SELL" and cur <= t["tp"])
             is_loss = (t["dir"] == "BUY" and cur <= t["sl"]) or (t["dir"] == "SELL" and cur >= t["sl"])
             if is_win or is_loss:
-                pnl = (cur - t["entry"]) / t["entry"] * 100
+                pnl_pct = (cur - t["entry"]) / t["entry"] * 100
                 if t["dir"] == "SELL":
-                    pnl = -pnl
+                    pnl_pct = -pnl_pct
+                lot = float(t.get("lot", Config.MIN_LOT))
+                contract_size = float(t.get("contract_size", contract_size_for(t["symbol"])))
+                move = (cur - t["entry"]) if t["dir"] == "BUY" else (t["entry"] - cur)
+                pnl_money = move * contract_size * lot
+                margin_required = float(t.get("margin_required", t.get("capital_base", 0)))
+                self.balance = round(self.balance + margin_required + pnl_money, 2)
                 st = "✅ TAKE PROFIT (WIN)" if is_win else "❌ STOP LOSS (LOSS)"
                 closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
                 if is_win:
@@ -886,29 +907,33 @@ class TradingBot:
                     self.losses += 1
                     self.consecutive_losses += 1
                     self.asset_cooldown[t["symbol"]] = time.time()
-                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl, 2), "closed_at": closed_at})
-                self.send(
-                    f"🏁 <b>OPERAÇÃO ENCERRADA</b>\n"
-                    f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}\n"
-                    f"Resultado: <b>{st}</b>\n\n"
-                    f"💰 Entrada: <code>{fmt(t['entry'])}</code>\n"
-                    f"🔚 Saída: <code>{fmt(cur)}</code>\n"
-                    f"P&L: <code>{pnl:+.2f}%</code>"
-                )
+                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl_pct, 2), "pnl_money": round(pnl_money, 2), "closed_at": closed_at, "lot": lot, "margin_required": round(margin_required, 2)})
+                self.send("\n".join([
+                    "🏁 <b>OPERAÇÃO ENCERRADA</b>",
+                    f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}",
+                    f"Resultado: <b>{st}</b>",
+                    "",
+                    f"💰 Entrada: <code>{fmt(t['entry'])}</code>",
+                    f"🔚 Saída: <code>{fmt(cur)}</code>",
+                    f"P&L: <code>{pnl_pct:+.2f}%</code> | <b>{fmt(pnl_money)}</b>",
+                    f"🏦 Saldo atual: <code>{fmt(self.balance)}</code>",
+                ]))
                 self.active_trades.remove(t)
                 changed = True
                 if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                     self.paused_until = time.time() + Config.PAUSE_DURATION
                     mins = Config.PAUSE_DURATION // 60
-                    self.send(
-                        f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n"
-                        f"{self.consecutive_losses} losses consecutivos.\n"
-                        f"Pausado por <b>{mins} minutos</b>.\n\n"
-                        f"Use /resetpausa para retomar."
-                    )
+                    self.send("\n".join([
+                        "⛔ <b>CIRCUIT BREAKER ATIVADO</b>",
+                        "",
+                        f"{self.consecutive_losses} losses consecutivos.",
+                        f"Pausado por <b>{mins} minutos</b>.",
+                        "",
+                        "Use /resetpausa para retomar.",
+                    ]))
+
         if changed:
             save_state(self)
-
 # ═══════════════════════════════════════════════════════════════
 # SERVICE WORKER
 # ═══════════════════════════════════════════════════════════════
@@ -932,7 +957,6 @@ else clients.openWindow('/');
 }));
 });
 """
-
 # ═══════════════════════════════════════════════════════════════
 # DASHBOARD v7.3 PRO — MESA DE TRADING PROFISSIONAL
 # ═══════════════════════════════════════════════════════════════
@@ -958,7 +982,6 @@ DASHBOARD_HTML = r"""
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
 #app{display:flex;flex-direction:column;height:100%;max-width:480px;margin:0 auto}
 .g{color:var(--green)}.r{color:var(--red)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.go{color:var(--gold)}
-
 /* ── HEADER ── */
 #hdr{height:var(--head);flex-shrink:0;background:rgba(8,12,20,.97);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .hdr-l{display:flex;align-items:center;gap:10px}
@@ -971,7 +994,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ibtn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;color:var(--text2);transition:all .15s}
 .ibtn:active{background:var(--bg4);transform:scale(.9)}
 .ibtn.focus-on{background:var(--b3);border-color:rgba(68,138,255,.4);color:var(--blue)}
-
 /* ── P&L SUB-HEADER (sempre visível) ── */
 #subhdr{height:var(--subhd);flex-shrink:0;background:rgba(5,9,18,.95);border-bottom:1px solid var(--border);display:flex;align-items:stretch;z-index:99}
 .shi{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid var(--border);padding:0 4px}
@@ -979,20 +1001,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .shl{font-size:8px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted2);font-weight:600}
 .shv{font-size:13px;font-weight:800;font-family:var(--mono);line-height:1.2}
 .shv.g{color:var(--green)}.shv.r{color:var(--red)}.shv.bl{color:var(--blue)}.shv.go{color:var(--gold)}
-
 /* ── PAGES ── */
 #pages{flex:1;overflow:hidden;position:relative}
 .pg{position:absolute;inset:0;display:none;overflow-y:auto;padding:14px 14px calc(var(--nav) + var(--safe) + 18px);opacity:0;transform:translateY(5px);transition:all .2s ease-out}
 .pg.on{display:block;opacity:1;transform:translateY(0)}
 .pg::-webkit-scrollbar{width:2px}.pg::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
-
 /* ── FOCUS MODE ── */
 body.focus .ibtn.focus-on{box-shadow:0 0 10px rgba(68,138,255,.4)}
 body.focus #subhdr{background:rgba(0,230,118,.05);border-bottom-color:rgba(0,230,118,.2)}
 body.focus #hdr{border-bottom-color:rgba(0,230,118,.3)}
 .focus-banner{display:none;background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.25);border-radius:12px;padding:10px 14px;margin-bottom:12px;text-align:center;font-size:12px;color:var(--blue);font-weight:600;letter-spacing:.3px}
 body.focus .focus-banner{display:block}
-
 /* ── NAV ── */
 #nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;height:var(--nav);background:rgba(8,12,20,.97);backdrop-filter:blur(16px);border-top:1px solid var(--border2);display:flex;z-index:200;padding-bottom:var(--safe)}
 .nb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;cursor:pointer;font-size:10px;color:var(--muted2);letter-spacing:.4px;text-transform:uppercase;font-weight:500;position:relative;transition:all .2s}
@@ -1000,20 +1019,17 @@ body.focus .focus-banner{display:block}
 .nb.on{color:var(--green)}.nb.on .ni{transform:scale(1.1);opacity:1;filter:drop-shadow(0 0 4px var(--green))}
 .nb:active{opacity:.7}
 .nbadge{position:absolute;top:3px;right:calc(50% - 18px);min-width:16px;height:16px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;padding:0 3px;box-shadow:0 0 8px rgba(255,61,113,.5)}
-
 /* ── STATS ROW ── */
 .srow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .sb{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 8px;text-align:center}
 .sl{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600}
 .sv{font-size:20px;font-weight:800;font-family:var(--mono);line-height:1}
 .ss{font-size:10px;color:var(--muted2);margin-top:3px}
-
 /* ── SECTION HEADERS ── */
 .chd{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-weight:700}
 .ts{font-size:9px;color:var(--muted);font-weight:400;letter-spacing:0}
 .empty{text-align:center;padding:30px 16px;color:var(--muted2)}
 .empi{font-size:32px;margin-bottom:8px;display:block;opacity:.6}.empt{font-size:12px;line-height:1.6}
-
 /* ── RISK PANEL ── */
 .risk-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px}
 .risk-head{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted2);font-weight:700;margin-bottom:10px}
@@ -1021,7 +1037,6 @@ body.focus .focus-banner{display:block}
 .risk-item{background:var(--bg3);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between}
 .risk-lbl{font-size:10px;color:var(--muted2);font-weight:500}
 .risk-val{font-size:13px;font-weight:800;font-family:var(--mono)}
-
 /* ── TRADE CARDS (hierarquia: maior que sinais) ── */
 .tcard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px;position:relative;overflow:hidden}
 .tcard.buy{border-left:3px solid var(--green)}.tcard.sell{border-left:3px solid var(--red)}
@@ -1045,13 +1060,11 @@ body.focus .focus-banner{display:block}
 .tb.no{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
 .cpbtn{background:none;border:none;color:var(--blue);cursor:pointer;font-size:14px;padding:0 4px;transition:all .15s}
 .cpbtn:active{opacity:.6}
-
 /* ── HISTORY ── */
 .hist-item{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
 .hist-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
 .hist-sym{font-size:13px;font-weight:600;font-family:var(--mono)}.hist-time{font-size:10px;color:var(--muted2);margin-top:2px}
 .hist-pnl{font-size:14px;font-weight:700;font-family:var(--mono)}
-
 /* ── SCANNER ── */
 .tgroup{margin-bottom:14px}
 .tghd{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:8px}
@@ -1067,7 +1080,6 @@ body.focus .focus-banner{display:block}
 .tprice{font-size:13px;font-weight:700;font-family:var(--mono)}
 .tchg{font-size:11px;font-family:var(--mono);font-weight:600}
 .tstat{font-size:10px;color:var(--muted2);font-family:var(--mono)}
-
 /* ── CT CARDS ── */
 .ctcard{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;position:relative}
 .ctcard::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--cyan)}
@@ -1081,14 +1093,12 @@ body.focus .focus-banner{display:block}
 .ctfill{height:100%;background:var(--cyan);transition:width .5s}
 .ctrs{display:flex;flex-wrap:wrap;gap:4px}
 .cttag{font-size:10px;background:var(--bg3);color:var(--text2);padding:3px 8px;border-radius:6px;border:1px solid var(--border2)}
-
 /* ── SINAIS ── */
 .sig-card{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px}
 .sig-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .sig-tipo{font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--bg3);letter-spacing:.5px;text-transform:uppercase}
 .sig-ts{font-size:10px;color:var(--muted2)}
 .sig-txt{font-size:12px;line-height:1.5;color:var(--text2)}
-
 /* ── FEAR & GREED ── */
 .fg-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
 .fg-l{display:flex;flex-direction:column;gap:5px}
@@ -1096,13 +1106,11 @@ body.focus .focus-banner{display:block}
 .fg-val{font-size:36px;font-weight:900;font-family:var(--mono);line-height:1}
 .fg-name{font-size:13px;font-weight:700}
 .fg-circle{transform:rotate(-90deg);transform-origin:50% 50%}
-
 /* ── NEWS ── */
 .news-item{padding:12px 0;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px}
 .news-title{font-size:13px;color:var(--blue);text-decoration:none;line-height:1.4;font-weight:500}
 .news-title:active{opacity:.7}
 .news-src{font-size:10px;color:var(--muted2);font-weight:600;letter-spacing:.5px;text-transform:uppercase}
-
 /* ── TOAST (contextual) ── */
 .toast{position:fixed;bottom:calc(var(--nav) + var(--safe) + 10px);left:50%;transform:translateX(-50%) translateY(10px);background:var(--bg4);border:1px solid var(--border2);border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:10px;opacity:0;pointer-events:none;transition:all .25s;z-index:300;max-width:92%;box-shadow:0 4px 20px rgba(0,0,0,.5)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
@@ -1111,10 +1119,8 @@ body.focus .focus-banner{display:block}
 .toast.t-warning{border-color:rgba(255,215,64,.3);background:rgba(255,215,64,.07)}
 .toast.t-info{border-color:rgba(68,138,255,.3);background:rgba(68,138,255,.09)}
 .ticon{font-size:18px;flex-shrink:0}.ttxt{font-size:12px;font-weight:600}
-
 /* ── ERROR BANNER ── */
 .eb{background:var(--r3);border:1px solid rgba(255,61,113,.2);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:12px;color:var(--red);display:none;text-align:center}
-
 /* ── CONFIG ── */
 .cfgsec{margin-bottom:18px}
 .cfgl{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;font-weight:700}
@@ -1131,7 +1137,6 @@ body.focus .focus-banner{display:block}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .pbox{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px}
 .plb{font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600}.pvl{font-size:15px;font-family:var(--mono);font-weight:700}
-
 /* ── SKELETON LOADING ── */
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .skel{background:linear-gradient(90deg,var(--bg3) 25%,var(--bg4) 50%,var(--bg3) 75%);background-size:200% 100%;animation:shimmer 1.6s infinite;border-radius:var(--r)}
@@ -1140,7 +1145,6 @@ body.focus .focus-banner{display:block}
 </head>
 <body>
 <div id="app">
-
 <!-- ── HEADER ── -->
 <div id="hdr">
   <div class="hdr-l">
@@ -1153,7 +1157,6 @@ body.focus .focus-banner{display:block}
     <button class="ibtn" id="refbtn" onclick="refreshAll()">↻</button>
   </div>
 </div>
-
 <!-- ── P&L SUB-HEADER (sempre visível) ── -->
 <div id="subhdr">
   <div class="shi"><div class="shl">Hoje</div><div class="shv" id="sh-dpnl">--</div></div>
@@ -1161,10 +1164,8 @@ body.focus .focus-banner{display:block}
   <div class="shi"><div class="shl">Abertos</div><div class="shv bl" id="sh-open">0</div></div>
   <div class="shi"><div class="shl">Status</div><div class="shv" id="sh-status">●</div></div>
 </div>
-
 <!-- ── PAGES ── -->
 <div id="pages">
-
 <!-- DASHBOARD -->
 <div class="pg on" id="pg-dash">
   <div id="eb" class="eb">⚠ Erro de conexão. Verifique sua rede.</div>
@@ -1179,6 +1180,9 @@ body.focus .focus-banner{display:block}
   <div class="risk-panel">
     <div class="risk-head">⚖ Gestão de Risco</div>
     <div class="risk-grid">
+      <div class="risk-item"><span class="risk-lbl">Saldo</span><span class="risk-val bl" id="r-balance">0</span></div>
+      <div class="risk-item"><span class="risk-lbl">Alavancagem</span><span class="risk-val" id="r-leverage">0x</span></div>
+      <div class="risk-item"><span class="risk-lbl">Risco/trade</span><span class="risk-val go" id="r-risk">0%</span></div>
       <div class="risk-item"><span class="risk-lbl">Exposição</span><span class="risk-val bl" id="r-exposure">0%</span></div>
       <div class="risk-item"><span class="risk-lbl">CB Status</span><span class="risk-val" id="r-cb">OK</span></div>
       <div class="risk-item"><span class="risk-lbl">Seq. Perdas</span><span class="risk-val" id="r-losses">0 / 2</span></div>
@@ -1190,25 +1194,21 @@ body.focus .focus-banner{display:block}
   <div class="chd">📜 Histórico Hoje</div>
   <div id="d-closed-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div></div>
 </div>
-
 <!-- PENDENTES -->
 <div class="pg" id="pg-pend">
   <div class="chd">⏳ Aprovação Rápida <span class="ts">Auto: 5s</span></div>
   <div id="pendingQueue"><div class="skel skel-card"></div></div>
 </div>
-
 <!-- SCANNER -->
 <div class="pg" id="pg-scan">
   <div class="chd">📡 Tendências de Mercado</div>
   <div id="scan-list"><div class="skel skel-card"></div><div class="skel skel-card"></div></div>
 </div>
-
 <!-- SINAIS -->
 <div class="pg" id="pg-sig">
   <div class="chd">🔔 Feed de Sinais</div>
   <div id="sig-list"><div class="skel skel-card"></div></div>
 </div>
-
 <!-- CT / NEWS -->
 <div class="pg" id="pg-ct">
   <div class="chd">⚡ Oportunidades de Reversão</div>
@@ -1217,7 +1217,6 @@ body.focus .focus-banner{display:block}
   <div id="fg-card-wrap"></div>
   <div id="news-list"><div class="skel skel-card"></div></div>
 </div>
-
 <!-- CONFIG -->
 <div class="pg" id="pg-cfg">
   <div class="cfgsec"><div class="cfgl">Mercado</div><div class="mdg">
@@ -1248,9 +1247,7 @@ body.focus .focus-banner{display:block}
   <button class="ab abn" onclick="requestNotif()">🔔 Ativar Notificações Push</button>
   <button class="ab abp" onclick="refreshAll()">↻ Atualizar App</button>
 </div>
-
 </div><!-- /pages -->
-
 <!-- NAV -->
 <div id="nav">
   <button class="nb on" onclick="goTo('dash',this)"><span class="ni">⬡</span>Dashboard</button>
@@ -1261,12 +1258,9 @@ body.focus .focus-banner{display:block}
   <button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
 </div>
 </div><!-- /app -->
-
 <div class="toast" id="toast"><span class="ticon">🔔</span><span class="ttxt"></span></div>
-
 <script>
 let _st=null,_sigs=[],_unread=0,_lastSigLen=0,_pending=[],_focusMode=false;
-
 function fp(p){
   if(p==null)return'--';
   if(p>=10000)return p.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1275,13 +1269,11 @@ function fp(p){
   if(p>=1)return p.toFixed(5);
   return p.toFixed(6);
 }
-
 async function apiFetch(path,opts={}){
   const r=await fetch(path,{headers:{'Content-Type':'application/json'},mode:'same-origin',...opts});
   if(!r.ok)throw new Error(r.status);
   return r.json();
 }
-
 let _toastTimer=null;
 function toast(msg,type=''){
   const t=document.getElementById('toast');
@@ -1294,7 +1286,6 @@ function toast(msg,type=''){
   if(_toastTimer)clearTimeout(_toastTimer);
   _toastTimer=setTimeout(()=>t.classList.remove('show'),3200);
 }
-
 function toggleFocus(){
   _focusMode=!_focusMode;
   document.body.classList.toggle('focus',_focusMode);
@@ -1312,7 +1303,6 @@ function toggleFocus(){
     toast('Modo Focus desativado','info');
   }
 }
-
 function goTo(pg,btn){
   if(_focusMode&&pg!=='dash'){
     toast('Desative o Modo Focus para navegar','warning');
@@ -1329,7 +1319,6 @@ function goTo(pg,btn){
   if(pg==='ct'){loadCT();loadNews();}
   if(pg==='cfg')loadCfg();
 }
-
 async function refreshAll(){
   const b=document.getElementById('refbtn');
   b.style.opacity='.4';b.style.pointerEvents='none';
@@ -1344,7 +1333,6 @@ async function refreshAll(){
     toast('Dados atualizados','success');
   }finally{b.style.opacity='1';b.style.pointerEvents='auto';}
 }
-
 function updSubHeader(st){
   if(!st)return;
   const dpnl=document.getElementById('sh-dpnl');
@@ -1360,9 +1348,17 @@ function updSubHeader(st){
   else if(st.consecutive_losses>=1){sts.textContent='⚠'+st.consecutive_losses+'L';sts.className='shv go';}
   else{sts.textContent='●OK';sts.className='shv g';}
 }
-
 function updRiskPanel(st){
   if(!st)return;
+  const balEl=document.getElementById('r-balance');
+  balEl.textContent=fp(st.balance||0);
+  balEl.className='risk-val bl';
+  const levEl=document.getElementById('r-leverage');
+  levEl.textContent=(st.leverage||0)+'x';
+  levEl.className='risk-val go';
+  const riskEl=document.getElementById('r-risk');
+  riskEl.textContent=(st.risk_pct||0).toFixed(1)+'%';
+  riskEl.className='risk-val go';
   const exposure=Math.round(st.active_trades.length/3*100);
   const expEl=document.getElementById('r-exposure');
   expEl.textContent=exposure+'%';
@@ -1377,7 +1373,6 @@ function updRiskPanel(st){
   wlEl.textContent=st.wins+'W / '+st.losses+'L';
   wlEl.className='risk-val '+(st.winrate>=50?'g':'r');
 }
-
 async function loadDash(){
   try{
     _st=await apiFetch('/api/status');
@@ -1402,35 +1397,28 @@ async function loadDash(){
     updCfgBtns();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
-
 function renderOpenTrade(t){
   const buy=t.dir==='BUY',pos=t.pnl>=0;
   const cls=buy?'buy':'sell';
   const distSlClass=t.dist_sl<30?'near':'far';
   const distTpClass=t.dist_tp<30?'near':'far';
-  const lot=t.lot!=null?t.lot:0;
   return`<div class="tcard ${cls}">
     <div class="tcard-head">
       <div><div class="tsym">${t.symbol}</div><div class="tname">${t.name||''}</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         <div class="tdir ${buy?'':'sell'}">${buy?'▲ BUY':'▼ SELL'}</div>
-        <span class="ttype-badge">${t.tipo||'TREND'} | Lote: ${fp(lot)}</span>
+        <span class="ttype-badge">${t.tipo||'TREND'}</span>
       </div>
     </div>
     <div class="tlvs">
       <div class="tlv"><div class="tll">Entrada</div><div class="tlvv">${fp(t.entry)}</div></div>
       <div class="tlv"><div class="tll">Atual</div><div class="tlvv ${pos?'g':'r'}">${fp(t.current)}</div></div>
-      <div class="tlv"><div class="tll">P&L</div><div class="tlvv ${pos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}%</div></div>
+      <div class="tlv"><div class="tll">P&L</div><div class="tlvv ${pos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}%${t.pnl_money!==undefined?' | '+fp(t.pnl_money):''}</div></div>
     </div>
     <div class="tlvs">
-      <div class="tlv"><div class="tll">SL 🛡</div><div class="tlvv r">${fp(t.sl)}</div></div>
-      <div class="tlv"><div class="tll">TP 🎯</div><div class="tlvv g">${fp(t.tp)}</div></div>
-      <div class="tlv"><div class="tll">Lote</div><div class="tlvv cy">${fp(lot)}</div></div>
-    </div>
-    <div class="tlvs">
+      <div class="tlv"><div class="tll">Lote</div><div class="tlvv bl">${(t.lot||0).toFixed(2)}</div></div>
+      <div class="tlv"><div class="tll">Margem</div><div class="tlvv go">${fp(t.margin_required||0)}</div></div>
       <div class="tlv"><div class="tll">Aberto</div><div class="tlvv">${t.opened_at||'--'}</div></div>
-      <div class="tlv"><div class="tll">Risco</div><div class="tlvv">${t.risk_pct!=null?Number(t.risk_pct).toFixed(2)+'%':'--'}</div></div>
-      <div class="tlv"><div class="tll">RR</div><div class="tlvv">${t.rr!=null?Number(t.rr).toFixed(2):'--'}</div></div>
     </div>
     <div class="tprog"><div class="tfill" style="width:${t.progress}%;background:${pos?'var(--green)':'var(--red)'}"></div></div>
     <div class="tdist">
@@ -1439,7 +1427,6 @@ function renderOpenTrade(t){
     </div>
   </div>`;
 }
-
 function renderClosedToday(list){
   if(!list||!list.length)return'<div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div>';
   return list.map(h=>{
@@ -1453,23 +1440,20 @@ function renderClosedToday(list){
     </div>`;
   }).join('');
 }
-
 async function loadPending(){
   try{const d=await apiFetch('/api/pending');renderPendingFromApi(d);}
   catch(e){console.log('pending err',e);}
 }
-
 function renderPendingFromApi(list){
   const el=document.getElementById('pendingQueue');if(!el)return;
   el.innerHTML=list.length?list.map(p=>{
     const buy=p.dir==='BUY';const cls=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';
-    const lot=p.lot!=null?p.lot:0;
     return`<div class="tcard ${cls}" data-pid="${p.pending_id}">
       <div class="tcard-head">
         <div><div class="tsym">${p.symbol}</div><div class="tname">${p.name||''}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
           <div class="tdir ${cls}">${dirLabel}</div>
-          <span class="ttype-badge">R: ${p.ratio||'--'} | Lote: ${fp(lot)}</span>
+          <span class="ttype-badge">R: ${p.ratio||'--'}</span>
         </div>
       </div>
       <div class="tlvs">
@@ -1478,34 +1462,55 @@ function renderPendingFromApi(list){
         <div class="tlv"><div class="tll">TP 🎯 <button class="cpbtn" onclick="copyText('${p.tp}')">📋</button></div><div class="tlvv g">${fp(p.tp)}</div></div>
       </div>
       <div class="tlvs">
-        <div class="tlv"><div class="tll">Lote</div><div class="tlvv cy">${fp(lot)}</div></div>
-        <div class="tlv"><div class="tll">Risco</div><div class="tlvv">${p.risk_pct!=null?Number(p.risk_pct).toFixed(2)+'%':'--'}</div></div>
-        <div class="tlv"><div class="tll">RR</div><div class="tlvv">${p.rr!=null?Number(p.rr).toFixed(2):'--'}</div></div>
+        <div class="tlv"><div class="tll">Saldo</div><div class="tlvv bl">${fp(_st&&_st.balance?_st.balance:0)}</div></div>
+        <div class="tlv"><div class="tll">Risco</div><div class="tlvv go">${(_st&&_st.risk_pct?_st.risk_pct:0).toFixed(1)}%</div></div>
+        <div class="tlv"><div class="tll">Alav.</div><div class="tlvv">${(_st&&_st.leverage?_st.leverage:0)}x</div></div>
       </div>
-      <div class="tbtns">
-        <button class="tb yes" onclick="confirmPending(${p.pending_id},this)">✅ ACEITAR</button>
-        <button class="tb no" onclick="rejectPending(${p.pending_id},this)">❌ RECUSAR</button>
+      <div class="tbtns" style="grid-template-columns:repeat(2,1fr)">
+        <button class="tb yes" onclick="openPendingPct(${p.pending_id},25,this)">25%</button>
+        <button class="tb yes" onclick="openPendingPct(${p.pending_id},50,this)">50%</button>
+        <button class="tb yes" onclick="openPendingPct(${p.pending_id},100,this)">100%</button>
+        <button class="tb no" onclick="rejectPending(${p.pending_id},this)">Recusar</button>
+      </div>
+      <div class="tbtns" style="grid-template-columns:1fr">
+        <button class="tb yes" onclick="openPendingCustom(${p.pending_id},this)">Valor custom</button>
       </div>
     </div>`;
   }).join('')
   :'<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma confirmação pendente</div></div>';
   _pending=list;updBadge();
 }
-
 async function confirmPending(id,btn){
   btn.textContent='…';btn.disabled=true;
   try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({pending_id:id})});toast('Trade confirmado!','success');loadPending();loadDash();}
   catch(e){btn.textContent='Erro';btn.disabled=false;}
 }
-
+async function openPendingPct(id,pct,btn){
+  btn.textContent='…';btn.disabled=true;
+  try{
+    await apiFetch('/api/execute_pending_pct',{method:'POST',body:JSON.stringify({pending_id:id,pct:pct})});
+    toast('Operação aberta com '+pct+'% da base','success');
+    loadPending();loadDash();
+  }catch(e){btn.textContent='Erro';btn.disabled=false;toast('Erro: '+e.message,'error');}
+}
+async function openPendingCustom(id,btn){
+  const raw=prompt('Digite o valor base da operação em dólares:','500');
+  if(raw===null)return;
+  const amount=parseFloat(String(raw).replace(',','.'));
+  if(!Number.isFinite(amount)||amount<=0){toast('Valor inválido','error');return;}
+  btn.textContent='…';btn.disabled=true;
+  try{
+    await apiFetch('/api/execute_pending',{method:'POST',body:JSON.stringify({pending_id:id,amount:amount})});
+    toast('Operação aberta','success');
+    loadPending();loadDash();
+  }catch(e){btn.textContent='Erro';btn.disabled=false;toast('Erro: '+e.message,'error');}
+}
 async function rejectPending(id,btn){
   btn.textContent='…';btn.disabled=true;
   try{await apiFetch('/api/reject',{method:'POST',body:JSON.stringify({pending_id:id})});toast('Trade recusado','error');loadPending();}
   catch(e){btn.textContent='Erro';btn.disabled=false;}
 }
-
 function copyText(txt){navigator.clipboard.writeText(String(txt));toast('Copiado: '+txt,'info');}
-
 async function loadScanner(){
   try{
     const d=await apiFetch('/api/trends');
@@ -1539,7 +1544,6 @@ async function loadScanner(){
     document.getElementById('scan-list').innerHTML=h||'<div class="empty"><span class="empi">📡</span><div class="empt">Nenhum dado</div></div>';
   }catch(e){}
 }
-
 async function loadSigs(){
   try{
     const d=await apiFetch('/api/signals');
@@ -1559,7 +1563,6 @@ async function loadSigs(){
     :'<div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal ainda.</div></div>';
   }catch(e){}
 }
-
 async function loadCT(){
   try{
     const d=await apiFetch('/api/reversals');
@@ -1582,7 +1585,6 @@ async function loadCT(){
     :'<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma CT detectada.</div></div>';
   }catch(e){}
 }
-
 async function loadNews(){
   try{
     const d=await apiFetch('/api/news');
@@ -1610,7 +1612,6 @@ async function loadNews(){
       :'<div class="empty"><span class="empi">📰</span><div class="empt">Sem notícias disponíveis.</div></div>';
   }catch(e){}
 }
-
 async function loadCfg(){
   try{
     const c=await apiFetch('/api/config');
@@ -1621,29 +1622,24 @@ async function loadCfg(){
   }catch(_){}
   updCfgBtns();
 }
-
 function updCfgBtns(){
   if(!_st)return;
   document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===_st.mode));
   document.querySelectorAll('[data-tf]').forEach(b=>b.classList.toggle('on',b.dataset.tf===_st.timeframe));
 }
-
 async function setMode(m){
   try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();toast('Modo: '+m,'success');}
   catch(e){toast('Erro: '+e.message,'error');}
 }
-
 async function setTf(t){
   try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();toast('Timeframe: '+t,'success');}
   catch(e){toast('Erro: '+e.message,'error');}
 }
-
 async function resetPausa(){
   if(!confirm('Resetar Circuit Breaker?'))return;
   try{await apiFetch('/api/resetpausa',{method:'POST'});toast('Circuit Breaker resetado','success');await loadDash();}
   catch(e){toast('Erro: '+e.message,'error');}
 }
-
 async function requestNotif(){
   if(!('serviceWorker' in navigator)||!('PushManager' in window)){toast('Navegador não suporta notificações','warning');return;}
   try{
@@ -1656,7 +1652,6 @@ async function requestNotif(){
     toast('Notificações ativadas!','success');
   }catch(e){toast('Erro ao ativar: '+e.message,'error');}
 }
-
 function updBadge(){
   const pend=_pending?_pending.length:0;
   document.getElementById('nbadge-pend').textContent=pend>0?pend:'';
@@ -1665,7 +1660,6 @@ function updBadge(){
   document.getElementById('nbadge-sig').textContent=sig>0?sig:'';
   document.getElementById('nbadge-sig').style.display=sig>0?'flex':'none';
 }
-
 window.addEventListener('load',()=>{
   loadDash();loadPending();
   setInterval(()=>{
@@ -1680,8 +1674,6 @@ window.addEventListener('load',()=>{
 </body>
 </html>
 """
-
-
 # ═══════════════════════════════════════════════════════════════
 # FLASK API (100% COMPATÍVEL COM O FRONTEND NOVO)
 # ═══════════════════════════════════════════════════════════════
@@ -1694,7 +1686,6 @@ def create_api(bot):
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
-
     @app.route("/")
     def index(): return Response(DASHBOARD_HTML, mimetype="text/html")
     @app.route("/sw.js")
@@ -1705,10 +1696,8 @@ def create_api(bot):
         size = 192 if "192" in request.path else 512
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
-
     @app.route("/api/health")
-    def api_health(): return jsonify({"status": "ok", "version": "7.2 PRO"})
-
+    def api_health(): return jsonify({"status": "ok", "version": "7.3 PRO", "broker": Config.BROKER_NAME})
     @app.route("/api/status")
     def api_status():
         total = bot.wins + bot.losses
@@ -1727,15 +1716,13 @@ def create_api(bot):
             dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100 if t["entry"] != t["sl"] else 0
             dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100 if t["tp"] != t["entry"] else 0
             progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
-            risk = calc_risk_profile(t["symbol"], t["entry"], t["sl"], t.get("tp"))
             trades_out.append({
                 "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
                 "tipo": t.get("tipo", " "), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
-                "current": cur, "pnl": round(pnl, 2), "opened_at": t.get("opened_at", " "),
+                "current": cur, "pnl": round(pnl, 2), "pnl_money": round(t.get("pnl_money", 0), 2), "opened_at": t.get("opened_at", " "),
                 "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1),
-                "lot": t.get("lot", risk["lot"]), "risk_money": t.get("risk_money", risk["risk_money"]),
-                "risk_pct": t.get("risk_pct", risk["risk_pct"]), "contract_size": t.get("contract_size", risk["contract_size"]),
-                "rr": t.get("rr", risk["rr"])
+                "lot": round(float(t.get("lot", 0)), 2), "margin_required": round(float(t.get("margin_required", 0)), 2),
+                "capital_base": round(float(t.get("capital_base", 0)), 2)
             })
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
@@ -1743,27 +1730,58 @@ def create_api(bot):
             "paused": bot.is_paused(), "cb_mins": max(0, int((bot.paused_until - time.time()) / 60)) if bot.is_paused() else 0,
             "active_trades": trades_out, "pending_count": len(bot.pending_trades),
             "daily_pnl": round(daily_pnl, 2), "daily_wins": daily_wins, "daily_losses": daily_losses,
-            "today_closed": len(today_trades), "history_today": today_trades
+            "today_closed": len(today_trades), "history_today": today_trades,
+            "balance": round(bot.balance, 2), "leverage": bot.leverage, "risk_pct": bot.risk_pct,
         })
-
     @app.route("/api/config")
-    def api_config(): return jsonify({"atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP, "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE})
+    def api_config(): return jsonify({"atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP, "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE, "balance": bot.balance, "leverage": bot.leverage, "risk_pct": bot.risk_pct, "broker": Config.BROKER_NAME})
     @app.route("/api/history")
     def api_history(): return jsonify(list(reversed(bot.history[-50:])))
     @app.route("/api/signals")
     def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
     @app.route("/api/pending")
     def api_pending(): return jsonify(bot.pending_trades)
+    @app.route("/api/execute_pending", methods=["POST", "OPTIONS"])
+    def api_execute_pending():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        pid = data.get("pending_id")
+        amount = data.get("amount")
+        try:
+            amount = float(amount)
+        except Exception:
+            return jsonify({"error": "amount inválido"}), 400
+        return jsonify({"ok": True}) if bot.execute_pending_with_amount(pid, amount, source="dashboard") else (jsonify({"error": "not found"}), 404)
+    @app.route("/api/execute_pending_pct", methods=["POST", "OPTIONS"])
+    def api_execute_pending_pct():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        pid = data.get("pending_id")
+        pct = data.get("pct")
+        try:
+            pct = float(pct)
+        except Exception:
+            return jsonify({"error": "pct inválido"}), 400
+        amount = max(0.0, bot.balance * pct / 100.0)
+        return jsonify({"ok": True}) if bot.execute_pending_with_amount(pid, amount, source="dashboard") else (jsonify({"error": "not found"}), 404)
     @app.route("/api/confirm", methods=["POST", "OPTIONS"])
     def api_confirm():
         if request.method == "OPTIONS": return jsonify({}), 200
         data = request.get_json(force=True) or {}; pid = data.get("pending_id")
-        return jsonify({"ok": True}) if bot.confirm_pending(pid) else (jsonify({"error": "not found"}), 404)
+        amount = data.get("amount")
+        if amount is None:
+            return jsonify({"ok": True}) if bot.confirm_pending(pid) else (jsonify({"error": "not found"}), 404)
+        try:
+            amount = float(amount)
+        except Exception:
+            return jsonify({"error": "amount inválido"}), 400
+        return jsonify({"ok": True}) if bot.execute_pending_with_amount(pid, amount, source="dashboard") else (jsonify({"error": "not found"}), 404)
     @app.route("/api/reject", methods=["POST", "OPTIONS"])
     def api_reject():
         if request.method == "OPTIONS": return jsonify({}), 200
         data = request.get_json(force=True) or {}; pid = data.get("pending_id")
         return jsonify({"ok": True}) if bot.reject_pending(pid) else (jsonify({"error": "not found"}), 404)
+    @app.route("/api/news")
     @app.route("/api/news")
     def api_news():
         now = time.time()
@@ -1824,28 +1842,23 @@ def create_api(bot):
         if sub and sub not in _push_subscriptions: _push_subscriptions.append(sub)
         return jsonify({"ok": True})
     return app
-
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
     app = create_api(bot)
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
-
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN (100% PRESERVADO)
 # ═══════════════════════════════════════════════════════════════
 def bot_loop(bot):
     bot.build_menu()
-
     if bot._restore_msg:
         bot.send(bot._restore_msg)
         bot._restore_msg = None
-
     try:
         bot.send_news()
     except:
         pass
-
     while True:
         try:
             url = (
@@ -1853,17 +1866,26 @@ def bot_loop(bot):
                 f"{Config.BOT_TOKEN}/getUpdates"
                 f"?offset={bot.last_id+1}&timeout=5"
             )
-
             r = requests.get(url, timeout=12).json()
-
             if "result" in r:
                 for u in r["result"]:
                     bot.last_id = u["update_id"]
                     if "message" in u:
                         txt = u["message"].get("text", " ").strip().lower()
-                        if txt in ("/noticias", "/news"): bot.send_news()
+                        if bot.awaiting_custom_amount and txt not in ("/cancelar", "cancelar"):
+                            try:
+                                amount = float(txt.replace(",", "."))
+                                if amount <= 0:
+                                    raise ValueError
+                                pid = bot.awaiting_custom_amount
+                                bot.awaiting_custom_amount = None
+                                bot.execute_pending_with_amount(pid, amount, source="telegram")
+                            except Exception:
+                                bot.send("❌ Envie apenas um valor numérico válido, por exemplo: <code>500</code>")
+                        elif txt in ("/noticias", "/news"): bot.send_news()
                         elif txt == "/status": bot.send_status()
                         elif txt in ("/placar", "/score"): bot.send_placar()
+                        elif txt in ("/saldo", "/account"): bot.send(f"🏦 Saldo: <code>{fmt(bot.balance)}</code> | Alavancagem: <code>{bot.leverage}x</code> | Risco: <code>{bot.risk_pct:.1f}%</code>")
                         elif txt in ("/menu", "/start"): bot.build_menu()
                         elif txt == "/resetpausa": bot.reset_pause()
                     if "callback_query" in u:
@@ -1876,6 +1898,16 @@ def bot_loop(bot):
                         elif cb == "news": bot.send_news()
                         elif cb == "status": bot.send_status()
                         elif cb == "placar": bot.send_placar()
+                        elif cb.startswith("amtpct_"):
+                            try:
+                                _, pct, pid = cb.split("_")
+                                amount = max(0.0, bot.balance * float(pct) / 100.0)
+                                bot.execute_pending_with_amount(int(pid), amount, source="telegram")
+                            except Exception:
+                                pass
+                        elif cb.startswith("amtcustom_"):
+                            try: bot.request_custom_amount(int(cb.split("_")[1]))
+                            except Exception: pass
                         elif cb.startswith("confirm_"):
                             try: bot.confirm_pending(int(cb.split("_")[1])) 
                             except: pass
@@ -1889,7 +1921,6 @@ def bot_loop(bot):
             bot.monitor_trades()
             time.sleep(Config.SCAN_INTERVAL)
         except Exception as e: log(f"Erro loop: {e}"); time.sleep(10)
-
 def main():
     log("🔌 Bot Sniper v7.2 PRO — Dashboard Profissional de Execução Rápida")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8) 
@@ -1899,6 +1930,5 @@ def main():
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
     t.start()
     run_api(bot)
-
 if __name__ == "__main__":    
     main()
