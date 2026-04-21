@@ -505,7 +505,8 @@ class TradingBot:
 
     def send_status(self):
         lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
-        if not self.active_trades: lines.append("Nenhuma."); self.send("\n".join(lines)); return        for t in self.active_trades:
+        if not self.active_trades: lines.append("Nenhuma."); self.send("\n".join(lines)); return        
+            for t in self.active_trades:
             res = get_analysis(t["symbol"], self.timeframe); cur = res["price"] if res else t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
             if t["dir"] == "SELL": pnl = -pnl
