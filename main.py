@@ -511,7 +511,7 @@ class TradingBot:
             self.send("\n".join(lines)) 
             return
 
-    for t in self.active_trades:
+        for t in self.active_trades:
         res = get_analysis(t["symbol"], self.timeframe)
         cur = res["price"] if res else t["entry"]
 
