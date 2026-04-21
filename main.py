@@ -405,7 +405,8 @@ def send_push(title, body, icon="/icon-192.png"):
 class TradingBot:
     def __init__(self):
         self.mode = "CRYPTO"; self.timeframe = Config.TIMEFRAME
-        self.wins = 0; self.losses = 0; self.consecutive_losses = 0        self.paused_until = 0; self.active_trades = []; self.pending_trades = []
+        self.wins = 0; self.losses = 0; self.consecutive_losses = 0        
+        self.paused_until = 0; self.active_trades = []; self.pending_trades = []
         self.pending_counter = 0; self.radar_list = {}; self.gatilho_list = {}
         self.reversal_list = {}; self.asset_cooldown = {}; self.history = []
         self.last_id = 0; self.last_news_ts = 0; self._restore_msg = None
