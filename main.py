@@ -47,8 +47,18 @@ class Config:
     ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600; MIN_CONFLUENCE = 5
     MIN_CONFLUENCE_CT = 4; REVERSAL_COOLDOWN = 2700
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
-    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; SCAN_INTERVAL = 30    TIMEFRAMES = { "1m": ("Agressivo", "7d"), "5m": ("Alto", "5d"), "15m": ("Moderado", "5d"),
-                   "30m": ("Conservador", "5d"), "1h": ("Seguro", "60d"), "4h": ("Muito Seguro", "60d") }
+    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; 
+    SCAN_INTERVAL = 30
+
+    TIMEFRAMES = {
+    "1m": ("Agressivo", "7d"),
+    "5m": ("Alto", "5d"),
+    "15m": ("Moderado", "5d"),
+    "30m": ("Conservador", "5d"),
+    "1h": ("Seguro", "60d"),
+    "4h": ("Muito Seguro", "60d")
+    }
+
     TIMEFRAME = "15m"
     FOREX_OPEN_UTC = 7; FOREX_CLOSE_UTC = 17
     COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
