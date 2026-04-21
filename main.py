@@ -49,9 +49,14 @@ class Config:
     TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; 
     SCAN_INTERVAL = 30
     BROKER_NAME = "Tickmill"
+    BROKER_PLATFORM = "MT5"
+    ACCOUNT_TYPE = "DEMO"
+    BASE_CURRENCY = "USD"
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
     DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "10"))
     RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
+    MARGIN_CALL_LEVEL = 100.0
+    STOP_OUT_LEVEL = 30.0
     MIN_LOT = 0.01
     LOT_STEP = 0.01
     CONTRACT_SIZES = {
@@ -97,6 +102,49 @@ def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
 def contract_size_for(symbol):
     specific = {"GC=F": 100, "SI=F": 5000, "CL=F": 1000, "BZ=F": 1000, "NG=F": 10000, "HG=F": 25000, "ZC=F": 50, "ZW=F": 50, "ZS=F": 50, "PL=F": 50, "ES=F": 50, "NQ=F": 20, "YM=F": 5, "RTY=F": 50, "^GDAXI": 1, "^FTSE": 1, "^N225": 1, "^BVSP": 1, "^HSI": 1, "^STOXX50E": 1}
     return specific.get(symbol, Config.CONTRACT_SIZES.get(asset_cat(symbol), 1))
+
+def symbol_profile(symbol):
+    if symbol in {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY"}:
+        return {"kind": "FX", "base": symbol[:3], "quote": symbol[3:], "contract_size": 100000}
+    if symbol in {"GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "ZC=F", "ZW=F", "ZS=F", "PL=F"}:
+        return {"kind": "CFD", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+    if symbol in {"ES=F", "NQ=F", "YM=F", "RTY=F", "^GDAXI", "^FTSE", "^N225", "^BVSP", "^HSI", "^STOXX50E"}:
+        return {"kind": "INDEX", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+    if asset_cat(symbol) == "CRYPTO":
+        return {"kind": "CRYPTO", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+    return {"kind": "CFD", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+
+_FX_RATE_CACHE = {}
+
+def currency_to_usd(currency):
+    currency = (currency or "USD").upper()
+    if currency == "USD":
+        return 1.0
+    now = time.time()
+    cached = _FX_RATE_CACHE.get(currency)
+    if cached and now - cached["ts"] < 300:
+        return cached["rate"]
+    import yfinance as yf
+    pair_map = {
+        "EUR": "EURUSD=X", "GBP": "GBPUSD=X", "AUD": "AUDUSD=X", "NZD": "NZDUSD=X",
+        "CAD": "USDCAD=X", "CHF": "USDCHF=X", "JPY": "USDJPY=X", "ZAR": "USDZAR=X",
+    }
+    ticker = pair_map.get(currency)
+    rate = 1.0
+    try:
+        if ticker:
+            df = yf.Ticker(ticker).history(period="5d", interval="1d")
+            if len(df) and float(df["Close"].iloc[-1]) > 0:
+                last = float(df["Close"].iloc[-1])
+                if currency in {"CAD", "CHF", "JPY", "ZAR"}:
+                    rate = 1.0 / last
+                else:
+                    rate = last
+    except Exception:
+        rate = 1.0
+    _FX_RATE_CACHE[currency] = {"rate": float(rate), "ts": now}
+    return float(rate)
+
 def normalize_lot(lot):
     if lot <= 0:
         return 0.0
@@ -108,38 +156,95 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     entry = float(entry or 0)
     sl = float(sl or 0)
     tp = float(tp or 0)
-    contract_size = contract_size_for(symbol)
+    risk_pct = float(risk_pct or 0)
+    profile = symbol_profile(symbol)
+    contract_size = float(profile["contract_size"])
+    base_ccy = profile["base"]
+    quote_ccy = profile["quote"]
+
     if amount <= 0:
         return {"ok": False, "error": "Valor da operação precisa ser maior que zero."}
     if entry <= 0 or sl <= 0 or tp <= 0:
         return {"ok": False, "error": "Preço de entrada/SL/TP inválido."}
     if leverage <= 0:
         return {"ok": False, "error": "Alavancagem inválida."}
+
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
         return {"ok": False, "error": "Distância do stop inválida."}
-    margin_cap = amount * leverage
-    max_lot_by_margin = margin_cap / (entry * contract_size)
-    risk_money_target = amount * (float(risk_pct) / 100.0)
-    lot_by_risk = risk_money_target / (sl_distance * contract_size)
+
+    # Tickmill/MT5: o volume mínimo é 0.01 lote e a margem depende do ativo e da moeda da conta.
+    # O cálculo final da margem acontece depois que o lote ideal é definido.
+    # Risco por trade calculado sobre o valor escolhido, respeitando o SL e convertendo para USD.
+    quote_to_usd = currency_to_usd(quote_ccy)
+    base_to_usd = currency_to_usd(base_ccy)
+    risk_money_target = amount * (risk_pct / 100.0)
+
+    # P/L e risco dependem do contrato do ativo e da moeda de cotação.
+    risk_loss_per_lot = sl_distance * contract_size * quote_to_usd
+    tp_gain_per_lot = abs(tp - entry) * contract_size * quote_to_usd
+    lot_by_risk = risk_money_target / risk_loss_per_lot if risk_loss_per_lot > 0 else 0.0
+
+    # Margem no MT5: volume (em lotes) * tamanho do contrato / alavancagem,
+    # convertido para a moeda da conta quando o ativo não é cotado em USD.
+    if profile["kind"] == "FX":
+        if base_ccy == Config.BASE_CURRENCY:
+            margin_per_lot = contract_size / leverage
+        else:
+            margin_per_lot = (contract_size * base_to_usd) / leverage
+    else:
+        # CFDs/índices/cripto já são tratados em USD no bot.
+        margin_per_lot = (entry * contract_size) / leverage
+
+    max_lot_by_margin = amount / margin_per_lot if margin_per_lot > 0 else 0.0
     raw_lot = min(max_lot_by_margin, lot_by_risk)
     lot = normalize_lot(raw_lot)
     note = []
+
     if lot < Config.MIN_LOT and max_lot_by_margin >= Config.MIN_LOT:
         note.append(f"Lote calculado abaixo do mínimo; ajustado para {Config.MIN_LOT:.2f}.")
         lot = Config.MIN_LOT
+
     if lot > max_lot_by_margin + 1e-12:
         lot = normalize_lot(max_lot_by_margin)
+
     if lot < Config.MIN_LOT or lot <= 0:
         return {"ok": False, "error": f"Valor insuficiente para abrir o lote mínimo de {Config.MIN_LOT:.2f}."}
-    margin_required = entry * contract_size * lot / leverage
+
+    # Margem final e risco final já com o lote arredondado.
+    margin_required = margin_per_lot * lot
     if margin_required > amount + 1e-9:
         return {"ok": False, "error": "Margem insuficiente para o lote mínimo."}
-    risk_loss = sl_distance * contract_size * lot
-    tp_gain = abs(tp - entry) * contract_size * lot
+
+    risk_loss = risk_loss_per_lot * lot
+    tp_gain = tp_gain_per_lot * lot
     potential_pnl_ratio = tp_gain / margin_required * 100 if margin_required else 0
-    return {"ok": True, "symbol": symbol, "contract_size": contract_size, "entry": entry, "sl": sl, "tp": tp, "amount": amount, "leverage": leverage, "risk_pct": float(risk_pct), "lot_by_risk": round(lot_by_risk, 4), "max_lot_by_margin": round(max_lot_by_margin, 4), "lot": round(lot, 4), "margin_required": round(margin_required, 2), "risk_money_target": round(risk_money_target, 2), "risk_loss": round(risk_loss, 2), "tp_gain": round(tp_gain, 2), "potential_pnl_ratio": round(potential_pnl_ratio, 2), "note": note}
+
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "contract_size": contract_size,
+        "base_ccy": base_ccy,
+        "quote_ccy": quote_ccy,
+        "entry": entry,
+        "sl": sl,
+        "tp": tp,
+        "amount": amount,
+        "leverage": leverage,
+        "risk_pct": risk_pct,
+        "lot_by_risk": round(lot_by_risk, 4),
+        "max_lot_by_margin": round(max_lot_by_margin, 4),
+        "lot": round(lot, 4),
+        "margin_required": round(margin_required, 2),
+        "risk_money_target": round(risk_money_target, 2),
+        "risk_loss": round(risk_loss, 2),
+        "tp_gain": round(tp_gain, 2),
+        "potential_pnl_ratio": round(potential_pnl_ratio, 2),
+        "note": note,
+    }
+
 def all_syms():
+
     out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
     return out
@@ -170,6 +275,9 @@ def save_state(bot):
         "balance": bot.balance,
         "leverage": bot.leverage,
         "risk_pct": bot.risk_pct,
+        "account_currency": bot.account_currency,
+        "account_type": bot.account_type,
+        "platform": bot.platform,
     }
     try:
         with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
@@ -193,6 +301,9 @@ def load_state(bot):
         bot.balance = float(data.get("balance", Config.INITIAL_BALANCE))
         bot.leverage = int(data.get("leverage", Config.DEFAULT_LEVERAGE))
         bot.risk_pct = float(data.get("risk_pct", Config.RISK_PERCENT_PER_TRADE))
+        bot.account_currency = data.get("account_currency", Config.BASE_CURRENCY)
+        bot.account_type = data.get("account_type", Config.ACCOUNT_TYPE)
+        bot.platform = data.get("platform", Config.BROKER_PLATFORM)
         for t in bot.active_trades: t["session_alerted"] = False
         for t in bot.pending_trades: t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
@@ -204,6 +315,34 @@ def load_state(bot):
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
+
+def account_snapshot(bot):
+    open_pnl_money = 0.0
+    used_margin = 0.0
+    for t in bot.active_trades:
+        try:
+            res = get_analysis(t["symbol"], bot.timeframe)
+            cur = res["price"] if res else t["entry"]
+        except Exception:
+            cur = t["entry"]
+        pnl_pct = (cur - t["entry"]) / t["entry"] * 100
+        if t["dir"] == "SELL":
+            pnl_pct = -pnl_pct
+        open_pnl_money += float(t.get("margin_required", 0)) * (pnl_pct / 100.0)
+        used_margin += float(t.get("margin_required", 0))
+    balance = float(bot.balance)
+    equity = round(balance + open_pnl_money, 2)
+    free_margin = round(equity - used_margin, 2)
+    margin_level = round((equity / used_margin) * 100, 1) if used_margin > 0 else 0
+    return {
+        "balance": round(balance, 2),
+        "equity": equity,
+        "used_margin": round(used_margin, 2),
+        "free_margin": free_margin,
+        "margin_level": margin_level,
+        "open_pnl_money": round(open_pnl_money, 2),
+    }
+
 RSS_FEEDS = [    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"), ("Cointelegraph", "https://cointelegraph.com/rss"),
     ("Decrypt", "https://decrypt.co/feed"),
     ("Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories"),
@@ -451,6 +590,11 @@ class TradingBot:
         self.balance = Config.INITIAL_BALANCE
         self.leverage = Config.DEFAULT_LEVERAGE
         self.risk_pct = Config.RISK_PERCENT_PER_TRADE
+        self.account_currency = Config.BASE_CURRENCY
+        self.account_type = Config.ACCOUNT_TYPE
+        self.platform = Config.BROKER_PLATFORM
+        self.margin_call_level = Config.MARGIN_CALL_LEVEL
+        self.stop_out_level = Config.STOP_OUT_LEVEL
         self.awaiting_custom_amount = None
     def send(self, text, markup=None, disable_preview=False):
         import re
@@ -481,8 +625,10 @@ class TradingBot:
         tp_pct = abs(t["tp"] - t["entry"]) / t["entry"] * 100
         is_ct = "CONTRA-TENDÊNCIA" in (t.get("tipo") or "  ")
         header = "⚡ SINAL CT PENDENTE" if is_ct else "🎯 SINAL PENDENTE"
+        snap = account_snapshot(self)
         text = "\n".join([
             f"{header} – <b>{t['symbol']}</b> ({t['name']})",
+            f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
             "Aguardando sua escolha de valor…",
             "",
             f"▶️ <b>{dl}</b>",
@@ -491,7 +637,9 @@ class TradingBot:
             f"🛡 <b>SL:</b> <code>{fmt(t['sl'])}</code> ({-sl_pct:.2f}%)",
             f"🎯 <b>TP:</b> <code>{fmt(t['tp'])}</code> ({tp_pct:+.2f}%)",
             "",
-            f"🏦 <b>Conta:</b> <code>{fmt(self.balance)}</code> | <b>Alavancagem:</b> <code>{self.leverage}x</code> | <b>Risco:</b> <code>{self.risk_pct:.1f}%</code>",
+            f"🏦 <b>Saldo:</b> <code>{fmt(snap['balance'])}</code> | <b>Equity:</b> <code>{fmt(snap['equity'])}</code>",
+            f"📉 <b>Margem usada:</b> <code>{fmt(snap['used_margin'])}</code> | <b>Free margin:</b> <code>{fmt(snap['free_margin'])}</code>",
+            f"📊 <b>Margin level:</b> <code>{snap['margin_level']:.1f}%</code> | <b>Alavancagem:</b> <code>{self.leverage}x</code> | <b>Risco:</b> <code>{self.risk_pct:.1f}%</code>",
             "",
         ])
         if is_ct and t.get("sinais"):
@@ -514,6 +662,8 @@ class TradingBot:
             "margin_required": plan["margin_required"],
             "lot": plan["lot"],
             "contract_size": plan["contract_size"],
+            "base_ccy": plan.get("base_ccy", Config.BASE_CURRENCY),
+            "quote_ccy": plan.get("quote_ccy", Config.BASE_CURRENCY),
             "risk_pct": plan["risk_pct"],
             "risk_money_target": plan["risk_money_target"],
             "risk_loss": plan["risk_loss"],
@@ -1181,6 +1331,10 @@ body.focus .focus-banner{display:block}
     <div class="risk-head">⚖ Gestão de Risco</div>
     <div class="risk-grid">
       <div class="risk-item"><span class="risk-lbl">Saldo</span><span class="risk-val bl" id="r-balance">0</span></div>
+      <div class="risk-item"><span class="risk-lbl">Equity</span><span class="risk-val" id="r-equity">0</span></div>
+      <div class="risk-item"><span class="risk-lbl">Margem usada</span><span class="risk-val go" id="r-margin">0</span></div>
+      <div class="risk-item"><span class="risk-lbl">Free margin</span><span class="risk-val bl" id="r-free">0</span></div>
+      <div class="risk-item"><span class="risk-lbl">Margin level</span><span class="risk-val" id="r-level">0%</span></div>
       <div class="risk-item"><span class="risk-lbl">Alavancagem</span><span class="risk-val" id="r-leverage">0x</span></div>
       <div class="risk-item"><span class="risk-lbl">Risco/trade</span><span class="risk-val go" id="r-risk">0%</span></div>
       <div class="risk-item"><span class="risk-lbl">Exposição</span><span class="risk-val bl" id="r-exposure">0%</span></div>
@@ -1353,13 +1507,21 @@ function updRiskPanel(st){
   const balEl=document.getElementById('r-balance');
   balEl.textContent=fp(st.balance||0);
   balEl.className='risk-val bl';
+  const eqEl=document.getElementById('r-equity');
+  if(eqEl){eqEl.textContent=fp(st.equity||st.balance||0); eqEl.className='risk-val '+((st.equity||0)>= (st.balance||0)?'g':'r');}
+  const marEl=document.getElementById('r-margin');
+  if(marEl){marEl.textContent=fp(st.used_margin||0); marEl.className='risk-val go';}
+  const freeEl=document.getElementById('r-free');
+  if(freeEl){freeEl.textContent=fp(st.free_margin||0); freeEl.className='risk-val '+((st.free_margin||0)>0?'bl':'r');}
+  const lvlEl=document.getElementById('r-level');
+  if(lvlEl){lvlEl.textContent=(st.margin_level||0).toFixed(1)+'%'; lvlEl.className='risk-val '+((st.margin_level||0)<= (st.stop_out_level||30)?'r':(st.margin_level||0)<= (st.margin_call_level||100)?'go':'g');}
   const levEl=document.getElementById('r-leverage');
   levEl.textContent=(st.leverage||0)+'x';
   levEl.className='risk-val go';
   const riskEl=document.getElementById('r-risk');
   riskEl.textContent=(st.risk_pct||0).toFixed(1)+'%';
   riskEl.className='risk-val go';
-  const exposure=Math.round(st.active_trades.length/3*100);
+  const exposure=Math.round((st.active_trades.length/3)*100);
   const expEl=document.getElementById('r-exposure');
   expEl.textContent=exposure+'%';
   expEl.className='risk-val '+(exposure>=80?'r':exposure>=50?'go':'bl');
@@ -1418,7 +1580,7 @@ function renderOpenTrade(t){
     <div class="tlvs">
       <div class="tlv"><div class="tll">Lote</div><div class="tlvv bl">${(t.lot||0).toFixed(2)}</div></div>
       <div class="tlv"><div class="tll">Margem</div><div class="tlvv go">${fp(t.margin_required||0)}</div></div>
-      <div class="tlv"><div class="tll">Aberto</div><div class="tlvv">${t.opened_at||'--'}</div></div>
+      <div class="tlv"><div class="tll">Base</div><div class="tlvv">${fp(t.capital_base||0)}</div></div>
     </div>
     <div class="tprog"><div class="tfill" style="width:${t.progress}%;background:${pos?'var(--green)':'var(--red)'}"></div></div>
     <div class="tdist">
@@ -1462,9 +1624,9 @@ function renderPendingFromApi(list){
         <div class="tlv"><div class="tll">TP 🎯 <button class="cpbtn" onclick="copyText('${p.tp}')">📋</button></div><div class="tlvv g">${fp(p.tp)}</div></div>
       </div>
       <div class="tlvs">
-        <div class="tlv"><div class="tll">Saldo</div><div class="tlvv bl">${fp(_st&&_st.balance?_st.balance:0)}</div></div>
-        <div class="tlv"><div class="tll">Risco</div><div class="tlvv go">${(_st&&_st.risk_pct?_st.risk_pct:0).toFixed(1)}%</div></div>
-        <div class="tlv"><div class="tll">Alav.</div><div class="tlvv">${(_st&&_st.leverage?_st.leverage:0)}x</div></div>
+        <div class="tlv"><div class="tll">Saldo</div><div class="tlvv bl">${fp(p.balance!==undefined?p.balance:(_st&&_st.balance?_st.balance:0))}</div></div>
+        <div class="tlv"><div class="tll">Risco</div><div class="tlvv go">${((_st&&_st.risk_pct!==undefined)?_st.risk_pct:0).toFixed(1)}%</div></div>
+        <div class="tlv"><div class="tll">Alav.</div><div class="tlvv">${((_st&&_st.leverage!==undefined)?_st.leverage:0)}x</div></div>
       </div>
       <div class="tbtns" style="grid-template-columns:repeat(2,1fr)">
         <button class="tb yes" onclick="openPendingPct(${p.pending_id},25,this)">25%</button>
@@ -1473,7 +1635,7 @@ function renderPendingFromApi(list){
         <button class="tb no" onclick="rejectPending(${p.pending_id},this)">Recusar</button>
       </div>
       <div class="tbtns" style="grid-template-columns:1fr">
-        <button class="tb yes" onclick="openPendingCustom(${p.pending_id},this)">Valor custom</button>
+        <button class="tb yes" onclick="openPendingCustom(${p.pending_id},this)">Valor custom / manual</button>
       </div>
     </div>`;
   }).join('')
@@ -1494,7 +1656,7 @@ async function openPendingPct(id,pct,btn){
   }catch(e){btn.textContent='Erro';btn.disabled=false;toast('Erro: '+e.message,'error');}
 }
 async function openPendingCustom(id,btn){
-  const raw=prompt('Digite o valor base da operação em dólares:','500');
+  const raw=prompt('Digite o valor base da operação em dólares. Ex.: 500','500');
   if(raw===null)return;
   const amount=parseFloat(String(raw).replace(',','.'));
   if(!Number.isFinite(amount)||amount<=0){toast('Valor inválido','error');return;}
@@ -1740,7 +1902,18 @@ def create_api(bot):
     @app.route("/api/signals")
     def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
     @app.route("/api/pending")
-    def api_pending(): return jsonify(bot.pending_trades)
+    def api_pending():
+        snap = account_snapshot(bot)
+        pending = []
+        for p in bot.pending_trades:
+            item = dict(p)
+            item["balance"] = snap["balance"]
+            item["equity"] = snap["equity"]
+            item["used_margin"] = snap["used_margin"]
+            item["free_margin"] = snap["free_margin"]
+            item["margin_level"] = snap["margin_level"]
+            pending.append(item)
+        return jsonify(pending)
     @app.route("/api/execute_pending", methods=["POST", "OPTIONS"])
     def api_execute_pending():
         if request.method == "OPTIONS": return jsonify({}), 200
