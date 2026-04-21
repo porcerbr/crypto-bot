@@ -619,7 +619,8 @@ class TradingBot:
             for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
                 sc, tc, ch = calc_reversal_conf(res, d)
                 if sc >= Config.MIN_CONFLUENCE_CT:
-                    sinais = []                    if d == "SELL":
+                    sinais = []                    
+                    if d == "SELL":
                         if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
                         if res["near_upper"]: sinais.append("BB Superior atingida")
                         if res["div_bear"]: sinais.append("RSI divergência bearish")
@@ -668,7 +669,8 @@ class TradingBot:
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
                 t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
                 if nsl > t["sl"]: t["sl"] = nsl; changed = True
-            elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):                t["peak"] = cur; nsl = cur + Config.ATR_MULT_TRAIL*atr
+            elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):                
+                t["peak"] = cur; nsl = cur + Config.ATR_MULT_TRAIL*atr
                 if nsl < t["sl"]: t["sl"] = nsl; changed = True
             is_win  = (t["dir"]=="BUY" and cur>=t["tp"]) or (t["dir"]=="SELL" and cur<=t["tp"])
             is_loss = (t["dir"]=="BUY" and cur<=t["sl"]) or (t["dir"]=="SELL" and cur>=t["sl"])
