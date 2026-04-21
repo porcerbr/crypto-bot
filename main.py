@@ -504,15 +504,29 @@ class TradingBot:
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
 
     def send_status(self):
-        lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
-        if not self.active_trades: lines.append("Nenhuma."); self.send("\n".join(lines)); return        
-            for t in self.active_trades:
-            res = get_analysis(t["symbol"], self.timeframe); cur = res["price"] if res else t["entry"]
-            pnl = (cur-t["entry"])/t["entry"]*100
-            if t["dir"] == "SELL": pnl = -pnl
-            lines.append(f"{'🟢' if pnl>=0 else '🔴'} {t['symbol']} {t['dir']} P&L: {pnl:+.2f}%")
-        self.send("\n".join(lines))
+    lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
 
+    if not self.active_trades:
+        lines.append("Nenhuma.")
+        self.send("\n".join(lines))
+        return        
+
+    for t in self.active_trades:
+        res = get_analysis(t["symbol"], self.timeframe)
+        cur = res["price"] if res else t["entry"]
+
+        pnl = (cur - t["entry"]) / t["entry"] * 100
+
+        if t["dir"] == "SELL":
+            pnl = -pnl
+
+        lines.append(
+            f"{'🟢' if pnl>=0 else '🔴'} "
+            f"{t['symbol']} {t['dir']} "
+            f"P&L: {pnl:+.2f}%"
+        )
+
+    self.send("\n".join(lines))
     def send_placar(self):
         tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
