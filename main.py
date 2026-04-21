@@ -508,8 +508,7 @@ class TradingBot:
 
     if not self.active_trades:
         lines.append("Nenhuma.")
-        self.send("\n".join(lines))
-            return
+        self.send("\n".join(lines)) return
 
     for t in self.active_trades:
         res = get_analysis(t["symbol"], self.timeframe)
