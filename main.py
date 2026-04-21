@@ -194,7 +194,8 @@ def build_news_msg():
 
 # ═══════════════════════════════════════════════════════════════
 # MOTOR DE ANÁLISE PRINCIPAL
-# ═══════════════════════════════════════════════════════════════def get_analysis(symbol, timeframe=None):
+# ═══════════════════════════════════════════════════════════════
+def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
     yf_symbol = to_yf(symbol)
