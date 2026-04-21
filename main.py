@@ -44,7 +44,9 @@ class Config:
     ATR_MULT_SL = 1.5; ATR_MULT_TP = 3.0; ATR_MULT_TRAIL = 1.2
     MAX_CONSECUTIVE_LOSSES = 2; PAUSE_DURATION = 3600
     ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600; MIN_CONFLUENCE = 5
-    MIN_CONFLUENCE_CT = 4; REVERSAL_COOLDOWN = 2700
+    MIN_CONFLUENCE_CT = 4; REVERSAL_MIN_SCORE = 6; REVERSAL_COOLDOWN = 2700
+    REVERSAL_REQUIRE_TREND = True; REVERSAL_RSI_SELL = 75; REVERSAL_RSI_BUY = 25
+    REVERSAL_BAND_BUFFER = 0.997
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
     TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; 
     SCAN_INTERVAL = 30
@@ -113,6 +115,25 @@ def symbol_profile(symbol):
     if asset_cat(symbol) == "CRYPTO":
         return {"kind": "CRYPTO", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
     return {"kind": "CFD", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+
+def asset_min_lot(symbol):
+    # Tickmill demo: exibimos o lote mínimo operacional configurado no bot.
+    return Config.MIN_LOT
+
+def required_amount_for_lot(symbol, entry, leverage, lot=None):
+    """Valor-base mínimo estimado para abrir um lote específico."""
+    profile = symbol_profile(symbol)
+    lot = Config.MIN_LOT if lot is None else float(lot)
+    leverage = max(float(leverage or 1), 1e-9)
+    entry = float(entry or 0)
+    contract_size = float(profile["contract_size"])
+    if profile["kind"] == "FX":
+        base_to_usd = currency_to_usd(profile["base"])
+        margin_per_lot = (contract_size * base_to_usd) / leverage
+    else:
+        margin_per_lot = (entry * contract_size) / leverage
+    return round(margin_per_lot * lot, 2)
+
 
 _FX_RATE_CACHE = {}
 
@@ -209,7 +230,8 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         lot = normalize_lot(max_lot_by_margin)
 
     if lot < Config.MIN_LOT or lot <= 0:
-        return {"ok": False, "error": f"Valor insuficiente para abrir o lote mínimo de {Config.MIN_LOT:.2f}."}
+        min_amt = required_amount_for_lot(symbol, entry, leverage, Config.MIN_LOT)
+        return {"ok": False, "error": f"Valor insuficiente para abrir o lote mínimo de {Config.MIN_LOT:.2f}. Valor mínimo estimado: {fmt(min_amt)} USD."}
 
     # Margem final e risco final já com o lote arredondado.
     margin_required = margin_per_lot * lot
@@ -232,6 +254,8 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         "amount": amount,
         "leverage": leverage,
         "risk_pct": risk_pct,
+        "min_lot": Config.MIN_LOT,
+        "min_amount_required": required_amount_for_lot(symbol, entry, leverage, Config.MIN_LOT),
         "lot_by_risk": round(lot_by_risk, 4),
         "max_lot_by_margin": round(max_lot_by_margin, 4),
         "lot": round(lot, 4),
@@ -493,8 +517,11 @@ def get_reversal_analysis(symbol, timeframe=None):
         delta = closes.diff()
         gain = delta.where(delta>0,0).rolling(14).mean(); loss = (-delta.where(delta<0,0)).rolling(14).mean()
         rsi_s = 100-100/(1+gain/loss); rsi = float(rsi_s.iloc[-1])
+        ema9 = closes.ewm(span=9,adjust=False).mean()
+        ema21 = closes.ewm(span=21,adjust=False).mean()
         ema12 = closes.ewm(span=12,adjust=False).mean(); ema26 = closes.ewm(span=26,adjust=False).mean()
         mh = (ema12-ema26)-(ema12-ema26).ewm(span=9,adjust=False).mean()
+        ema200 = closes.ewm(span=min(200, len(closes)-1), adjust=False).mean()
         tr = pd.concat([highs-lows,(highs-closes.shift()).abs(),(lows-closes.shift()).abs()],axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])
         hd = highs.diff(); ld = lows.diff()
@@ -513,27 +540,36 @@ def get_reversal_analysis(symbol, timeframe=None):
         uw = highs.iloc[-1]-max(closes.iloc[-1],df["Open"].iloc[-1])
         lw = min(closes.iloc[-1],df["Open"].iloc[-1])-lows.iloc[-1]
         pb, pb2, pnm = detect_candle_patterns(df)
-        near_up = price >= ub*0.998; near_dn = price <= lb*1.002
-        rsi_ob = rsi > 75; rsi_os = rsi < 25
-        sig_sell = near_up or rsi_ob or div_bear or mdiv_bear
-        sig_buy  = near_dn or rsi_os or div_bull or mdiv_bull
+        near_up = price >= ub*Config.REVERSAL_BAND_BUFFER
+        near_dn = price <= lb*(2-Config.REVERSAL_BAND_BUFFER)
+        rsi_ob = rsi >= Config.REVERSAL_RSI_SELL
+        rsi_os = rsi <= Config.REVERSAL_RSI_BUY
+        trend_up = bool(price > ema200.iloc[-1] and ema9.iloc[-1] > ema21.iloc[-1] and ema21.iloc[-1] > ema200.iloc[-1])
+        trend_down = bool(price < ema200.iloc[-1] and ema9.iloc[-1] < ema21.iloc[-1] and ema21.iloc[-1] < ema200.iloc[-1])
+        sell_core = [near_up, rsi_ob, div_bear, mdiv_bear, bool(uw>rng0*0.6), pb2, trend_up, adx > 20]
+        buy_core  = [near_dn, rsi_os, div_bull, mdiv_bull, bool(lw>rng0*0.6), pb, trend_down, adx > 20]
+        sig_sell = sum(bool(x) for x in sell_core) >= Config.REVERSAL_MIN_SCORE - 1
+        sig_buy  = sum(bool(x) for x in buy_core) >= Config.REVERSAL_MIN_SCORE - 1
         if not (sig_sell or sig_buy): return None
         return {
             "symbol": symbol, "name": asset_name(symbol), "price": price, "rsi": rsi, "atr": atr, "adx": adx, "adx_mature": adx>30,
             "upper_band": ub, "lower_band": lb, "near_upper": near_up, "near_lower": near_dn,
             "rsi_overbought": rsi_ob, "rsi_oversold": rsi_os, "div_bear": div_bear, "div_bull": div_bull,
-            "macd_div_bear": mdiv_bear, "macd_div_bull": mdiv_bull, "wick_bear": bool(uw>rng0*0.5),
-            "wick_bull": bool(lw>rng0*0.5), "pat_bull": pb, "pat_bear": pb2, "pat_name": pnm,
+            "macd_div_bear": mdiv_bear, "macd_div_bull": mdiv_bull, "wick_bear": bool(uw>rng0*0.6),
+            "wick_bull": bool(lw>rng0*0.6), "pat_bull": pb, "pat_bear": pb2, "pat_name": pnm,
+            "trend_up": trend_up, "trend_down": trend_down,
             "signal_sell_ct": sig_sell, "signal_buy_ct": sig_buy,
         }
     except Exception as e: log(f"[CT] {symbol}: {e}"); return None
 def calc_reversal_conf(res, d):
     if d == "SELL":
-        checks = [("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
+        checks = [("Tendência principal de alta", res.get("trend_up", False)),
+                  ("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
                   ("RSI div. bearish", res["div_bear"]), ("MACD div. bearish", res["macd_div_bear"]),
                   ("Candle de baixa", res["pat_bear"]), ("Wick superior", res["wick_bear"]), ("ADX maduro", res["adx_mature"])]
     else:
-        checks = [("RSI sobrevendido", res["rsi_oversold"]), ("Banda Inferior BB", res["near_lower"]),
+        checks = [("Tendência principal de baixa", res.get("trend_down", False)),
+                  ("RSI sobrevendido", res["rsi_oversold"]), ("Banda Inferior BB", res["near_lower"]),
                   ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),                  ("Candle de alta", res["pat_bull"]), ("Wick inferior", res["wick_bull"]), ("ADX maduro", res["adx_mature"])]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
@@ -541,20 +577,20 @@ def detect_reversal(res):
     if not res: return (False, None, 0, [])
     motivos = []; forca = 0; dir_rev = None
     rsi = res["rsi"]; price = res["price"]; cen = res["cenario"]
-    if cen == "ALTA" or res["ema9"] > res["ema21"]:
-        if rsi >= 70: motivos.append(f"RSI sobrecomprado ({rsi:.0f})"); forca += 30; dir_rev = "SELL"
-        if rsi >= 75: motivos.append("RSI extremo"); forca += 15
-        if price >= res["upper"]: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"
-        if res["macd_hist"] < 0 and res["ema9"] > res["ema21"]: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
-        if res["adx"] < 20 and cen == "ALTA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
-    if cen == "BAIXA" or res["ema9"] < res["ema21"]:
-        if rsi <= 30: motivos.append(f"RSI sobrevendido ({rsi:.0f})"); forca += 30; dir_rev = "BUY"
-        if rsi <= 25: motivos.append("RSI extremo"); forca += 15
-        if price <= res["lower"]: motivos.append("Banda inferior BB"); forca += 25; dir_rev = "BUY"
-        if res["macd_hist"] > 0 and res["ema9"] < res["ema21"]: motivos.append("Div. MACD altista"); forca += 20; dir_rev = "BUY"
-        if res["adx"] < 20 and cen == "BAIXA": motivos.append(f"ADX fraco ({res['adx']:.0f})"); forca += 10
+    trend_up = bool(price > res["ema200"] and res["ema9"] > res["ema21"] and res["ema21"] > res["ema200"])
+    trend_down = bool(price < res["ema200"] and res["ema9"] < res["ema21"] and res["ema21"] < res["ema200"])
+    if cen == "ALTA" or trend_up:
+        if rsi >= 75: motivos.append(f"RSI sobrecomprado ({rsi:.0f})"); forca += 25; dir_rev = "SELL"
+        if price >= res["upper"] * Config.REVERSAL_BAND_BUFFER: motivos.append("Banda superior BB"); forca += 25; dir_rev = "SELL"
+        if res["macd_hist"] < 0: motivos.append("Div. MACD baixista"); forca += 20; dir_rev = "SELL"
+        if res["adx"] > 20 and trend_up: motivos.append(f"Tendência esticada ({res['adx']:.0f} ADX)"); forca += 10
+    if cen == "BAIXA" or trend_down:
+        if rsi <= 25: motivos.append(f"RSI sobrevendido ({rsi:.0f})"); forca += 25; dir_rev = "BUY"
+        if price <= res["lower"] * (2-Config.REVERSAL_BAND_BUFFER): motivos.append("Banda inferior BB"); forca += 25; dir_rev = "BUY"
+        if res["macd_hist"] > 0: motivos.append("Div. MACD altista"); forca += 20; dir_rev = "BUY"
+        if res["adx"] > 20 and trend_down: motivos.append(f"Tendência esticada ({res['adx']:.0f} ADX)"); forca += 10
     forca = min(forca, 100)
-    return (forca >= 40 and dir_rev is not None, dir_rev, forca, motivos)
+    return (forca >= 70 and dir_rev is not None, dir_rev, forca, motivos)
 _push_subscriptions = []
 def send_push(title, body, icon="/icon-192.png"):
     try:
@@ -629,6 +665,7 @@ class TradingBot:
         text = "\n".join([
             f"{header} – <b>{t['symbol']}</b> ({t['name']})",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
+            f"Lote mínimo: <code>{float(t.get('min_lot', Config.MIN_LOT)):.2f}</code> | Valor mínimo aprox.: <code>{fmt(float(t.get('min_amount_required', 0)))}</code>",
             "Aguardando sua escolha de valor…",
             "",
             f"▶️ <b>{dl}</b>",
@@ -670,6 +707,8 @@ class TradingBot:
             "tp_gain": plan["tp_gain"],
             "leverage": plan["leverage"],
             "risk_note": plan.get("note", []),
+            "min_lot": plan.get("min_lot", Config.MIN_LOT),
+            "min_amount_required": plan.get("min_amount_required", 0),
             "source": source,
         })
         self.balance -= plan["margin_required"]
@@ -698,6 +737,7 @@ class TradingBot:
                 f"📦 Lote: <code>{plan['lot']:.2f}</code> | Margem usada: <code>{fmt(plan['margin_required'])}</code>\n"
                 f"🛡 SL: <code>{fmt(opened['sl'])}</code> | 🎯 TP: <code>{fmt(opened['tp'])}</code>\n"
                 f"📉 Risco até SL: <code>{fmt(plan['risk_loss'])}</code> | 📈 Potencial no TP: <code>{fmt(plan['tp_gain'])}</code>\n"
+                f"🧷 Lote mínimo do ativo: <code>{float(plan.get('min_lot', Config.MIN_LOT)):.2f}</code> | Base mínima aprox.: <code>{fmt(plan.get('min_amount_required', 0))}</code>\n"
                 f"🏦 Saldo após reservar margem: <code>{fmt(self.balance)}</code>{warn}"
             )
             return True
@@ -710,7 +750,15 @@ class TradingBot:
         )
     def confirm_pending(self, pending_id, amount=None):
         if amount is None:
-            amount = min(self.balance, max(self.balance * 0.25, Config.MIN_LOT * 10))
+            for t in self.pending_trades:
+                if t.get("pending_id") == pending_id:
+                    amount = max(
+                        min(self.balance, max(self.balance * 0.25, Config.MIN_LOT * 10)),
+                        required_amount_for_lot(t["symbol"], t["entry"], self.leverage, Config.MIN_LOT)
+                    )
+                    break
+            else:
+                amount = min(self.balance, max(self.balance * 0.25, Config.MIN_LOT * 10))
         return self.execute_pending_with_amount(pending_id, amount, source="dashboard")
     def reject_pending(self, pending_id):
         for t in self.pending_trades[:]:
@@ -744,6 +792,17 @@ class TradingBot:
     def set_mode(self, mode):
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
         self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+    def set_balance(self, value):
+        try:
+            value = float(value)
+        except Exception:
+            return False
+        if value <= 0:
+            return False
+        self.balance = round(value, 2)
+        save_state(self)
+        self.send(f"🏦 <b>Saldo atualizado</b>\nNovo saldo: <code>{fmt(self.balance)}</code>")
+        return True
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
@@ -900,6 +959,8 @@ class TradingBot:
             self.pending_counter += 1
             pending_trade = {
                 "pending_id": self.pending_counter,
+                "min_lot": asset_min_lot(s),
+                "min_amount_required": required_amount_for_lot(s, price, self.leverage, Config.MIN_LOT),
                 "symbol": s,
                 "name": res["name"],
                 "entry": price,
@@ -945,7 +1006,10 @@ class TradingBot:
             cands = []
             for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
                 sc, tc, ch = calc_reversal_conf(res, d)
-                if sc >= Config.MIN_CONFLUENCE_CT:
+                strong_anchor = (d == "SELL" and res.get("trend_up")) or (d == "BUY" and res.get("trend_down"))
+                extreme = (d == "SELL" and res["rsi_overbought"] and res["near_upper"]) or (d == "BUY" and res["rsi_oversold"] and res["near_lower"])
+                rejection = (d == "SELL" and (res["div_bear"] or res["macd_div_bear"] or res["pat_bear"] or res["wick_bear"])) or (d == "BUY" and (res["div_bull"] or res["macd_div_bull"] or res["pat_bull"] or res["wick_bull"]))
+                if sc >= Config.MIN_CONFLUENCE_CT and sc >= Config.REVERSAL_MIN_SCORE and strong_anchor and extreme and rejection:
                     sinais = []
                     if d == "SELL":
                         if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
@@ -1394,6 +1458,12 @@ body.focus .focus-banner{display:block}
     <div class="pbox"><div class="plb">Max Trades</div><div class="pvl" id="p-mt">--</div></div>
     <div class="pbox"><div class="plb">Confluência</div><div class="pvl" id="p-mc">--</div></div>
   </div></div>
+  <div class="cfgsec"><div class="cfgl">Saldo da Conta</div>
+    <div class="pgrid">
+      <div class="pbox"><div class="plb">Saldo atual</div><div class="pvl" id="p-bal">--</div></div>
+      <div class="pbox"><div class="plb">Editar saldo</div><button class="ab abn" onclick="setBalance()">Alterar</button></div>
+    </div>
+  </div>
   <div class="cfgsec"><div class="cfgl">Modo Focus (Execução)</div>
     <button class="ab abn" id="focus-cfg-btn" onclick="toggleFocus()">🎯 Ativar Modo Focus</button>
   </div>
@@ -1628,6 +1698,11 @@ function renderPendingFromApi(list){
         <div class="tlv"><div class="tll">Risco</div><div class="tlvv go">${((_st&&_st.risk_pct!==undefined)?_st.risk_pct:0).toFixed(1)}%</div></div>
         <div class="tlv"><div class="tll">Alav.</div><div class="tlvv">${((_st&&_st.leverage!==undefined)?_st.leverage:0)}x</div></div>
       </div>
+      <div class="tlvs">
+        <div class="tlv"><div class="tll">Lote mín.</div><div class="tlvv bl">${Number(p.min_lot||0).toFixed(2)}</div></div>
+        <div class="tlv"><div class="tll">Base mín.</div><div class="tlvv go">${fp(p.min_amount_required||0)}</div></div>
+        <div class="tlv"><div class="tll">Margem min.</div><div class="tlvv">${fp(p.min_amount_required||0)}</div></div>
+      </div>
       <div class="tbtns" style="grid-template-columns:repeat(2,1fr)">
         <button class="tb yes" onclick="openPendingPct(${p.pending_id},25,this)">25%</button>
         <button class="tb yes" onclick="openPendingPct(${p.pending_id},50,this)">50%</button>
@@ -1781,6 +1856,7 @@ async function loadCfg(){
     document.getElementById('p-tp').textContent=c.atr_tp+'×ATR';
     document.getElementById('p-mt').textContent=c.max_trades;
     document.getElementById('p-mc').textContent=c.min_conf+'/7';
+    const pbal=document.getElementById('p-bal'); if(pbal) pbal.textContent=fp(c.balance||0);
   }catch(_){}
   updCfgBtns();
 }
@@ -1796,6 +1872,17 @@ async function setMode(m){
 async function setTf(t){
   try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();toast('Timeframe: '+t,'success');}
   catch(e){toast('Erro: '+e.message,'error');}
+}
+async function setBalance(){
+  const raw=prompt('Digite o novo saldo da conta em USD','500');
+  if(raw===null)return;
+  const balance=parseFloat(String(raw).replace(',','.'));
+  if(!Number.isFinite(balance)||balance<=0){toast('Saldo inválido','error');return;}
+  try{
+    await apiFetch('/api/balance',{method:'POST',body:JSON.stringify({balance})});
+    await loadDash();
+    toast('Saldo atualizado','success');
+  }catch(e){toast('Erro: '+e.message,'error');}
 }
 async function resetPausa(){
   if(!confirm('Resetar Circuit Breaker?'))return;
@@ -1912,6 +1999,8 @@ def create_api(bot):
             item["used_margin"] = snap["used_margin"]
             item["free_margin"] = snap["free_margin"]
             item["margin_level"] = snap["margin_level"]
+            item["min_lot"] = float(p.get("min_lot", Config.MIN_LOT))
+            item["min_amount_required"] = float(p.get("min_amount_required", required_amount_for_lot(p["symbol"], p["entry"], bot.leverage, Config.MIN_LOT)))
             pending.append(item)
         return jsonify(pending)
     @app.route("/api/execute_pending", methods=["POST", "OPTIONS"])
@@ -1949,6 +2038,19 @@ def create_api(bot):
         except Exception:
             return jsonify({"error": "amount inválido"}), 400
         return jsonify({"ok": True}) if bot.execute_pending_with_amount(pid, amount, source="dashboard") else (jsonify({"error": "not found"}), 404)
+    @app.route("/api/balance", methods=["POST", "OPTIONS"])
+    def api_balance():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        try:
+            value = float(data.get("balance"))
+        except Exception:
+            return jsonify({"error": "balance inválido"}), 400
+        if value <= 0:
+            return jsonify({"error": "saldo precisa ser maior que zero"}), 400
+        bot.set_balance(value)
+        return jsonify({"ok": True, "balance": round(bot.balance, 2)})
+
     @app.route("/api/reject", methods=["POST", "OPTIONS"])
     def api_reject():
         if request.method == "OPTIONS": return jsonify({}), 200
@@ -2058,6 +2160,17 @@ def bot_loop(bot):
                         elif txt in ("/noticias", "/news"): bot.send_news()
                         elif txt == "/status": bot.send_status()
                         elif txt in ("/placar", "/score"): bot.send_placar()
+                        elif txt.startswith("/setsaldo"):
+                            try:
+                                parts = txt.split()
+                                if len(parts) < 2: raise ValueError
+                                val = float(parts[1].replace(",", "."))
+                                if bot.set_balance(val):
+                                    bot.send(f"✅ Saldo ajustado para <code>{fmt(bot.balance)}</code>")
+                                else:
+                                    bot.send("❌ Saldo inválido. Use: <code>/setsaldo 500</code>")
+                            except Exception:
+                                bot.send("❌ Use: <code>/setsaldo 500</code>")
                         elif txt in ("/saldo", "/account"): bot.send(f"🏦 Saldo: <code>{fmt(bot.balance)}</code> | Alavancagem: <code>{bot.leverage}x</code> | Risco: <code>{bot.risk_pct:.1f}%</code>")
                         elif txt in ("/menu", "/start"): bot.build_menu()
                         elif txt == "/resetpausa": bot.reset_pause()
