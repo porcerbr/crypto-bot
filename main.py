@@ -455,7 +455,8 @@ class TradingBot:
         for t in self.pending_trades[:]:
             if t.get("pending_id") == pending_id:
                 self.pending_trades.remove(t)
-                trade = {k: v for k, v in t.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}                self.active_trades.append(trade); save_state(self)
+                trade = {k: v for k, v in t.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}                
+                self.active_trades.append(trade); save_state(self)
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 self.send(f"✅ <b>TRADE CONFIRMADO – {t['symbol']}</b>\n{dl} | Entrada: <code>{fmt(t['entry'])}</code>\nSL: <code>{fmt(t['sl'])}</code> | TP: <code>{fmt(t['tp'])}</code>")
                 return True
@@ -553,7 +554,8 @@ class TradingBot:
                 sl_est = gatilho - Config.ATR_MULT_SL * atr; tp_est = gatilho + Config.ATR_MULT_TP * atr
                 preco_ok = price >= gatilho and price < res["upper"] and res["rsi"] < 70
             else:
-                gatilho = res["t_sell"]; dir_s = "SELL"                sl_est = gatilho + Config.ATR_MULT_SL * atr; tp_est = gatilho - Config.ATR_MULT_TP * atr
+                gatilho = res["t_sell"]; dir_s = "SELL"                
+                sl_est = gatilho + Config.ATR_MULT_SL * atr; tp_est = gatilho - Config.ATR_MULT_TP * atr
                 preco_ok = price <= gatilho and price > res["lower"] and res["rsi"] > 30
             sl_p = abs(gatilho-sl_est)/gatilho*100; tp_p = abs(tp_est-gatilho)/gatilho*100
             ratio = f"1:{Config.ATR_MULT_TP/Config.ATR_MULT_SL:.1f}"
