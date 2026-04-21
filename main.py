@@ -1230,7 +1230,8 @@ def create_api(bot):
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
     app = create_api(bot)
-    log(f"🌐 Flask rodando na porta {port}")    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+    log(f"🌐 Flask rodando na porta {port}")    
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN
