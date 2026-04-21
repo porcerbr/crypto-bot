@@ -64,6 +64,8 @@ class Config:
     COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
     IDX_OPEN_UTC   = 7; IDX_CLOSE_UTC   = 21
     STATE_FILE = "bot_state.json"
+    RISK_BALANCE = float(os.getenv("RISK_BALANCE", "1000"))
+    RISK_PCT_PER_TRADE = float(os.getenv("RISK_PCT_PER_TRADE", "1.0"))
 
 def fmt(p: float) -> str:
     if not p: return "0"
@@ -72,6 +74,56 @@ def fmt(p: float) -> str:
     if p >= 10:    return f"{p:.4f}"
     if p >= 1:     return f"{p:.5f}"
     return f"{p:.6f}"
+
+def _contract_size(symbol: str) -> float:
+    cat = asset_cat(symbol)
+    if cat == "FOREX":
+        return 100000.0
+    if cat == "CRYPTO":
+        return 1.0
+    if cat == "COMMODITIES":
+        return {
+            "GC=F": 100.0,
+            "SI=F": 5000.0,
+            "CL=F": 1000.0,
+            "BZ=F": 1000.0,
+            "NG=F": 10000.0,
+            "HG=F": 25000.0,
+            "ZC=F": 5000.0,
+            "ZW=F": 5000.0,
+            "ZS=F": 5000.0,
+            "PL=F": 50.0,
+        }.get(symbol, 1.0)
+    if cat == "INDICES":
+        return {
+            "ES=F": 50.0,
+            "NQ=F": 20.0,
+            "YM=F": 5.0,
+            "RTY=F": 50.0,
+            "^GDAXI": 1.0,
+            "^FTSE": 1.0,
+            "^N225": 1.0,
+            "^BVSP": 1.0,
+            "^HSI": 1.0,
+            "^STOXX50E": 1.0,
+        }.get(symbol, 1.0)
+    return 1.0
+
+
+def calc_risk_profile(symbol: str, entry: float, sl: float, tp: float | None = None) -> dict:
+    stop = abs(entry - sl)
+    risk_money = float(Config.RISK_BALANCE) * float(Config.RISK_PCT_PER_TRADE) / 100.0
+    contract = _contract_size(symbol)
+    lot = (risk_money / (stop * contract)) if stop > 0 else 0.0
+    rr = (abs(tp - entry) / stop) if (tp is not None and stop > 0) else 0.0
+    return {
+        "risk_money": round(risk_money, 2),
+        "risk_pct": round(float(Config.RISK_PCT_PER_TRADE), 2),
+        "contract_size": contract,
+        "lot": round(max(lot, 0.0), 4),
+        "rr": round(rr, 2),
+    }
+
 
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -150,7 +202,9 @@ def load_state(bot):
             lines = ["♻️ BOT REINICIADO – TRADES ATIVOS\n"]
             for t in bot.active_trades:
                 dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
-                lines.append(f"📌 {t['symbol']} {dl} | Entrada: `{fmt(t['entry'])}` | TP: `{fmt(t['tp'])}` | SL: `{fmt(t['sl'])}`")
+                risk = calc_risk_profile(t["symbol"], t["entry"], t["sl"], t.get("tp"))
+                lot_txt = fmt(t.get("lot", risk["lot"]))
+                lines.append(f"📌 {t['symbol']} {dl} | Entrada: `{fmt(t['entry'])}` | TP: `{fmt(t['tp'])}` | SL: `{fmt(t['sl'])}` | Lote: `{lot_txt}`")
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
@@ -445,7 +499,9 @@ class TradingBot:
         header = "⚡ SINAL CT PENDENTE" if is_ct else "🎯 SINAL PENDENTE"
         text = (f"{header} – <b>{t['symbol']}</b> ({t['name']})\nAguardando sua confirmação…\n\n▶️ <b>{dl}</b>\n\n"
                 f"💰 <b>Entrada:</b> <code>{fmt(t['entry'])}</code>\n🛡 <b>SL:</b> <code>{fmt(t['sl'])}</code> ({-sl_pct:.2f}%)\n"
-                f"🎯 <b>TP:</b> <code>{fmt(t['tp'])}</code> ({tp_pct:+.2f}%)\n\n")
+                f"🎯 <b>TP:</b> <code>{fmt(t['tp'])}</code> ({tp_pct:+.2f}%)\n"
+                f"📦 <b>Lote recomendado:</b> <code>{fmt(t.get('lot', 0))}</code>\n"
+                f"⚖️ <b>Risco por trade:</b> <code>{t.get('risk_pct', Config.RISK_PCT_PER_TRADE):.2f}%</code>\n\n")
         if is_ct and t.get("sinais"): text += "<b>Sinais de exaustão:</b>\n" + "\n".join(f"   ⚡ {sg}" for sg in t["sinais"]) + "\n\n"
         if t.get("conf_txt"): text += f"<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
         markup = {"inline_keyboard": [[{"text": "✅ Aceitar", "callback_data": f"confirm_{t['pending_id']}"}, {"text": "❌ Recusar", "callback_data": f"reject_{t['pending_id']}"}]]}
@@ -458,7 +514,7 @@ class TradingBot:
                 trade = {k: v for k, v in t.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}                
                 self.active_trades.append(trade); save_state(self)
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
-                self.send(f"✅ <b>TRADE CONFIRMADO – {t['symbol']}</b>\n{dl} | Entrada: <code>{fmt(t['entry'])}</code>\nSL: <code>{fmt(t['sl'])}</code> | TP: <code>{fmt(t['tp'])}</code>")
+                self.send(f"✅ <b>TRADE CONFIRMADO – {t['symbol']}</b>\n{dl} | Entrada: <code>{fmt(t['entry'])}</code>\nSL: <code>{fmt(t['sl'])}</code> | TP: <code>{fmt(t['tp'])}</code> | Lote: <code>{fmt(t.get('lot', 0))}</code>")
                 return True
         return False
 
@@ -658,6 +714,7 @@ class TradingBot:
             else:
                 sl = price + Config.ATR_MULT_SL * atr
                 tp = price - Config.ATR_MULT_TP * atr
+            risk = calc_risk_profile(s, price, sl, tp)
             sl_pct = abs(price - sl) / price * 100
             tp_pct = abs(tp - price) / price * 100
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
@@ -681,6 +738,11 @@ class TradingBot:
                 "bar": bar,
                 "ratio": ratio,
                 "vol_txt": vol_txt,
+                "lot": risk["lot"],
+                "risk_money": risk["risk_money"],
+                "risk_pct": risk["risk_pct"],
+                "contract_size": risk["contract_size"],
+                "rr": risk["rr"],
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
@@ -742,6 +804,7 @@ class TradingBot:
             else:
                 sl = price + sl_m * atr
                 tp = price - tp_m * atr
+            risk = calc_risk_profile(s, price, sl, tp)
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
@@ -764,6 +827,11 @@ class TradingBot:
                 "bar": bar,
                 "ratio": f"1:{tp_m/sl_m:.1f}",
                 "sinais": sinais,
+                "lot": risk["lot"],
+                "risk_money": risk["risk_money"],
+                "risk_pct": risk["risk_pct"],
+                "contract_size": risk["contract_size"],
+                "rr": risk["rr"],
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
@@ -1340,12 +1408,13 @@ function renderOpenTrade(t){
   const cls=buy?'buy':'sell';
   const distSlClass=t.dist_sl<30?'near':'far';
   const distTpClass=t.dist_tp<30?'near':'far';
+  const lot=t.lot!=null?t.lot:0;
   return`<div class="tcard ${cls}">
     <div class="tcard-head">
       <div><div class="tsym">${t.symbol}</div><div class="tname">${t.name||''}</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         <div class="tdir ${buy?'':'sell'}">${buy?'▲ BUY':'▼ SELL'}</div>
-        <span class="ttype-badge">${t.tipo||'TREND'}</span>
+        <span class="ttype-badge">${t.tipo||'TREND'} | Lote: ${fp(lot)}</span>
       </div>
     </div>
     <div class="tlvs">
@@ -1356,7 +1425,12 @@ function renderOpenTrade(t){
     <div class="tlvs">
       <div class="tlv"><div class="tll">SL 🛡</div><div class="tlvv r">${fp(t.sl)}</div></div>
       <div class="tlv"><div class="tll">TP 🎯</div><div class="tlvv g">${fp(t.tp)}</div></div>
+      <div class="tlv"><div class="tll">Lote</div><div class="tlvv cy">${fp(lot)}</div></div>
+    </div>
+    <div class="tlvs">
       <div class="tlv"><div class="tll">Aberto</div><div class="tlvv">${t.opened_at||'--'}</div></div>
+      <div class="tlv"><div class="tll">Risco</div><div class="tlvv">${t.risk_pct!=null?Number(t.risk_pct).toFixed(2)+'%':'--'}</div></div>
+      <div class="tlv"><div class="tll">RR</div><div class="tlvv">${t.rr!=null?Number(t.rr).toFixed(2):'--'}</div></div>
     </div>
     <div class="tprog"><div class="tfill" style="width:${t.progress}%;background:${pos?'var(--green)':'var(--red)'}"></div></div>
     <div class="tdist">
@@ -1389,18 +1463,24 @@ function renderPendingFromApi(list){
   const el=document.getElementById('pendingQueue');if(!el)return;
   el.innerHTML=list.length?list.map(p=>{
     const buy=p.dir==='BUY';const cls=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';
+    const lot=p.lot!=null?p.lot:0;
     return`<div class="tcard ${cls}" data-pid="${p.pending_id}">
       <div class="tcard-head">
         <div><div class="tsym">${p.symbol}</div><div class="tname">${p.name||''}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
           <div class="tdir ${cls}">${dirLabel}</div>
-          <span class="ttype-badge">R: ${p.ratio||'--'}</span>
+          <span class="ttype-badge">R: ${p.ratio||'--'} | Lote: ${fp(lot)}</span>
         </div>
       </div>
       <div class="tlvs">
         <div class="tlv"><div class="tll">Entrada <button class="cpbtn" onclick="copyText('${p.entry}')">📋</button></div><div class="tlvv">${fp(p.entry)}</div></div>
         <div class="tlv"><div class="tll">SL 🛡 <button class="cpbtn" onclick="copyText('${p.sl}')">📋</button></div><div class="tlvv r">${fp(p.sl)}</div></div>
         <div class="tlv"><div class="tll">TP 🎯 <button class="cpbtn" onclick="copyText('${p.tp}')">📋</button></div><div class="tlvv g">${fp(p.tp)}</div></div>
+      </div>
+      <div class="tlvs">
+        <div class="tlv"><div class="tll">Lote</div><div class="tlvv cy">${fp(lot)}</div></div>
+        <div class="tlv"><div class="tll">Risco</div><div class="tlvv">${p.risk_pct!=null?Number(p.risk_pct).toFixed(2)+'%':'--'}</div></div>
+        <div class="tlv"><div class="tll">RR</div><div class="tlvv">${p.rr!=null?Number(p.rr).toFixed(2):'--'}</div></div>
       </div>
       <div class="tbtns">
         <button class="tb yes" onclick="confirmPending(${p.pending_id},this)">✅ ACEITAR</button>
@@ -1647,11 +1727,15 @@ def create_api(bot):
             dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100 if t["entry"] != t["sl"] else 0
             dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100 if t["tp"] != t["entry"] else 0
             progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
+            risk = calc_risk_profile(t["symbol"], t["entry"], t["sl"], t.get("tp"))
             trades_out.append({
                 "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
                 "tipo": t.get("tipo", " "), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
                 "current": cur, "pnl": round(pnl, 2), "opened_at": t.get("opened_at", " "),
-                "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1)
+                "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1),
+                "lot": t.get("lot", risk["lot"]), "risk_money": t.get("risk_money", risk["risk_money"]),
+                "risk_pct": t.get("risk_pct", risk["risk_pct"]), "contract_size": t.get("contract_size", risk["contract_size"]),
+                "rr": t.get("rr", risk["rr"])
             })
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
