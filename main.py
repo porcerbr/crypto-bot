@@ -1108,9 +1108,11 @@ def bot_loop(bot):
                         elif cb == "status": bot.send_status()
                         elif cb == "placar": bot.send_placar()
                         elif cb.startswith("confirm_"):
-                            try: bot.confirm_pending(int(cb.split("_")[1])) except: pass
+                            try: bot.confirm_pending(int(cb.split("_")[1])) 
+                                except: pass
                         elif cb.startswith("reject"):
-                            try: bot.reject_pending(int(cb.split("_")[1])) except: pass
+                            try: bot.reject_pending(int(cb.split("_")[1])) 
+                                except: pass
             bot.update_trends_cache()
             bot.maybe_send_news()
             bot.scan()
@@ -1121,7 +1123,8 @@ def bot_loop(bot):
 
 def main():
     log("🔌 Bot Sniper v7.2 PRO — Dashboard Profissional de Execução Rápida")
-    try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8) except: pass
+    try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8) 
+        except: pass
     bot = TradingBot()
     load_state(bot)
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
