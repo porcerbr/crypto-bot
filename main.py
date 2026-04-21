@@ -503,8 +503,8 @@ class TradingBot:
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
 
-    def send_status(self):
-        lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
+def send_status(self):
+    lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
 
     if not self.active_trades:
         lines.append("Nenhuma.")
@@ -526,9 +526,8 @@ class TradingBot:
             f"P&L: {pnl:+.2f}%"
         )
 
-    
-
     self.send("\n".join(lines))
+    
     def send_placar(self):
         tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
