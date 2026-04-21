@@ -1068,8 +1068,8 @@ def run_api(bot):
 def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
-    try: bot.send_news() except: pass
-    while True:
+        try: bot.send_news() except: pass
+        while True:
         try:
             url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getUpdates?offset={bot.last_id+1}&timeout=5"
             r = requests.get(url, timeout=12).json()
