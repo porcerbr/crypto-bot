@@ -306,7 +306,8 @@ def get_reversal_analysis(symbol, timeframe=None):
     try:
         df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
         if len(df) < 30: return None
-        closes = df["Close"]; highs = df["High"]; lows = df["Low"]        price = float(closes.iloc[-1])
+        closes = df["Close"]; highs = df["High"]; lows = df["Low"]        
+        price = float(closes.iloc[-1])
         w = min(20, len(closes)-1)
         sma = closes.rolling(w).mean(); std = closes.rolling(w).std()
         ub = float((sma+std*2).iloc[-1]); lb = float((sma-std*2).iloc[-1])
