@@ -204,7 +204,11 @@ def get_analysis(symbol, timeframe=None):
     period = Config.TIMEFRAMES.get(timeframe, ("  ", "5d"))[1]
     use_vol = vol_reliable(symbol)
     try:
-        df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)        if len(df) < 50: return None
+        df = yf.Ticker(yf_symbol).history(period=period, interval=timeframe)
+        
+        if len(df) < 50: 
+            return None
+            
         closes = df["Close"]; highs = df["High"]; lows = df["Low"]; volume = df["Volume"]
         ema9   = closes.ewm(span=9, adjust=False).mean().iloc[-1]
         ema21  = closes.ewm(span=21, adjust=False).mean().iloc[-1]
