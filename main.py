@@ -1124,7 +1124,7 @@ def bot_loop(bot):
 def main():
     log("🔌 Bot Sniper v7.2 PRO — Dashboard Profissional de Execução Rápida")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8) 
-        except: pass
+    except: pass
     bot = TradingBot()
     load_state(bot)
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
