@@ -973,234 +973,314 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="theme-color" content="#06090f"/>
+<meta name="theme-color" content="#04070f"/>
 <title>Sniper Bot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
+/* ═══ RESET ════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-:root{--bg:#06090f;--bg2:#0b1018;--bg3:#111827;--bg4:#192032;--border:#1e2d45;--text:#d4e4f7;--muted:#3d5575;--muted2:#5a7a9f;--green:#00e676;--green2:#00c853;--g3:rgba(0,230,118,.12);--red:#ff1744;--red2:#d50000;--r3:rgba(255,23,68,.1);--gold:#ffca28;--y3:rgba(255,202,40,.12);--blue:#448aff;--cyan:#00e5ff;--orange:#ff6d00;--mono:'JetBrains Mono',monospace;--sans:'DM Sans',sans-serif;--r:14px;--rsm:8px;--nav:62px;--safe:env(safe-area-inset-bottom,0px);--head:58px}
+:root{
+  --bg:#04070f;--bg2:#080e1a;--bg3:#0d1525;--bg4:#111d30;--bg5:#1a2a45;
+  --text:#c8dcf0;--text2:#8aaccf;--muted:#3d5f85;--muted2:#5577a0;
+  --border:rgba(255,255,255,0.055);--border2:rgba(255,255,255,0.09);
+  --green:#00e676;--green2:#00c853;--g3:rgba(0,230,118,.1);--g4:rgba(0,230,118,.06);
+  --red:#ff3d71;--red2:#d50000;--r3:rgba(255,61,113,.1);--r4:rgba(255,61,113,.06);
+  --gold:#ffd740;--gold2:#ffc400;--y3:rgba(255,215,64,.12);--y4:rgba(255,215,64,.06);
+  --cyan:#18ffff;--cyan2:#00e5ff;--c3:rgba(24,255,255,.1);
+  --blue:#448aff;--blue2:#2979ff;--b3:rgba(68,138,255,.1);
+  --orange:#ff6d00;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+  --r:14px;--rsm:9px;--r2:20px;
+  --nav:64px;--safe:env(safe-area-inset-bottom,0px);--head:58px;
+  --shadow:0 2px 12px rgba(0,0,0,.45);--shadow-lg:0 4px 28px rgba(0,0,0,.55);
+}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
-body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.04) 3px,rgba(0,0,0,.04) 4px)}
-#app{display:flex;flex-direction:column;height:100%;max-width:500px;margin:0 auto}
-#hdr{height:var(--head);flex-shrink:0;background:linear-gradient(135deg,var(--bg2),#080d16);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 18px;z-index:100}
-.hdr-l{display:flex;align-items:center;gap:11px}
-.logo{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#00c853,#00e5ff);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:17px;font-weight:700;color:#000;box-shadow:0 0 18px rgba(0,230,118,.3)}
-.t1{font-size:16px;font-weight:700}.t2{font-size:9px;color:var(--muted2);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9997;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.025) 2px,rgba(0,0,0,.025) 3px)}
+
+/* ═══ LAYOUT ══════════════════════════════════════════════ */
+#app{display:flex;flex-direction:column;height:100%;max-width:480px;margin:0 auto}
+
+/* ═══ HEADER ══════════════════════════════════════════════ */
+#hdr{height:var(--head);flex-shrink:0;background:linear-gradient(180deg,rgba(8,14,26,.98),rgba(4,7,15,.96));backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border2);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
+.hdr-l{display:flex;align-items:center;gap:10px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#00c853,#00e5ff);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:18px;font-weight:700;color:#000;box-shadow:0 0 0 1px rgba(0,230,118,.25),0 0 18px rgba(0,200,83,.25);flex-shrink:0}
+.t1{font-size:15px;font-weight:700;letter-spacing:-.3px}
+.t2{font-size:9px;color:var(--muted2);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
 .hdr-r{display:flex;align-items:center;gap:8px}
-.lpill{display:flex;align-items:center;gap:5px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:9px;color:var(--muted2);letter-spacing:1px;text-transform:uppercase}
-.ldot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.ibtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;transition:.15s;color:var(--muted2)}
-.ibtn:active{background:var(--border);transform:scale(.92)}
+.lpill{display:flex;align-items:center;gap:5px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.18);border-radius:20px;padding:4px 10px;font-size:9px;color:var(--green);letter-spacing:1px;text-transform:uppercase;font-weight:600}
+.ldot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite;box-shadow:0 0 5px var(--green)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+.ibtn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;transition:all .15s;color:var(--text2)}
+.ibtn:active{background:var(--bg4);transform:scale(.9)}
+
+/* ═══ PAGES ═══════════════════════════════════════════════ */
 #pages{flex:1;overflow:hidden;position:relative}
-.pg{position:absolute;inset:0;display:none;overflow-y:auto;padding:14px 14px calc(var(--nav) + var(--safe) + 10px);opacity:0;transform:translateY(5px);transition:opacity .2s,transform .2s}
+.pg{position:absolute;inset:0;display:none;overflow-y:auto;padding:14px 14px calc(var(--nav) + var(--safe) + 14px);opacity:0;transform:translateY(6px);transition:opacity .22s,transform .22s}
 .pg.on{display:block;opacity:1;transform:translateY(0)}
 .pg::-webkit-scrollbar{width:2px}
-.pg::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
-#nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:500px;height:var(--nav);background:var(--bg2);border-top:1px solid var(--border);display:flex;z-index:200;padding-bottom:var(--safe)}
-.nb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;cursor:pointer;font-size:9px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;padding:0;transition:.2s;position:relative}
-.nb .ni{font-size:18px;transition:.2s}
-.nb.on{color:var(--green)}.nb.on .ni{transform:scale(1.1)}
-.nb:active{opacity:.7}
-.nbadge{position:absolute;top:6px;right:calc(50% - 17px);width:15px;height:15px;border-radius:50%;background:var(--red);color:#fff;font-size:8px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700}
+.pg::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ═══ BOTTOM NAV ══════════════════════════════════════════ */
+#nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;height:var(--nav);background:rgba(8,14,26,.97);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid var(--border2);display:flex;z-index:200;padding-bottom:var(--safe)}
+.nb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;cursor:pointer;font-size:9px;color:var(--muted2);letter-spacing:.5px;text-transform:uppercase;padding:0;transition:all .2s;position:relative;font-family:var(--sans);font-weight:500}
+.nb .ni{font-size:20px;transition:all .2s;opacity:.55}
+.nb.on{color:var(--green)}.nb.on .ni{transform:scale(1.1);opacity:1;filter:drop-shadow(0 0 5px var(--green))}
+.nb:active{opacity:.65}
+.nbadge{position:absolute;top:5px;right:calc(50% - 19px);min-width:16px;height:16px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;padding:0 3px;box-shadow:0 0 8px rgba(255,61,113,.5)}
+
+/* ═══ CARDS ═══════════════════════════════════════════════ */
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
-.chd{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.chd{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;font-weight:600}
+
+/* ═══ STATS ROW ═══════════════════════════════════════════ */
 .srow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
-.sb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px 10px}
-.sl{font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
-.sv{font-size:22px;font-weight:700;font-family:var(--mono);line-height:1}
-.ss{font-size:9px;color:var(--muted2);margin-top:3px}
+.sb{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 10px;position:relative;overflow:hidden}
+.sb.wins-card{border-bottom:2px solid rgba(0,230,118,.4)}
+.sb.loss-card{border-bottom:2px solid rgba(255,61,113,.4)}
+.sb.trades-card{border-bottom:2px solid rgba(24,255,255,.4)}
+.sl{font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;font-weight:600}
+.sv{font-size:24px;font-weight:800;font-family:var(--mono);line-height:1}
+.ss{font-size:9px;color:var(--muted2);margin-top:4px}
+
+/* ═══ COLORS ══════════════════════════════════════════════ */
 .g{color:var(--green)}.r{color:var(--red)}.go{color:var(--gold)}.cy{color:var(--cyan)}.bl{color:var(--blue)}.or{color:var(--orange)}
-.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px}
+
+/* ═══ TRADE CARDS ══════════════════════════════════════════ */
+.tc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;position:relative;overflow:hidden}
 .tc.buy{border-left:3px solid var(--green)}.tc.sell{border-left:3px solid var(--red)}
 .tc.ctb{border-left:3px solid var(--gold)}.tc.cts{border-left:3px solid var(--orange)}
-.tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
-.tc-sym{font-size:17px;font-weight:700;font-family:var(--mono)}
+.tc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
+.tc-sym{font-size:18px;font-weight:700;font-family:var(--mono);letter-spacing:-.5px}
 .tc-nm{font-size:9px;color:var(--muted2);margin-top:2px}
-.db{font-size:10px;font-weight:700;font-family:var(--mono);padding:5px 10px;border-radius:20px}
-.dbu{background:var(--g3);color:var(--green)}.dbs{background:var(--r3);color:var(--red)}
-.lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px}
+.db{font-size:10px;font-weight:700;font-family:var(--mono);padding:5px 12px;border-radius:20px;letter-spacing:.5px}
+.dbu{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.dbs{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.lvls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
 .lv{background:var(--bg3);border-radius:var(--rsm);padding:8px 6px;text-align:center}
-.lvl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.lvl{font-size:7px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600}
 .lvv{font-size:11px;font-family:var(--mono);font-weight:700}
 .tcft{display:flex;align-items:center;justify-content:space-between}
-.pnl{font-size:16px;font-weight:700;font-family:var(--mono)}
+.pnl{font-size:18px;font-weight:800;font-family:var(--mono)}
 .tcm{font-size:9px;color:var(--muted2)}
-.pbar{height:3px;background:var(--bg4);border-radius:2px;margin-top:8px;overflow:hidden}
-.pbar-f{height:100%;border-radius:2px;transition:width .5s}
-.pg-fill{background:linear-gradient(90deg,var(--green2),var(--green))}.pr-fill{background:linear-gradient(90deg,var(--red2),var(--red))}
-.mg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.mkt{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between}
-.mktn{font-size:11px;font-weight:500}
-.mkts{font-size:8px;letter-spacing:.8px;text-transform:uppercase;padding:2px 8px;border-radius:20px;font-family:var(--mono)}
-.mop{background:var(--g3);color:var(--green)}.mcl{background:var(--r3);color:var(--red)}
+.pbar{height:3px;background:var(--bg4);border-radius:2px;margin-top:10px;overflow:hidden}
+.pbar-f{height:100%;border-radius:2px;transition:width .6s ease}
+.pg-fill{background:linear-gradient(90deg,var(--green2),var(--green))}
+.pr-fill{background:linear-gradient(90deg,var(--red2),var(--red))}
+
+/* ═══ MARKET GRID ══════════════════════════════════════════ */
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:10px}
+.mkt{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 12px;display:flex;align-items:center;justify-content:space-between}
+.mktn{font-size:11px;font-weight:600}
+.mkts{font-size:8px;letter-spacing:.8px;text-transform:uppercase;padding:3px 8px;border-radius:20px;font-family:var(--mono);font-weight:600}
+.mop{background:var(--g4);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.mcl{background:rgba(255,61,113,.05);color:rgba(255,61,113,.7);border:1px solid rgba(255,61,113,.15)}
+
+/* ═══ SECTION HEADER ══════════════════════════════════════ */
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px;font-weight:600}
+.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);font-weight:500;transition:.15s}
+.rb:active{opacity:.6;transform:scale(.95)}
+
+/* ═══ FILTER CHIPS ════════════════════════════════════════ */
 .fchips{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px}
 .fchips::-webkit-scrollbar{display:none}
-.fc{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;cursor:pointer;transition:.15s;color:var(--muted2);white-space:nowrap}
-.fc.on{background:var(--g3);border-color:var(--green);color:var(--green)}.fc:active{transform:scale(.96)}
+.fc{flex-shrink:0;padding:5px 13px;border-radius:20px;border:1px solid var(--border2);background:var(--bg3);font-size:11px;cursor:pointer;transition:all .15s;color:var(--muted2);white-space:nowrap;font-weight:500}
+.fc.on{background:var(--g3);border-color:rgba(0,230,118,.3);color:var(--green)}
+.fc:active{transform:scale(.96)}
+
+/* ═══ SCANNER SUMMARY BAR ══════════════════════════════════ */
+.tbar{display:flex;align-items:stretch;margin-bottom:12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.tbar-seg{flex:1;padding:10px 8px;text-align:center;border-right:1px solid var(--border)}
+.tbar-seg:last-child{border-right:none}
+.tbl{font-size:8px;color:var(--muted2);letter-spacing:.8px;text-transform:uppercase;font-weight:600;display:block;margin-bottom:3px}
+.tbc{font-size:20px;font-family:var(--mono);font-weight:700;display:block}
+
+/* ═══ SCANNER ITEMS ═══════════════════════════════════════ */
 .si{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
 .si:last-child{border-bottom:none}
-.sico{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:var(--mono);flex-shrink:0}
-.siA{background:var(--g3);color:var(--green)}.siB{background:var(--r3);color:var(--red)}.siN{background:var(--bg4);color:var(--muted2)}
+.sico{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;font-family:var(--mono);flex-shrink:0}
+.siA{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.siB{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.siN{background:var(--bg4);color:var(--muted2);border:1px solid var(--border)}
 .sinf{flex:1;min-width:0}
 .ssym{font-size:13px;font-weight:700;font-family:var(--mono)}
 .snm{font-size:9px;color:var(--muted2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .srgt{text-align:right;flex-shrink:0}
 .spr{font-size:12px;font-family:var(--mono);font-weight:600}
 .stags{display:flex;gap:4px;margin-top:3px;justify-content:flex-end;flex-wrap:wrap}
-.tag{font-size:8px;font-family:var(--mono);padding:1px 5px;border-radius:3px}
-.tg{background:var(--g3);color:var(--green)}.tr{background:var(--r3);color:var(--red)}.tn{background:var(--bg4);color:var(--muted2)}
-.tbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 12px}
-.tbl{font-size:9px;color:var(--muted2);letter-spacing:.8px;text-transform:uppercase;flex:1}
-.tbc{font-size:12px;font-family:var(--mono)}
+.tag{font-size:8px;font-family:var(--mono);padding:2px 6px;border-radius:4px;font-weight:600}
+.tg{background:var(--g4);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.tr{background:var(--r4);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.tn{background:var(--bg4);color:var(--muted2);border:1px solid var(--border)}
+
+/* ═══ SIGNAL ITEMS ════════════════════════════════════════ */
 .sigit{border-bottom:1px solid var(--border);padding:12px 0;display:flex;gap:10px;align-items:flex-start}
 .sigit:last-child{border-bottom:none}
 .sgico{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px}
-.iradar{background:rgba(68,138,255,.12);color:var(--blue)}.igatilho{background:rgba(0,229,255,.12);color:var(--cyan)}
+.iradar{background:var(--b3);color:var(--blue)}.igatilho{background:var(--c3);color:var(--cyan)}
 .isinal{background:var(--g3);color:var(--green)}.ict{background:var(--y3);color:var(--gold)}
 .iinsuf{background:var(--bg4);color:var(--muted2)}.iclose{background:var(--bg4);color:var(--muted2)}.icb{background:var(--r3);color:var(--red)}
 .sgbody{flex:1;min-width:0}
 .sgtipo{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
-.sgtxt{font-size:11px;color:var(--muted2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.sgtxt{font-size:11px;color:var(--text2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .sgts{font-size:9px;color:var(--muted);margin-top:4px;font-family:var(--mono)}
-.ctc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid var(--gold)}
-.cttop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.ctsym{font-size:15px;font-weight:700;font-family:var(--mono)}
-.ctsc{font-size:10px;font-family:var(--mono);font-weight:700;padding:4px 10px;border-radius:20px;background:var(--y3);color:var(--gold)}
-.ctdir{font-size:11px;font-weight:600;margin-bottom:8px}
-.ctsigs{display:flex;flex-wrap:wrap;gap:4px}
-.ctag{font-size:9px;padding:3px 8px;border-radius:4px;background:var(--bg4);color:var(--muted2);border:1px solid var(--border)}
-.ctm2{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
-.ctmb{text-align:center;flex:1}
-.ctml{font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
-.ctmv{font-size:13px;font-family:var(--mono);font-weight:700;margin-top:2px}
-.fgb{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-.fgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:4px}
-.fgv{font-size:18px;font-weight:700}
-.fgn{font-size:36px;font-weight:700;font-family:var(--mono);opacity:.15}
-.ni2{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
-.ni2:last-child{border-bottom:none}
-.nnum{width:24px;height:24px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--mono);color:var(--muted2);flex-shrink:0;margin-top:1px}
-.nbody{flex:1;min-width:0}
-.ntitle{font-size:12px;line-height:1.5;color:var(--text);text-decoration:none;display:block}
-.ntitle:hover{color:var(--cyan)}
-.nsrc{font-size:9px;color:var(--muted2);margin-top:4px}
-.cfgsec{margin-bottom:18px}
-.cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px}
+
+/* ═══ ACTION CARDS ════════════════════════════════════════ */
+.action-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;position:relative;overflow:hidden;transition:transform .15s}
+.action-card:active{transform:scale(.99)}
+.action-card.buy{border-color:rgba(0,230,118,.28)}
+.action-card.sell{border-color:rgba(255,61,113,.28)}
+.action-card.ct{border-color:rgba(255,215,64,.28)}
+.action-card .ac-stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
+.action-card.buy .ac-stripe{background:linear-gradient(180deg,var(--green2),var(--green))}
+.action-card.sell .ac-stripe{background:linear-gradient(180deg,var(--red2),var(--red))}
+.action-card.ct .ac-stripe{background:linear-gradient(180deg,var(--gold2),var(--gold))}
+.ac-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:10px}
+.ac-symbol{font-size:18px;font-weight:700;font-family:var(--mono)}
+.ac-dir{font-size:10px;font-weight:700;padding:4px 12px;border-radius:20px;letter-spacing:.5px}
+.ac-dir.buy{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.ac-dir.sell{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.ac-dir.ct{background:var(--y3);color:var(--gold);border:1px solid rgba(255,215,64,.2)}
+.ac-levels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding-left:10px;margin-bottom:10px}
+.ac-lv{background:var(--bg3);border-radius:var(--rsm);padding:8px;text-align:center}
+.ac-ll{font-size:7px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600}
+.ac-lv-val{font-size:12px;font-weight:700;font-family:var(--mono)}
+.ac-footer{display:flex;align-items:center;justify-content:space-between;padding-left:10px}
+.ac-copy-btn{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:7px 14px;border-radius:8px;background:var(--bg3);border:1px solid var(--border2);cursor:pointer;color:var(--text2);transition:all .15s;font-family:var(--sans)}
+.ac-copy-btn:active{background:var(--bg4);transform:scale(.97)}
+.ac-copy-btn.copied{color:var(--green);border-color:rgba(0,230,118,.3);background:var(--g4)}
+.ac-tipo{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted2);font-weight:600}
+
+/* ═══ TIMER BADGE ══════════════════════════════════════════ */
+.sig-timer{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-family:var(--mono);font-weight:600;padding:2px 7px;border-radius:20px}
+.sig-timer.fresh{background:var(--g4);color:var(--green)}
+.sig-timer.aging{background:var(--y4);color:var(--gold)}
+.sig-timer.old{background:var(--r4);color:var(--red)}
+.sig-timer.closed{background:var(--bg4);color:var(--muted)}
+
+/* ═══ CONFIG ══════════════════════════════════════════════ */
 .mdg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.mdb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px 8px;cursor:pointer;font-size:12px;font-family:var(--sans);color:var(--text);text-align:center;transition:.15s;line-height:1.4;border:none}
-.mdb:active{transform:scale(.97)}.mdb.on{background:var(--g3);border:1px solid var(--green);color:var(--green)}
-.mdi{font-size:20px;display:block;margin-bottom:3px}
+.mdb{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:14px 8px;cursor:pointer;font-size:12px;font-family:var(--sans);color:var(--text2);text-align:center;transition:all .15s;line-height:1.4;font-weight:500}
+.mdb:active{transform:scale(.97)}.mdb.on{background:var(--g3);border:1px solid rgba(0,230,118,.3);color:var(--green)}
+.mdi{font-size:22px;display:block;margin-bottom:4px}
 .tfg{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
-.tfb{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 6px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--text);text-align:center;transition:.15s;border:none}
-.tfb.on{background:rgba(0,229,255,.1);border:1px solid var(--cyan);color:var(--cyan)}.tfb:active{transform:scale(.97)}
-.tfd{font-size:14px;display:block;margin-bottom:2px}.tfl2{font-size:8px;color:var(--muted2);margin-top:1px}
-.ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:.15s;letter-spacing:.3px}
-.ab:active{transform:scale(.98)}
-.abd{background:var(--r3);color:var(--red);border:1px solid rgba(255,23,68,.2)}
-.abp{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
-.abn{background:rgba(68,138,255,.1);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
+.tfb{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rsm);padding:11px 6px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--text2);text-align:center;transition:all .15s;font-weight:600}
+.tfb.on{background:var(--c3);border:1px solid rgba(24,255,255,.3);color:var(--cyan)}
+.tfb:active{transform:scale(.97)}
+.tfd{font-size:15px;display:block;margin-bottom:3px}
+.tfl2{font-size:8px;color:var(--muted);margin-top:2px;font-family:var(--sans);font-weight:500}
+.ab{width:100%;padding:15px;border-radius:var(--r);border:none;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:8px;transition:all .15s;letter-spacing:.3px}
+.ab:active{transform:scale(.98);opacity:.9}
+.abd{background:var(--r4);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.abp{background:var(--g4);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.abn{background:var(--b3);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
-.plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;font-weight:600}
 .pval{font-size:16px;font-family:var(--mono);font-weight:700}
-.cbbar{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 14px;margin-bottom:10px;display:none;align-items:center;justify-content:space-between}
-.cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:18px;font-family:var(--mono);font-weight:700;color:var(--red)}
-.eb{background:var(--r3);border:1px solid rgba(255,23,68,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
+
+/* ═══ CIRCUIT BREAKER ═════════════════════════════════════ */
+.cbbar{background:rgba(255,61,113,.07);border:1px solid rgba(255,61,113,.18);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px;display:none;align-items:center;justify-content:space-between}
+.cbtxt{font-size:11px;color:var(--red);font-weight:600}
+.cbmin{font-size:20px;font-family:var(--mono);font-weight:700;color:var(--red)}
+.eb{background:rgba(255,61,113,.07);border:1px solid rgba(255,61,113,.18);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
+
+/* ═══ EMPTY STATES ════════════════════════════════════════ */
 .empty{text-align:center;padding:40px 20px;color:var(--muted)}
-.empi{font-size:40px;margin-bottom:10px;display:block}
-.empt{font-size:12px;line-height:1.6;color:var(--muted2)}
-.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}
-.dv{height:1px;background:var(--border);margin:14px 0}
+.empi{font-size:38px;margin-bottom:12px;display:block;opacity:.55}
+.empt{font-size:12px;line-height:1.7;color:var(--muted2)}
+.empty-pending{text-align:center;padding:14px;color:var(--muted);font-size:12px}
+
+/* ═══ MISC ════════════════════════════════════════════════ */
+.dv{height:1px;background:var(--border);margin:16px 0}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.sttl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);display:flex;align-items:center;gap:6px}
-.rb{font-size:11px;color:var(--muted2);cursor:pointer;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg3)}
-.rb:active{opacity:.7}
-.stab{flex:1;padding:10px;border:none;background:transparent;color:var(--muted2);font-size:12px;cursor:pointer;font-family:var(--sans);font-weight:600;transition:.15s}
+.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}
+.stab{flex:1;padding:11px;border:none;background:transparent;color:var(--muted2);font-size:12px;cursor:pointer;font-family:var(--sans);font-weight:600;transition:all .2s}
 .stab.on{color:var(--green)}
-.ntf-banner{background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.2);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px}
+.ntf-banner{background:var(--b3);border:1px solid rgba(68,138,255,.2);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px}
 .ntf-ttl{font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px}
 .ntf-txt{font-size:10px;color:var(--muted2);line-height:1.5}
 
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 1: Card de Sinal com Copiar */
-/* ═══════════════════════════════════════════════════════════ */
-.action-card { background: var(--bg2); border: 2px solid var(--border); border-radius: var(--r); padding: 14px; margin-bottom: 10px; position: relative; overflow: hidden; transition: transform .15s; }
-.action-card:active { transform: scale(.99); }
-.action-card.buy  { border-color: rgba(0,230,118,.5); }
-.action-card.sell { border-color: rgba(255,23,68,.4); }
-.action-card.ct   { border-color: rgba(255,202,40,.4); }
-.action-card .ac-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
-.action-card.buy  .ac-stripe { background: var(--green); }
-.action-card.sell .ac-stripe { background: var(--red); }
-.action-card.ct   .ac-stripe { background: var(--gold); }
-.ac-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-left: 8px; }
-.ac-symbol { font-size: 20px; font-weight: 700; font-family: var(--font-mono); }
-.ac-dir { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 20px; letter-spacing: .5px; }
-.ac-dir.buy  { background: var(--g3); color: var(--green); }
-.ac-dir.sell { background: var(--r3); color: var(--red); }
-.ac-dir.ct   { background: var(--y3); color: var(--gold); }
-.ac-levels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding-left: 8px; margin-bottom: 10px; }
-.ac-lv { background: var(--bg3); border-radius: var(--rsm); padding: 8px; text-align: center; }
-.ac-ll { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
-.ac-lv-val { font-size: 13px; font-weight: 700; font-family: var(--font-mono); }
-.ac-footer { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; }
-.ac-copy-btn { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 7px 14px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); cursor: pointer; color: var(--text-muted); transition: .15s; }
-.ac-copy-btn:active { background: var(--border); transform: scale(.97); }
-.ac-copy-btn.copied { color: var(--green); border-color: rgba(0,230,118,.4); }
-.ac-tipo { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+/* ═══ CT CARDS ════════════════════════════════════════════ */
+.ctc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid var(--gold)}
+.cttop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.ctsym{font-size:15px;font-weight:700;font-family:var(--mono)}
+.ctsc{font-size:10px;font-family:var(--mono);font-weight:700;padding:4px 10px;border-radius:20px;background:var(--y3);color:var(--gold);border:1px solid rgba(255,215,64,.2)}
+.ctdir{font-size:11px;font-weight:600;margin-bottom:8px}
+.ctsigs{display:flex;flex-wrap:wrap;gap:4px}
+.ctag{font-size:9px;padding:3px 8px;border-radius:5px;background:var(--bg4);color:var(--muted2);border:1px solid var(--border)}
+.ctm2{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.ctmb{text-align:center;flex:1}
+.ctml{font-size:7px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-weight:600}
+.ctmv{font-size:13px;font-family:var(--mono);font-weight:700;margin-top:3px}
 
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 2: Timer de Expiração */
-/* ═══════════════════════════════════════════════════════════ */
-.sig-timer { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: var(--font-mono); font-weight: 600; padding: 3px 8px; border-radius: 20px; }
-.sig-timer.fresh  { background: rgba(0,230,118,.15); color: var(--green); }
-.sig-timer.aging  { background: rgba(255,202,40,.15); color: var(--gold); }
-.sig-timer.old    { background: rgba(255,23,68,.12);  color: var(--red); }
-.sig-timer.closed { background: var(--bg4); color: var(--muted); }
+/* ═══ FEAR & GREED ════════════════════════════════════════ */
+.fgb{background:linear-gradient(135deg,var(--bg3),var(--bg4));border:1px solid var(--border2);border-radius:var(--r);padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.fgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:5px;font-weight:600}
+.fgv{font-size:18px;font-weight:700}
+.fgn{font-size:40px;font-weight:700;font-family:var(--mono);opacity:.12}
+.ni2{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.ni2:last-child{border-bottom:none}
+.nnum{width:24px;height:24px;border-radius:7px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--mono);color:var(--muted2);flex-shrink:0}
+.nbody{flex:1;min-width:0}
+.ntitle{font-size:12px;line-height:1.5;color:var(--text);text-decoration:none;display:block;font-weight:500}
+.ntitle:active{color:var(--cyan)}
+.nsrc{font-size:9px;color:var(--muted2);margin-top:4px}
+.cfgsec{margin-bottom:20px}
+.cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;font-weight:600}
 
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 3: Modo Apenas Sinais */
-/* ═══════════════════════════════════════════════════════════ */
-.simple-mode #hdr { display: none !important; }
-.simple-mode #nav { display: none !important; }
-.simple-mode .page { padding: 12px 12px 20px; }
-.simple-mode #page-sig { display: block !important; }
-.simple-mode .exit-simple { display: flex !important; }
-.exit-simple { display: none; position: fixed; top: 12px; right: 12px; z-index: 9999; width: 36px; height: 36px; border-radius: 18px; background: var(--bg3); border: 1px solid var(--border); align-items: center; justify-content: center; cursor: pointer; font-size: 18px; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
-.simple-mode-header { display: none; padding: 16px 0 8px; }
-.simple-mode .simple-mode-header { display: flex; align-items: center; justify-content: space-between; }
+/* ═══ SIMPLE MODE ═════════════════════════════════════════ */
+.simple-mode #hdr{display:none !important}
+.simple-mode #nav{display:none !important}
+.simple-mode .page{padding:12px 12px 20px}
+.simple-mode #page-sig{display:block !important}
+.simple-mode .exit-simple{display:flex !important}
+.exit-simple{display:none;position:fixed;top:12px;right:12px;z-index:9999;width:36px;height:36px;border-radius:18px;background:var(--bg3);border:1px solid var(--border2);align-items:center;justify-content:center;cursor:pointer;font-size:18px;box-shadow:0 2px 12px rgba(0,0,0,.4)}
+.simple-mode-header{display:none;padding:16px 0 8px}
+.simple-mode .simple-mode-header{display:flex;align-items:center;justify-content:space-between}
 
-/* ═══════════════════════════════════════════════════════════ */
-/* MELHORIA 4: Fila de Pendentes com Swipe */
-/* ═══════════════════════════════════════════════════════════ */
-.pending-section { margin-bottom: 14px; }
-.pending-hdr { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted2); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
-.pending-count { background: var(--bg4); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; font-family: var(--font-mono); font-size: 10px; color: var(--muted2); }
-.swipe-wrap { position: relative; overflow: hidden; border-radius: var(--rsm); margin-bottom: 6px; }
-.swipe-behind { position: absolute; inset: 0; display: flex; align-items: center; border-radius: var(--rsm); }
-.swipe-behind .ok  { flex: 1; background: rgba(0,230,118,.25); display: flex; align-items: center; padding-left: 18px; gap: 6px; font-size: 12px; font-weight: 600; color: var(--green); }
-.swipe-behind .ng  { flex: 1; background: rgba(255,23,68,.18); display: flex; align-items: center; justify-content: flex-end; padding-right: 18px; gap: 6px; font-size: 12px; font-weight: 600; color: var(--red); }
-.swipe-card { position: relative; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--rsm); padding: 11px 14px; display: flex; align-items: center; gap: 10px; cursor: pointer; touch-action: pan-y; user-select: none; transition: transform .15s ease, opacity .2s; }
-.swipe-card.done { opacity: 0; transform: translateX(110%); }
-.swipe-card.skip { opacity: 0; transform: translateX(-110%); }
-.swipe-card .sc-sym { font-size: 14px; font-weight: 700; font-family: var(--font-mono); flex-shrink: 0; }
-.swipe-card .sc-info { flex: 1; min-width: 0; }
-.swipe-card .sc-txt { font-size: 11px; color: var(--muted2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.swipe-card .sc-ts  { font-size: 9px; color: var(--muted); margin-top: 2px; }
-.swipe-card .sc-act { display: flex; gap: 6px; }
-.sc-btn { font-size: 11px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); cursor: pointer; color: var(--text-muted); font-family: var(--font-sans); font-weight: 600; }
-.sc-btn.ok  { background: rgba(0,230,118,.12); color: var(--green); border-color: rgba(0,230,118,.3); }
-.sc-btn.nk  { background: rgba(255,23,68,.1);  color: var(--red);   border-color: rgba(255,23,68,.25); }
-.sc-btn:active { transform: scale(.96); }
-.empty-pending { text-align: center; padding: 14px; color: var(--muted); font-size: 12px; }
+/* ═══ PENDING QUEUE ═══════════════════════════════════════ */
+.pending-section{margin-bottom:14px}
+.pending-hdr{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;font-weight:600}
+.pending-count{background:var(--bg4);border:1px solid var(--border2);border-radius:20px;padding:1px 8px;font-family:var(--mono);font-size:10px;color:var(--muted2)}
+.swipe-wrap{position:relative;overflow:hidden;border-radius:var(--rsm);margin-bottom:6px}
+.swipe-behind{position:absolute;inset:0;display:flex;align-items:center;border-radius:var(--rsm)}
+.swipe-behind .ok{flex:1;background:rgba(0,230,118,.18);display:flex;align-items:center;padding-left:18px;gap:6px;font-size:12px;font-weight:600;color:var(--green)}
+.swipe-behind .ng{flex:1;background:rgba(255,61,113,.15);display:flex;align-items:center;justify-content:flex-end;padding-right:18px;gap:6px;font-size:12px;font-weight:600;color:var(--red)}
+.swipe-card{position:relative;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:11px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;touch-action:pan-y;user-select:none;transition:transform .15s ease,opacity .2s}
+.swipe-card.done{opacity:0;transform:translateX(110%)}.swipe-card.skip{opacity:0;transform:translateX(-110%)}
+.swipe-card .sc-sym{font-size:14px;font-weight:700;font-family:var(--mono);flex-shrink:0}
+.swipe-card .sc-info{flex:1;min-width:0}
+.swipe-card .sc-txt{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swipe-card .sc-ts{font-size:9px;color:var(--muted);margin-top:2px}
+.swipe-card .sc-act{display:flex;gap:6px}
+.sc-btn{font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);cursor:pointer;color:var(--text2);font-family:var(--sans);font-weight:600}
+.sc-btn.ok{background:var(--g4);color:var(--green);border-color:rgba(0,230,118,.3)}
+.sc-btn.nk{background:var(--r4);color:var(--red);border-color:rgba(255,61,113,.25)}
+.sc-btn:active{transform:scale(.96)}
+
+/* ═══ TOAST ═══════════════════════════════════════════════ */
+#toast-wrap{position:fixed;top:68px;left:50%;transform:translateX(-50%);z-index:9998;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;width:300px}
+.toast{background:var(--bg4);border:1px solid var(--border2);border-radius:12px;padding:9px 16px;font-size:12px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);animation:t-in .22s ease,t-out .22s ease 2.3s forwards;pointer-events:none;width:100%;text-align:center;font-family:var(--sans)}
+.toast.ok{border-color:rgba(0,230,118,.3);color:var(--green)}
+.toast.err{border-color:rgba(255,61,113,.3);color:var(--red)}
+.toast.info{border-color:rgba(68,138,255,.3);color:var(--blue)}
+@keyframes t-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+@keyframes t-out{to{opacity:0;transform:translateY(-8px)}}
+
+/* ═══ INSTALL CARD ════════════════════════════════════════ */
+.install-card{background:rgba(24,255,255,.04);border:1px solid rgba(24,255,255,.13);border-radius:var(--r);padding:14px}
+.install-ttl{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--cyan);margin-bottom:8px;font-weight:600}
+.install-txt{font-size:11px;color:var(--muted2);line-height:1.7}
+.install-txt b{color:var(--text)}
 </style>
 </head>
 <body>
 <div id="app">
+
+<!-- ═══ HEADER ═══ -->
 <div id="hdr">
   <div class="hdr-l">
     <div class="logo">S</div>
@@ -1208,39 +1288,44 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   </div>
   <div class="hdr-r">
     <div class="lpill"><div class="ldot"></div>LIVE</div>
-    <div class="ibtn" onclick="refreshAll()" id="refbtn">↻</div>
+    <div class="ibtn" onclick="refreshAll()" id="refbtn" title="Atualizar">↻</div>
   </div>
 </div>
+
 <div id="pages">
 
 <!-- ═══ DASHBOARD ═══ -->
 <div class="pg on" id="pg-dash">
-  <div class="eb" id="eb">⚠ Erro de conexão. Tente novamente.</div>
+  <div class="eb" id="eb">⚠ Erro de conexão. Verifique sua rede.</div>
   <div class="cbbar" id="cbbar">
-    <div><div class="cbtxt">⛔ CIRCUIT BREAKER</div><div style="font-size:10px;color:var(--red);margin-top:2px">Bot pausado</div></div>
+    <div>
+      <div class="cbtxt">⛔ CIRCUIT BREAKER ATIVO</div>
+      <div style="font-size:10px;color:var(--red);margin-top:2px">Bot pausado automaticamente</div>
+    </div>
     <div class="cbmin" id="cbmin">--m</div>
   </div>
   <div class="srow">
-    <div class="sb"><div class="sl">Wins</div><div class="sv g" id="d-w">--</div><div class="ss" id="d-wr">--% WR</div></div>
-    <div class="sb"><div class="sl">Losses</div><div class="sv r" id="d-l">--</div><div class="ss" id="d-sq">Seq --</div></div>
-    <div class="sb"><div class="sl">Trades</div><div class="sv cy" id="d-t">--</div><div class="ss" id="d-mt">--</div></div>
+    <div class="sb wins-card"><div class="sl">Wins</div><div class="sv g" id="d-w">--</div><div class="ss" id="d-wr">--% WR</div></div>
+    <div class="sb loss-card"><div class="sl">Losses</div><div class="sv r" id="d-l">--</div><div class="ss" id="d-sq">Seq --</div></div>
+    <div class="sb trades-card"><div class="sl">Trades</div><div class="sv cy" id="d-t">--</div><div class="ss" id="d-mt">--</div></div>
   </div>
   <div class="sh"><div class="sttl">💼 Trades Abertos</div></div>
-  <div id="d-trades"><div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto</div></div></div>
-  <div class="sh" style="margin-top:14px"><div class="sttl">🌐 Mercados</div></div>
+  <div id="d-trades"><div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto.<br>Aguardando sinais…</div></div></div>
+  <div class="sh" style="margin-top:14px"><div class="sttl">🌐 Status dos Mercados</div></div>
   <div class="mg" id="d-mkts"></div>
   <div class="ts" id="d-ts">--</div>
 </div>
 
 <!-- ═══ SCANNER ═══ -->
 <div class="pg" id="pg-scan">
-  <div class="sh"><div class="sttl">📡 Scanner Tempo Real</div><span class="rb" onclick="loadScanner()">↻</span></div>
+  <div class="sh">
+    <div class="sttl">📡 Scanner Tempo Real</div>
+    <span class="rb" onclick="loadScanner()">↻ Atualizar</span>
+  </div>
   <div class="tbar">
-    <span class="tbl">Alta</span><span class="tbc g" id="sc-a">--</span>
-    <span style="color:var(--border);margin:0 6px">|</span>
-    <span class="tbl">Baixa</span><span class="tbc r" id="sc-b">--</span>
-    <span style="color:var(--border);margin:0 6px">|</span>
-    <span class="tbl">Neutro</span><span class="tbc" style="color:var(--muted2)" id="sc-n">--</span>
+    <div class="tbar-seg"><span class="tbl">Alta</span><span class="tbc g" id="sc-a">--</span></div>
+    <div class="tbar-seg"><span class="tbl">Baixa</span><span class="tbc r" id="sc-b">--</span></div>
+    <div class="tbar-seg"><span class="tbl">Neutro</span><span class="tbc" style="color:var(--muted2)" id="sc-n">--</span></div>
   </div>
   <div class="fchips" id="sfil">
     <div class="fc on" data-cat="TODOS" onclick="setSF('TODOS',this)">Todos</div>
@@ -1256,13 +1341,14 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 
 <!-- ═══ SINAIS ═══ -->
 <div class="pg" id="pg-sig">
-  <!-- Melhoria 3: botão de saída do modo simples -->
   <div class="exit-simple" onclick="toggleSimpleMode(false)">✕</div>
-  <div class="sh"><div class="sttl">🔔 Feed de Sinais</div><span class="rb" onclick="loadSigs()">↻</span></div>
-  <!-- Melhoria 4: Fila de Pendentes -->
+  <div class="sh">
+    <div class="sttl">🔔 Feed de Sinais</div>
+    <span class="rb" onclick="loadSigs()">↻ Atualizar</span>
+  </div>
   <div class="pending-section">
-    <div class="pending-hdr">⏳ Pendentes<span class="pending-count" id="pendingCount">0</span></div>
-    <div id="pendingQueue"><div class="empty-pending">Nenhum pendente</div></div>
+    <div class="pending-hdr">⏳ Confirmações Pendentes<span class="pending-count" id="pendingCount">0</span></div>
+    <div id="pendingQueue"><div class="empty-pending">Nenhuma confirmação pendente</div></div>
   </div>
   <div class="fchips" id="sigfil">
     <div class="fc on" data-sf="todos" onclick="setSigF('todos',this)">Todos</div>
@@ -1277,39 +1363,45 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
 
 <!-- ═══ CT / NEWS ═══ -->
 <div class="pg" id="pg-ct">
-  <div style="display:flex;gap:0;margin-bottom:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
+  <div style="display:flex;gap:0;margin-bottom:14px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
     <button class="stab on" id="st-ct" onclick="showSub('ct')">⚡ Contra-T</button>
     <button class="stab" id="st-nw" onclick="showSub('news')">📰 Notícias</button>
   </div>
   <div id="sub-ct">
-    <div class="sh"><div class="sttl">⚡ Oportunidades CT (FOREX)</div><span class="rb" onclick="loadCT()">↻</span></div>
-    <div style="background:var(--y3);border:1px solid rgba(255,202,40,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--gold);line-height:1.5">⚠️ Sinais <b>contra tendência</b> detectados no FOREX. Use gestão de risco reduzida.</div>
+    <div class="sh">
+      <div class="sttl">⚡ Oportunidades CT (FOREX)</div>
+      <span class="rb" onclick="loadCT()">↻</span>
+    </div>
+    <div style="background:var(--y3);border:1px solid rgba(255,215,64,.2);border-radius:var(--rsm);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--gold);line-height:1.5">⚠️ Sinais <b>contra tendência</b> detectados no FOREX. Use gestão de risco reduzida.</div>
     <div id="ct-list"><div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div></div>
   </div>
   <div id="sub-nw" style="display:none">
-    <div class="sh"><div class="sttl">📰 Notícias</div><span class="rb" onclick="loadNews()">↻</span></div>
+    <div class="sh">
+      <div class="sttl">📰 Últimas Notícias</div>
+      <span class="rb" onclick="loadNews()">↻</span>
+    </div>
     <div class="fgb" id="fgb">
-      <div><div class="fgl">Fear &amp; Greed</div><div class="fgv" id="fgv">--</div></div>
+      <div><div class="fgl">Fear &amp; Greed Index</div><div class="fgv" id="fgv">--</div></div>
       <div class="fgn" id="fgn">--</div>
     </div>
-    <div class="card" style="padding:0 14px"><div id="news-list"><div class="empty"><span class="empi">📰</span><div class="empt">Carregando…</div></div></div></div>
+    <div class="card" style="padding:0 14px"><div id="news-list"><div class="empty"><span class="empi">📰</span><div class="empt">Carregando notícias…</div></div></div></div>
   </div>
 </div>
 
 <!-- ═══ CONFIG ═══ -->
 <div class="pg" id="pg-cfg">
   <div class="cfgsec">
-    <div class="cfgl">Mercado</div>
+    <div class="cfgl">🌍 Mercado Ativo</div>
     <div class="mdg">
       <button class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</button>
       <button class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</button>
       <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMMODITIES</button>
       <button class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</button>
     </div>
-    <button class="mdb" style="width:100%;margin-top:7px;display:block;padding:12px" data-mode="TUDO" onclick="setMode('TUDO')">🌍 TUDO (42 ativos)</button>
+    <button class="mdb" style="width:100%;margin-top:7px;display:block;padding:14px" data-mode="TUDO" onclick="setMode('TUDO')">🌍 TUDO (42 ativos)</button>
   </div>
   <div class="cfgsec">
-    <div class="cfgl">Timeframe</div>
+    <div class="cfgl">⏱ Timeframe</div>
     <div class="tfg">
       <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd r">●</span>1m<div class="tfl2">Agressivo</div></button>
       <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd or">●</span>5m<div class="tfl2">Alto</div></button>
@@ -1321,38 +1413,38 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   </div>
   <div class="dv"></div>
   <div class="cfgsec">
-    <div class="cfgl">Notificações Push</div>
+    <div class="cfgl">🔔 Notificações Push</div>
     <div class="ntf-banner" id="ntf-banner">
-      <div class="ntf-ttl">🔔 Receba alertas mesmo com o app fechado</div>
-      <div class="ntf-txt">Ative para receber notificações de sinais, gatilhos e encerramentos diretamente no seu celular.</div>
+      <div class="ntf-ttl">📲 Alertas mesmo com o app fechado</div>
+      <div class="ntf-txt">Ative para receber notificações de sinais, gatilhos e encerramentos diretamente no seu dispositivo.</div>
     </div>
     <button class="ab abn" id="ntf-btn" onclick="toggleNotifs()">🔔 Ativar Notificações Push</button>
     <div id="ntf-status" style="font-size:10px;color:var(--muted2);text-align:center;margin-top:4px"></div>
   </div>
   <div class="cfgsec">
-    <div class="cfgl">Ações</div>
-    <!-- Melhoria 3: Modo Apenas Sinais -->
+    <div class="cfgl">⚡ Ações Rápidas</div>
     <button class="ab abn" id="simpleModeBtn" onclick="toggleSimpleMode(true)">🔔 Modo Apenas Sinais</button>
     <div style="font-size:10px;color:var(--muted2);text-align:center;margin-bottom:8px">Foco total nos sinais — ideal ao operar</div>
     <button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
     <button class="ab abp" onclick="refreshAll()">↻ Atualizar Agora</button>
   </div>
   <div class="cfgsec">
-    <div class="cfgl">Parâmetros de Risco</div>
+    <div class="cfgl">🛡 Parâmetros de Risco</div>
     <div class="pgrid">
       <div class="pbox"><div class="plbl">Stop Loss</div><div class="pval r" id="p-sl">--</div></div>
       <div class="pbox"><div class="plbl">Take Profit</div><div class="pval g" id="p-tp">--</div></div>
       <div class="pbox"><div class="plbl">Max Trades</div><div class="pval cy" id="p-mt">--</div></div>
-      <div class="pbox"><div class="plbl">Confluência</div><div class="pval go" id="p-mc">--</div></div>
+      <div class="pbox"><div class="plbl">Confluência Mín.</div><div class="pval go" id="p-mc">--</div></div>
     </div>
   </div>
-  <div class="card" style="background:rgba(0,229,255,.04);border-color:rgba(0,229,255,.15)">
-    <div class="chd" style="color:var(--cyan)">📱 Instalar como App</div>
-    <div style="font-size:11px;color:var(--muted2);line-height:1.7">Android Chrome: <b style="color:var(--text)">⋮ → Adicionar à tela inicial</b><br>APK gratuito: <b style="color:var(--cyan)">pwabuilder.com</b></div>
+  <div class="install-card">
+    <div class="install-ttl">📱 Instalar como App</div>
+    <div class="install-txt">Android Chrome: <b>⋮ → Adicionar à tela inicial</b><br>APK gratuito: <b style="color:var(--cyan)">pwabuilder.com</b></div>
   </div>
 </div>
 
-</div>
+</div><!-- /pages -->
+
 <nav id="nav">
   <button class="nb on" onclick="goTo('dash',this)"><span class="ni">⬡</span>Dashboard</button>
   <button class="nb" onclick="goTo('scan',this)"><span class="ni">📡</span>Scanner</button>
@@ -1360,26 +1452,41 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;b
   <button class="nb" onclick="goTo('ct',this)"><span class="ni">⚡</span>CT/News</button>
   <button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
 </nav>
-</div>
+</div><!-- /app -->
+
+<div id="toast-wrap"></div>
 
 <script>
 let _st=null,_scan=[],_sigs=[],_sf='TODOS',_sigf='todos',_unread=0,_lastSigLen=0;
 
+/* ── Toast ─────────────────────────────────────────────── */
+function toast(msg,type='info',dur=2500){
+  const el=document.createElement('div');
+  el.className='toast '+type;el.textContent=msg;
+  const c=document.getElementById('toast-wrap');c.appendChild(el);
+  setTimeout(()=>el.remove(),dur+400);
+}
+
+/* ── Format Price ───────────────────────────────────────── */
 function fp(p){
   if(p===undefined||p===null)return'--';
   if(p>=10000)return p.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
   if(p>=1000)return p.toFixed(2);if(p>=10)return p.toFixed(4);
   if(p>=1)return p.toFixed(5);return p.toFixed(6);
 }
+
+/* ── API Fetch ──────────────────────────────────────────── */
 async function apiFetch(path,opts={}){
   const r=await fetch(path,{headers:{'Content-Type':'application/json'},mode:'same-origin',...opts});
   if(!r.ok)throw new Error(r.status);return r.json();
 }
+
+/* ── Navigation ─────────────────────────────────────────── */
 function goTo(pg,btn){
-  document.querySelectorAll('.pg').forEach(p=>{ p.classList.remove('on'); p.style.display='none'; });
+  document.querySelectorAll('.pg').forEach(p=>{p.classList.remove('on');p.style.display='none';});
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));
   const target=document.getElementById('pg-'+pg);
-  if(target){ target.classList.add('on'); target.style.display='block'; }
+  if(target){target.classList.add('on');target.style.display='block';}
   btn.classList.add('on');
   if(pg==='scan')loadScanner();
   if(pg==='sig'){loadSigs();_unread=0;updBadge();}
@@ -1392,13 +1499,20 @@ function showSub(s){
   document.getElementById('st-ct').classList.toggle('on',s==='ct');
   document.getElementById('st-nw').classList.toggle('on',s==='news');
 }
+
+/* ── Refresh All ────────────────────────────────────────── */
 async function refreshAll(){
   const b=document.getElementById('refbtn');b.classList.add('spin');
-  try{await loadDash();await loadPending();const a=document.querySelector('.pg.on');
+  try{
+    await loadDash();await loadPending();
+    const a=document.querySelector('.pg.on');
     if(a.id==='pg-scan')await loadScanner();
     if(a.id==='pg-sig')await loadSigs();
+    toast('Atualizado ✓','ok');
   }finally{b.classList.remove('spin');}
 }
+
+/* ── Dashboard ──────────────────────────────────────────── */
 async function loadDash(){
   try{
     _st=await apiFetch('/api/status');
@@ -1412,19 +1526,21 @@ async function loadDash(){
     const cb=document.getElementById('cbbar');
     if(_st.paused){cb.style.display='flex';document.getElementById('cbmin').textContent=_st.cb_mins+'min';}
     else cb.style.display='none';
-    document.getElementById('d-trades').innerHTML=_st.active_trades.length?_st.active_trades.map(renderTC).join(''):'<div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto</div></div>';
+    document.getElementById('d-trades').innerHTML=_st.active_trades.length?_st.active_trades.map(renderTC).join(''):'<div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto.<br>Aguardando sinais…</div></div>';
     const mn={FOREX:'📈 FOREX',CRYPTO:'₿ Cripto',COMMODITIES:'🏅 Commodities',INDICES:'📊 Índices'};
     document.getElementById('d-mkts').innerHTML=Object.entries(_st.markets).map(([k,v])=>`<div class="mkt"><span class="mktn">${mn[k]||k}</span><span class="mkts ${v?'mop':'mcl'}">${v?'Aberto':'Fechado'}</span></div>`).join('');
-    document.getElementById('d-ts').textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    document.getElementById('d-ts').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     updCfgBtns();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
+
+/* ── Render Trade Card ──────────────────────────────────── */
 function renderTC(t){
   const ct=(t.tipo||'').includes('CONTRA'),buy=t.dir==='BUY',pos=t.pnl>=0;
   const cls=ct?(buy?'ctb':'cts'):(buy?'buy':'sell');
-  const dc=buy?'dbu':'dbs'; const pct=Math.min(Math.abs(t.pnl)/3*100,100);
+  const dc=buy?'dbu':'dbs';const pct=Math.min(Math.abs(t.pnl)/3*100,100);
   return`<div class="tc ${cls}"><div class="tc-top">
-    <div><div class="tc-sym">${t.symbol}${ct?'<span style="font-size:9px;background:var(--y3);color:var(--gold);padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle">CT</span>':''}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div>
+    <div><div class="tc-sym">${t.symbol}${ct?'<span style="font-size:9px;background:var(--y3);color:var(--gold);padding:1px 6px;border-radius:4px;margin-left:6px;vertical-align:middle;border:1px solid rgba(255,215,64,.2)">CT</span>':''}</div><div class="tc-nm">${t.name||''} · ${t.opened_at||''}</div></div>
     <div class="db ${dc}">${buy?'▲ BUY':'▼ SELL'}</div></div>
     <div class="lvls">
       <div class="lv"><div class="lvl">Entrada</div><div class="lvv">${fp(t.entry)}</div></div>
@@ -1435,6 +1551,8 @@ function renderTC(t){
     <div class="pbar"><div class="pbar-f ${pos?'pg-fill':'pr-fill'}" style="width:${pct}%"></div></div>
   </div>`;
 }
+
+/* ── Scanner ────────────────────────────────────────────── */
 async function loadScanner(){
   try{
     _scan=await apiFetch('/api/trends');
@@ -1456,24 +1574,26 @@ async function loadScanner(){
         <div class="stags"><span class="tag ${chgC?'t'+chgC:'tn'}">${x.change_pct>=0?'+':''}${x.change_pct.toFixed(2)}%</span><span class="tag ${rc}">RSI ${x.rsi.toFixed(0)}</span><span class="tag ${ac}">ADX ${x.adx.toFixed(0)}</span></div></div>
       </div>`;
     }).join('');
-  }catch(e){document.getElementById('scan-list').innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
+  }catch(e){document.getElementById('scan-list').innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar scanner</div></div>';}
 }
 function setSF(cat,el){document.querySelectorAll('[data-cat]').forEach(c=>c.classList.remove('on'));el.classList.add('on');_sf=cat;loadScanner();}
+
+/* ── Signals ────────────────────────────────────────────── */
 async function loadSigs(){
   try{
     const d=await apiFetch('/api/signals');
     if(d.length>_lastSigLen){
-      const novos=d.slice(0, d.length-_lastSigLen);
+      const novos=d.slice(0,d.length-_lastSigLen);
       novos.forEach(s=>addToPending(s));
-      _unread+=d.length-_lastSigLen;
-      updBadge();
+      _unread+=d.length-_lastSigLen;updBadge();
     }
     _lastSigLen=d.length;_sigs=d;renderSigs();
   }catch(e){}
 }
 function setSigF(f,el){document.querySelectorAll('[data-sf]').forEach(x=>x.classList.remove('on'));el.classList.add('on');_sigf=f;renderSigs();}
+
 const SM={radar:{icon:'⚠',cls:'iradar',lbl:'RADAR',c:'var(--blue)'},gatilho:{icon:'🔔',cls:'igatilho',lbl:'GATILHO',c:'var(--cyan)'},sinal:{icon:'🎯',cls:'isinal',lbl:'SINAL',c:'var(--green)'},ct:{icon:'⚡',cls:'ict',lbl:'CONTRA-T',c:'var(--gold)'},insuf:{icon:'❌',cls:'iinsuf',lbl:'INSUF.',c:'var(--muted2)'},close:{icon:'🏁',cls:'iclose',lbl:'FECHADO',c:'var(--muted2)'},cb:{icon:'⛔',cls:'icb',lbl:'CIRCUIT BR.',c:'var(--red)'}};
-/* ── MELHORIA 2: timer de expiração ── */
+
 function sigTimer(ts){
   try{const parts=ts.split(' ');const[d,m]=parts[0].split('/');const[hh,mm]=parts[1].split(':');
     const now=new Date();const sig=new Date(now.getFullYear(),+m-1,+d,+hh,+mm);
@@ -1484,7 +1604,6 @@ function sigTimer(ts){
     return{cls:'old',txt:Math.floor(mins/60)+'h'+(mins%60?mins%60+'m':'')};
   }catch(e){return{cls:'closed',txt:''};}}
 
-/* ── MELHORIA 1: card de sinal com botão copiar ── */
 function renderSignalCard(s,m){
   const timer=sigTimer(s.ts);
   const timerHtml=timer.txt?`<span class="sig-timer ${timer.cls}">⏱ ${timer.txt}</span>`:'';
@@ -1505,24 +1624,28 @@ function renderSignalCard(s,m){
           ${dir?`<span class="ac-dir ${dir}">${dirLabel}</span>`:''}
         </div>
       </div>
-      <div class="sgtxt" style="padding:0 0 10px 8px">${s.texto}</div>
+      <div class="sgtxt" style="padding:0 0 10px 10px">${s.texto}</div>
       <div class="ac-footer">
         <span class="sgts">${s.ts}</span>
         <button class="ac-copy-btn" id="${uid}"
           onclick="(function(id,txt){navigator.clipboard.writeText(txt).then(()=>{const b=document.getElementById(id);if(b){b.textContent='✅ Copiado!';b.classList.add('copied');setTimeout(()=>{b.textContent='📋 Copiar';b.classList.remove('copied');},2000);}}).catch(()=>alert(txt));}('${uid}',\`${copyTxt.replace(/`/g,"'").replace(/\n/g,'\\n')}\`))">📋 Copiar</button>
       </div>
     </div>`;}
-  return `<div class="sigit"><div class="sgico ${m.cls}">${m.icon}</div><div class="sgbody"><div class="sgtipo" style="color:${m.c}">${m.lbl} ${timerHtml}</div><div class="sgtxt">${s.texto}</div><div class="sgts">${s.ts}</div></div></div>`;}
+  return `<div class="sigit"><div class="sgico ${m.cls}">${m.icon}</div><div class="sgbody"><div class="sgtipo" style="color:${m.c}">${m.lbl} ${timerHtml}</div><div class="sgtxt">${s.texto}</div><div class="sgts">${s.ts}</div></div></div>`;
+}
 
 function renderSigs(){
   let d=[..._sigs];if(_sigf!=='todos')d=d.filter(x=>x.tipo===_sigf);
   const el=document.getElementById('sig-list');
   if(!d.length){el.innerHTML='<div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal neste filtro.</div></div>';return;}
-  el.innerHTML=d.map(s=>{const m=SM[s.tipo]||SM.radar;return renderSignalCard(s,m);}).join('');}
+  el.innerHTML=d.map(s=>{const m=SM[s.tipo]||SM.radar;return renderSignalCard(s,m);}).join('');
+}
 function updBadge(){const b=document.getElementById('nbadge');if(_unread>0){b.style.display='flex';b.textContent=_unread>9?'9+':_unread;}else b.style.display='none';}
+
+/* ── CT ─────────────────────────────────────────────────── */
 async function loadCT(){
   const el=document.getElementById('ct-list');
-  el.innerHTML='<div class="empty"><span class="empi spin">⚡</span><div class="empt">Analisando…</div></div>';
+  el.innerHTML='<div class="empty"><span class="empi spin">⚡</span><div class="empt">Analisando mercado…</div></div>';
   try{
     const d=await apiFetch('/api/reversals');
     if(!d.length){el.innerHTML='<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div>';return;}
@@ -1537,6 +1660,8 @@ async function loadCT(){
       </div></div>`;}).join('');
   }catch(e){el.innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
 }
+
+/* ── News ───────────────────────────────────────────────── */
 async function loadNews(){
   const el=document.getElementById('news-list');
   try{
@@ -1552,6 +1677,8 @@ async function loadNews(){
     el.innerHTML=arts.map((a,i)=>`<div class="ni2"><div class="nnum">${i+1}</div><div class="nbody"><a class="ntitle" href="${a.url||'#'}" target="_blank">${a.title||''}</a><div class="nsrc">${a.source||''}</div></div></div>`).join('');
   }catch(e){el.innerHTML='<div class="empty"><span class="empi">⚠</span><div class="empt">Erro ao carregar</div></div>';}
 }
+
+/* ── Config ─────────────────────────────────────────────── */
 async function loadCfg(){
   try{
     const c=await apiFetch('/api/config');
@@ -1567,50 +1694,51 @@ function updCfgBtns(){
   document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===_st.mode));
   document.querySelectorAll('[data-tf]').forEach(b=>b.classList.toggle('on',b.dataset.tf===_st.timeframe));
 }
-async function setMode(m){try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
-async function setTf(t){try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
-async function resetPausa(){if(!confirm('Resetar Circuit Breaker?'))return;try{await apiFetch('/api/resetpausa',{method:'POST'});await loadDash();}catch(e){alert('Erro: '+e.message);}}
+async function setMode(m){
+  try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();toast('Mercado: '+m,'ok');}
+  catch(e){toast('Erro ao alterar modo','err');}
+}
+async function setTf(t){
+  try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();toast('Timeframe: '+t,'ok');}
+  catch(e){toast('Erro ao alterar TF','err');}
+}
+async function resetPausa(){
+  if(!confirm('Resetar Circuit Breaker?'))return;
+  try{await apiFetch('/api/resetpausa',{method:'POST'});await loadDash();toast('Circuit Breaker resetado','ok');}
+  catch(e){toast('Erro ao resetar','err');}
+}
 
-/* ── Push Notifications ───────────────────────────────────── */
-let _swReg = null;
+/* ── Push Notifications ─────────────────────────────────── */
+let _swReg=null;
 async function initSW(){
   if(!('serviceWorker' in navigator)||!('PushManager' in window))return;
-  try{
-    _swReg = await navigator.serviceWorker.register('/sw.js');
-    log('SW registrado');
-  }catch(e){console.warn('SW:',e);}
+  try{_swReg=await navigator.serviceWorker.register('/sw.js');}
+  catch(e){console.warn('SW:',e);}
 }
 function log(m){console.log('[SniperBot]',m);}
 async function toggleNotifs(){
   if(!('Notification' in window)){alert('Seu navegador não suporta notificações.');return;}
   if(Notification.permission==='denied'){alert('Notificações bloqueadas. Habilite nas configurações do navegador.');return;}
-  if(Notification.permission==='granted'){
-    await subscribeUser(); return;
-  }
-  const perm = await Notification.requestPermission();
-  if(perm==='granted') await subscribeUser();
+  if(Notification.permission==='granted'){await subscribeUser();return;}
+  const perm=await Notification.requestPermission();
+  if(perm==='granted')await subscribeUser();
   updNtfBtn();
 }
 async function subscribeUser(){
   if(!_swReg){alert('Service worker não disponível.');return;}
   try{
-    const r = await apiFetch('/api/vapid-public-key');
+    const r=await apiFetch('/api/vapid-public-key');
     if(!r.key){alert('VAPID não configurado no servidor.\nAdicione VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY nas variáveis de ambiente do Railway.');return;}
-    const sub = await _swReg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(r.key)
-    });
+    const sub=await _swReg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(r.key)});
     await apiFetch('/api/subscribe',{method:'POST',body:JSON.stringify(sub)});
     document.getElementById('ntf-status').textContent='✅ Notificações ativadas!';
-    document.getElementById('ntf-btn').textContent='🔕 Desativar Notificações';
+    toast('Notificações ativadas!','ok');
   }catch(e){document.getElementById('ntf-status').textContent='Erro: '+e.message;}
   updNtfBtn();
 }
 function updNtfBtn(){
   const btn=document.getElementById('ntf-btn'),st=document.getElementById('ntf-status');
-  if(!('Notification' in window)||!('PushManager' in window)){
-    btn.textContent='❌ Push não suportado neste navegador';btn.disabled=true;return;
-  }
+  if(!('Notification' in window)||!('PushManager' in window)){btn.textContent='❌ Push não suportado neste navegador';btn.disabled=true;return;}
   if(Notification.permission==='denied'){btn.textContent='🚫 Notificações bloqueadas';btn.disabled=true;return;}
   if(Notification.permission==='granted')btn.textContent='✅ Notificações Ativas – Toque para reativar';
   else btn.textContent='🔔 Ativar Notificações Push';
@@ -1623,15 +1751,7 @@ function urlBase64ToUint8Array(base64String){
   for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;
 }
 
-/* ── Init ─────────────────────────────────────────────────── */
-/* Manifest dinâmico */
-const mf={name:'Sniper Bot',short_name:'SniperBot',start_url:'/',display:'standalone',orientation:'portrait',background_color:'#06090f',theme_color:'#06090f',
-icons:[{src:'/icon-192.png',sizes:'192x192',type:'image/png',purpose:'any maskable'},{src:'/icon-512.png',sizes:'512x512',type:'image/png',purpose:'any maskable'}]};
-const mfBlob=new Blob([JSON.stringify(mf)],{type:'application/json'});
-const mfLink=document.createElement('link');mfLink.rel='manifest';mfLink.href=URL.createObjectURL(mfBlob);document.head.appendChild(mfLink);
-
-
-/* ── MELHORIA 3: Modo Apenas Sinais ── */
+/* ── Simple Mode ────────────────────────────────────────── */
 function toggleSimpleMode(on){
   document.body.classList.toggle('simple-mode',on);
   document.querySelectorAll('.pg').forEach(p=>{p.style.display='none';p.classList.remove('on');});
@@ -1639,19 +1759,17 @@ function toggleSimpleMode(on){
     const sig=document.getElementById('pg-sig');
     if(sig){sig.style.display='block';sig.classList.add('on');}
     document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));
-    loadSigs();
-    localStorage.setItem('sniper_simple','1');
-  } else {
+    loadSigs();localStorage.setItem('sniper_simple','1');
+  }else{
     const dash=document.getElementById('pg-dash');
     if(dash){dash.style.display='block';dash.classList.add('on');}
     const nb0=document.querySelector('.nb');
     if(nb0){document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));nb0.classList.add('on');}
-    localStorage.removeItem('sniper_simple');
-    loadDash();
+    localStorage.removeItem('sniper_simple');loadDash();
   }
 }
 
-/* ── MELHORIA 4: Fila de Pendentes com Swipe ── */
+/* ── Pending Queue (local) ──────────────────────────────── */
 let _pending=[];
 function renderPending(){
   const el=document.getElementById('pendingQueue');
@@ -1659,7 +1777,7 @@ function renderPending(){
   if(!el||!cnt)return;
   const active=_pending.filter(p=>!p.done&&!p.skipped);
   cnt.textContent=active.length;
-  if(!active.length){el.innerHTML='<div class="empty-pending">Nenhum pendente</div>';return;}
+  if(!active.length){el.innerHTML='<div class="empty-pending">Nenhuma confirmação pendente</div>';return;}
   el.innerHTML=active.map(p=>{
     const m=SM[p.tipo]||SM.radar;
     const sym=p.texto.match(/[A-Z]{2,8}[-=^]?[A-Z0-9]*/)?.[0]||'';
@@ -1708,22 +1826,19 @@ function addToPending(sig){
   _pending=_pending.slice(0,10);
   savePending();renderPending();
 }
-/* Atualizar timers e pendentes a cada minuto */
 setInterval(()=>{renderSigs();renderPending();},60000);
 
-/* ── NOVO: Pendentes do Backend (Confirmação Manual + Copiar SL/TP) ── */
+/* ── Pending from API ───────────────────────────────────── */
 async function loadPending(){
-  try{
-    const d=await apiFetch('/api/pending');
-    renderPendingFromApi(d);
-  }catch(e){console.log('pending err',e);}
+  try{const d=await apiFetch('/api/pending');renderPendingFromApi(d);}
+  catch(e){console.log('pending err',e);}
 }
 function renderPendingFromApi(list){
   const el=document.getElementById('pendingQueue');
   const cnt=document.getElementById('pendingCount');
   if(!el||!cnt)return;
   cnt.textContent=list.length;
-  if(!list.length){el.innerHTML='<div class="empty-pending">Nenhum pendente</div>';return;}
+  if(!list.length){el.innerHTML='<div class="empty-pending">Nenhuma confirmação pendente</div>';return;}
   el.innerHTML=list.map(p=>{
     const buy=p.dir==='BUY';
     const dirClass=buy?'buy':'sell';
@@ -1742,15 +1857,15 @@ function renderPendingFromApi(list){
         <div class="ac-lv"><div class="ac-ll">SL 🛡</div><div class="ac-lv-val r">${fp(p.sl)}</div></div>
         <div class="ac-lv"><div class="ac-ll">TP 🎯</div><div class="ac-lv-val g">${fp(p.tp)}</div></div>
       </div>
-      <div style="display:flex;gap:6px;padding-left:8px;margin-bottom:10px">
-        <button class="ac-copy-btn" onclick="navigator.clipboard.writeText('${slRaw}').then(()=>{this.textContent='✅ SL Copiado!';setTimeout(()=>this.textContent='📋 Copiar SL',2000)}).catch(()=>alert('${slRaw}'))">📋 Copiar SL</button>
-        <button class="ac-copy-btn" onclick="navigator.clipboard.writeText('${tpRaw}').then(()=>{this.textContent='✅ TP Copiado!';setTimeout(()=>this.textContent='📋 Copiar TP',2000)}).catch(()=>alert('${tpRaw}'))">📋 Copiar TP</button>
+      <div style="display:flex;gap:6px;padding-left:10px;margin-bottom:10px">
+        <button class="ac-copy-btn" onclick="navigator.clipboard.writeText('${slRaw}').then(()=>{this.textContent='✅ SL Copiado!';this.classList.add('copied');setTimeout(()=>{this.textContent='📋 Copiar SL';this.classList.remove('copied');},2000)}).catch(()=>alert('${slRaw}'))">📋 Copiar SL</button>
+        <button class="ac-copy-btn" onclick="navigator.clipboard.writeText('${tpRaw}').then(()=>{this.textContent='✅ TP Copiado!';this.classList.add('copied');setTimeout(()=>{this.textContent='📋 Copiar TP';this.classList.remove('copied');},2000)}).catch(()=>alert('${tpRaw}'))">📋 Copiar TP</button>
       </div>
       <div class="ac-footer">
         <span class="sgts">${p.opened_at||''}</span>
         <div style="display:flex;gap:6px">
-          <button class="ac-copy-btn" style="background:rgba(0,230,118,.15);color:var(--green);border-color:rgba(0,230,118,.3)" onclick="confirmPending(${p.pending_id},this)">✅ Aceitar</button>
-          <button class="ac-copy-btn" style="background:rgba(255,23,68,.15);color:var(--red);border-color:rgba(255,23,68,.3)" onclick="rejectPending(${p.pending_id},this)">❌ Recusar</button>
+          <button class="ac-copy-btn" style="background:rgba(0,230,118,.1);color:var(--green);border-color:rgba(0,230,118,.3)" onclick="confirmPending(${p.pending_id},this)">✅ Aceitar</button>
+          <button class="ac-copy-btn" style="background:rgba(255,61,113,.1);color:var(--red);border-color:rgba(255,61,113,.3)" onclick="rejectPending(${p.pending_id},this)">❌ Recusar</button>
         </div>
       </div>
     </div>`;
@@ -1758,20 +1873,27 @@ function renderPendingFromApi(list){
 }
 async function confirmPending(id,btn){
   btn.textContent='…';btn.disabled=true;
-  try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();loadDash();}
+  try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();loadDash();toast('Trade confirmado ✓','ok');}
   catch(e){btn.textContent='Erro';btn.disabled=false;}
 }
 async function rejectPending(id,btn){
   btn.textContent='…';btn.disabled=true;
-  try{await apiFetch('/api/reject',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();}
+  try{await apiFetch('/api/reject',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();toast('Trade recusado','info');}
   catch(e){btn.textContent='Erro';btn.disabled=false;}
 }
 
+/* ── PWA Manifest ───────────────────────────────────────── */
+const mf={name:'Sniper Bot',short_name:'SniperBot',start_url:'/',display:'standalone',orientation:'portrait',background_color:'#04070f',theme_color:'#04070f',
+icons:[{src:'/icon-192.png',sizes:'192x192',type:'image/png',purpose:'any maskable'},{src:'/icon-512.png',sizes:'512x512',type:'image/png',purpose:'any maskable'}]};
+const mfBlob=new Blob([JSON.stringify(mf)],{type:'application/json'});
+const mfLink=document.createElement('link');mfLink.rel='manifest';mfLink.href=URL.createObjectURL(mfBlob);document.head.appendChild(mfLink);
+
+/* ── Init ───────────────────────────────────────────────── */
 window.addEventListener('load',()=>{
-  if(localStorage.getItem('sniper_simple')==='1') toggleSimpleMode(true);
+  if(localStorage.getItem('sniper_simple')==='1')toggleSimpleMode(true);
   loadPendingData();
   initSW();
-  document.querySelectorAll('.pg').forEach(p=>{ p.style.display=p.classList.contains('on')?'block':'none'; });
+  document.querySelectorAll('.pg').forEach(p=>{p.style.display=p.classList.contains('on')?'block':'none';});
   loadDash();
   loadPending();
   setInterval(()=>{loadDash();loadSigs();loadPending();},30000);
@@ -1779,6 +1901,7 @@ window.addEventListener('load',()=>{
 </script>
 </body>
 </html>"""
+
 
 
 # ═══════════════════════════════════════════════════════════════
