@@ -1109,10 +1109,10 @@ def bot_loop(bot):
                         elif cb == "placar": bot.send_placar()
                         elif cb.startswith("confirm_"):
                             try: bot.confirm_pending(int(cb.split("_")[1])) 
-                                except: pass
+                            except: pass
                         elif cb.startswith("reject"):
                             try: bot.reject_pending(int(cb.split("_")[1])) 
-                                except: pass
+                            except: pass
             bot.update_trends_cache()
             bot.maybe_send_news()
             bot.scan()
