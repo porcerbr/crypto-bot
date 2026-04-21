@@ -92,7 +92,7 @@ class Config:
     }
 
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
-    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "100"))
+    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "10"))
     RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
     MARGIN_CALL_LEVEL = 100.0   # Tickmill margin call: 100%
     STOP_OUT_LEVEL    = 30.0    # Tickmill stop out:    30%
