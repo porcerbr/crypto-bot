@@ -243,7 +243,8 @@ def build_news_msg():
         try:
             dh = yf.Ticker(yf_symbol).history(period=sup_per, interval=sup_tf)
             if len(dh) >= 50:
-                ch = dh["Close"]                e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
+                ch = dh["Close"]                
+                e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
                 e200h = ch.ewm(span=min(200,len(ch)-1), adjust=False).mean().iloc[-1]
                 ph = ch.iloc[-1]
                 h1b = bool(ph > e21h and e21h > e200h)
