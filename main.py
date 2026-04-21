@@ -1281,7 +1281,8 @@ def bot_loop(bot):
             log(f"Erro loop: {e}"); time.sleep(10)
 
 def main():    log("🔌 Bot Sniper v7.1 PRO — Dashboard Profissional + Gestão de Trades")
-    try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
+    try: 
+    requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
     except: pass
     bot = TradingBot()
     load_state(bot)
