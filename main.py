@@ -1280,14 +1280,20 @@ def bot_loop(bot):
         except Exception as e:
             log(f"Erro loop: {e}"); time.sleep(10)
 
-def main():    log("🔌 Bot Sniper v7.1 PRO — Dashboard Profissional + Gestão de Trades")
-    try: 
-    requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
-    except: pass
+def main():
+    log("🔌 Bot Sniper v7.1 PRO — Dashboard Profissional + Gestão de Trades")
+    
+    try:
+        requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
+    except:
+        pass
+
     bot = TradingBot()
     load_state(bot)
+
     t = threading.Thread(target=bot_loop, args=(bot,), daemon=True)
     t.start()
+
     run_api(bot)
 
 if __name__ == "__main__":
