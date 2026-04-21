@@ -504,12 +504,12 @@ class TradingBot:
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
 
     def send_status(self):
-         lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
+    lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
 
-            if not self.active_trades:
-            lines.append("Nenhuma.")
-            self.send("\n".join(lines))
-        return        
+    if not self.active_trades:
+        lines.append("Nenhuma.")
+        self.send("\n".join(lines))
+        return
 
         for t in self.active_trades:
             res = get_analysis(t["symbol"], self.timeframe)
