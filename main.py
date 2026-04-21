@@ -511,11 +511,11 @@ class TradingBot:
         self.send("\n".join(lines))
         return
 
-        for t in self.active_trades:
-            res = get_analysis(t["symbol"], self.timeframe)
-            cur = res["price"] if res else t["entry"]
+    for t in self.active_trades:
+        res = get_analysis(t["symbol"], self.timeframe)
+        cur = res["price"] if res else t["entry"]
 
-            pnl = (cur - t["entry"]) / t["entry"] * 100
+        pnl = (cur - t["entry"]) / t["entry"] * 100
 
         if t["dir"] == "SELL":
             pnl = -pnl
