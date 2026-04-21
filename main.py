@@ -1014,7 +1014,8 @@ def create_api(bot):
         return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
     @app.route("/api/trends")
     def api_trends():
-        bot.update_trends_cache()        out = []
+        bot.update_trends_cache()        
+        out = []
         for sym, entry in bot.trend_cache.items():
             d = entry["data"]
             out.append({"symbol": sym, "name": d["name"], "category": asset_cat(sym), "price": d["price"], "cenario": d["cenario"], "rsi": round(d["rsi"],1), "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2)})
@@ -1063,7 +1064,8 @@ def run_api(bot):
 
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN (100% PRESERVADO)
-# ═══════════════════════════════════════════════════════════════def bot_loop(bot):
+# ═══════════════════════════════════════════════════════════════
+def bot_loop(bot):
     bot.build_menu()
     if bot._restore_msg: bot.send(bot._restore_msg); bot._restore_msg = None
     try: bot.send_news() except: pass
