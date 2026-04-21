@@ -1185,14 +1185,24 @@ def create_api(bot):
         return jsonify(out)
     @app.route("/api/mode", methods=["POST", "OPTIONS"])
     def api_mode():
-        if request.method == "OPTIONS": return jsonify({}), 200
-        data = request.get_json(force=True) or {}; mode = data.get("mode", " ")
-        return jsonify({"error": "inválido"}),400 if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"] else (bot.set_mode(mode), jsonify({"ok": True}))[1]
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        mode = data.get("mode", " ")
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]:
+            return jsonify({"error": "inválido"}), 400
+        bot.set_mode(mode)
+        return jsonify({"ok": True})
     @app.route("/api/timeframe", methods=["POST", "OPTIONS"])
     def api_timeframe():
-        if request.method == "OPTIONS": return jsonify({}), 200
-        data = request.get_json(force=True) or {}; tf = data.get("timeframe", " ")
-        return jsonify({"error": "inválido"}),400 if tf not in Config.TIMEFRAMES else (bot.set_timeframe(tf), jsonify({"ok": True}))[1]
+        if request.method == "OPTIONS":
+            return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        tf = data.get("timeframe", " ")
+        if tf not in Config.TIMEFRAMES:
+            return jsonify({"error": "inválido"}), 400
+        bot.set_timeframe(tf)
+        return jsonify({"ok": True})
     @app.route("/api/resetpausa", methods=["POST", "OPTIONS"])
     def api_reset():
         if request.method == "OPTIONS": return jsonify({}), 200
@@ -1282,5 +1292,5 @@ def main():
     t.start()
     run_api(bot)
 
-if __name__ == "__main__":   
+if __name__ == "__main__":    
     main()
