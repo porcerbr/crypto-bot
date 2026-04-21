@@ -1,14 +1,19 @@
 # -- coding: utf-8 --
 """
-BOT SNIPER v7.2 PRO — Dashboard Profissional de Execução Rápida
-═══════════════════════════════════════════════════════════════════════════════
-MELHORIAS APLICADAS:
-✅ Layout de mesa de trading profissional (foco em execução rápida)
-✅ Botões grandes de confirmação, cópia de preços com 1 clique
-✅ Toasts de notificação em tempo real + badges inteligentes
-✅ Cards de tendências/CT com cores semânticas, barras de força e ícones
-✅ Atualização incremental do DOM (performance otimizada)
-✅ Calculadora de risco integrada (client-side)
+TICKMILL SNIPER BOT v7.3 PRO — Dashboard Profissional de Execução Rápida
+══════════════════════════════════════════════════════════════════════════
+CORRETORA: Tickmill | Plataforma: MT5 | Conta: Raw ECN (USD)
+
+ADAPTAÇÕES TICKMILL APLICADAS:
+✅ Símbolos MT5 nativos: XAUUSD, USOIL, BTCUSD, US500, DE40, etc.
+✅ Mapeamento automático Tickmill MT5 → Yahoo Finance (dados de preço)
+✅ Alavancagem máxima por ativo respeitada (FOREX 1:500, Gold 1:200, Cripto 1:20…)
+✅ Comissão Raw ECN calculada ($4 RT/lote FOREX/Commodities) e deduzida do P&L
+✅ Margin Call 100% / Stop Out 30% (regras reais da Tickmill)
+✅ Tamanhos de contrato MT5 corretos (XAUUSD=100oz, USOIL=1000bbl, US500=$50/ponto…)
+✅ Equity, free margin e P&L líquido (descontando comissão) em tempo real
+✅ Suporte a conta RAW/CLASSIC/PRO via variável de ambiente
+✅ Dashboard atualizado com branding Tickmill + campos específicos da corretora
 ✅ 100% da lógica original preservada (engine, persistência, Telegram, etc.)
 """
 import os, time, json, math, threading, requests
@@ -23,24 +28,29 @@ class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN",   "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
     BR_TZ      = timezone(timedelta(hours=-3))
+
+    # ── TICKMILL MT5 — Símbolos nativos da plataforma ──────────────────────────
+    # Crypto/Commodities/Índices usam nomenclatura MT5 da Tickmill.
+    # A conversão para Yahoo Finance é feita internamente via TICKMILL_TO_YF.
     MARKET_CATEGORIES = {
         "FOREX": {"label": "FOREX", "assets": {
             "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "AUDUSD": "AUD/USD",
             "USDCAD": "USD/CAD", "USDCHF": "USD/CHF", "NZDUSD": "NZD/USD", "EURGBP": "EUR/GBP",
             "EURJPY": "EUR/JPY", "GBPJPY": "GBP/JPY"}},
         "CRYPTO": {"label": "CRIPTO", "assets": {
-            "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana", "BNB-USD": "BNB",
-            "XRP-USD": "XRP", "ADA-USD": "Cardano", "DOGE-USD": "Dogecoin", "AVAX-USD": "Avalanche",
-            "LINK-USD": "Chainlink", "DOT-USD": "Polkadot", "POL-USD": "Polygon", "LTC-USD": "Litecoin"}},
+            "BTCUSD": "Bitcoin",   "ETHUSD": "Ethereum", "SOLUSD": "Solana",
+            "BNBUSD": "BNB",       "XRPUSD": "XRP",      "ADAUSD": "Cardano",
+            "DOGEUSD": "Dogecoin", "LTCUSD": "Litecoin"}},
         "COMMODITIES": {"label": "COMMODITIES", "assets": {
-            "GC=F": "Ouro", "SI=F": "Prata", "CL=F": "Petróleo WTI", "BZ=F": "Petróleo Brent",
-            "NG=F": "Gás Natural", "HG=F": "Cobre", "ZC=F": "Milho", "ZW=F": "Trigo",
-            "ZS=F": "Soja", "PL=F": "Platina"}},
+            "XAUUSD": "Ouro (Gold)",     "XAGUSD": "Prata (Silver)",
+            "USOIL":  "Petróleo WTI",    "UKOIL":  "Petróleo Brent",
+            "NATGAS": "Gás Natural",     "COPPER": "Cobre"}},
         "INDICES": {"label": "ÍNDICES", "assets": {
-            "ES=F": "S&P 500", "NQ=F": "Nasdaq 100", "YM=F": "Dow Jones", "RTY=F": "Russell 2000",
-            "^GDAXI": "DAX", "^FTSE": "FTSE 100", "^N225": "Nikkei", "^BVSP": "IBOVESPA",
-            "^HSI": "Hang Seng", "^STOXX50E": "Euro Stoxx 50"}}
+            "US500": "S&P 500",    "US100": "Nasdaq 100", "US30":  "Dow Jones",
+            "DE40":  "DAX 40",     "UK100": "FTSE 100",   "JP225": "Nikkei 225",
+            "AUS200":"ASX 200",    "EU50":  "Euro Stoxx 50"}}
     }
+
     ATR_MULT_SL = 1.5; ATR_MULT_TP = 3.0; ATR_MULT_TRAIL = 1.2
     MAX_CONSECUTIVE_LOSSES = 2; PAUSE_DURATION = 3600
     ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600; MIN_CONFLUENCE = 5
@@ -48,37 +58,86 @@ class Config:
     REVERSAL_REQUIRE_TREND = True; REVERSAL_RSI_SELL = 75; REVERSAL_RSI_BUY = 25
     REVERSAL_BAND_BUFFER = 0.997
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
-    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; 
+    TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200
     SCAN_INTERVAL = 30
-    BROKER_NAME = "Tickmill"
+
+    # ── TICKMILL — Configurações de corretora ──────────────────────────────────
+    BROKER_NAME     = "Tickmill"
     BROKER_PLATFORM = "MT5"
-    ACCOUNT_TYPE = "DEMO"
-    BASE_CURRENCY = "USD"
-    INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
-    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "10"))
-    RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
-    MARGIN_CALL_LEVEL = 100.0
-    STOP_OUT_LEVEL = 30.0
-    MIN_LOT = 0.01
-    LOT_STEP = 0.01
-    CONTRACT_SIZES = {
-        "FOREX": 100000,
-        "CRYPTO": 1,
-        "COMMODITIES": 100,
-        "INDICES": 1,
+    # Tipos disponíveis: RAW (comissão $2/lote/lado), CLASSIC (spread alargado), PRO
+    ACCOUNT_TYPE    = os.getenv("TICKMILL_ACCOUNT_TYPE", "RAW")
+    BASE_CURRENCY   = "USD"
+
+    # Comissão Round-Trip por lote padrão (Raw ECN: $2 entrada + $2 saída = $4)
+    COMMISSION_PER_LOT_RT = {
+        "FOREX":       4.0,   # $4 round-trip / lote
+        "COMMODITIES": 4.0,   # $4 (XAUUSD, XAGUSD, USOIL, UKOIL, NATGAS, COPPER)
+        "INDICES":     0.0,   # Spread apenas
+        "CRYPTO":      0.0,   # Spread apenas
     }
+
+    # Alavancagem máxima por categoria (Tickmill — entidade Seychelles/Global)
+    MAX_LEVERAGE_BY_CAT = {
+        "FOREX":       500,
+        "COMMODITIES": 200,
+        "INDICES":     200,
+        "CRYPTO":       20,
+    }
+    # Overrides por símbolo específico
+    MAX_LEVERAGE_BY_SYM = {
+        "XAUUSD": 200, "XAGUSD": 100,
+        "USOIL":  100, "UKOIL":  100, "NATGAS": 100, "COPPER": 100,
+        "US500":  200, "US100":  200, "US30":   200,
+        "DE40":   100, "UK100":  100, "JP225":  100, "AUS200": 100, "EU50": 100,
+    }
+
+    INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
+    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "100"))
+    RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
+    MARGIN_CALL_LEVEL = 100.0   # Tickmill margin call: 100%
+    STOP_OUT_LEVEL    = 30.0    # Tickmill stop out:    30%
+    MIN_LOT  = 0.01
+    LOT_STEP = 0.01
+
+    # ── Tamanhos de contrato Tickmill MT5 ─────────────────────────────────────
+    CONTRACT_SIZES = {
+        "FOREX":       100000,  # 1 lote = 100.000 unidades da moeda base
+        "CRYPTO":      1,       # 1 lote = 1 unidade do cripto
+        "COMMODITIES": 100,     # base (overrides abaixo)
+        "INDICES":     1,       # base (overrides abaixo)
+    }
+    # Tamanhos específicos por símbolo MT5
+    CONTRACT_SIZES_SPECIFIC = {
+        "XAUUSD": 100,     # 100 troy oz
+        "XAGUSD": 5000,    # 5.000 troy oz
+        "USOIL":  1000,    # 1.000 barris (WTI)
+        "UKOIL":  1000,    # 1.000 barris (Brent)
+        "NATGAS": 10000,   # 10.000 MMBtu
+        "COPPER": 25000,   # 25.000 libras
+        "US500":  50,      # $50 por ponto
+        "US100":  20,      # $20 por ponto
+        "US30":   5,       # $5 por ponto
+        "DE40":   25,      # €25 por ponto
+        "UK100":  10,      # £10 por ponto
+        "JP225":  1,       # ¥1 por ponto
+        "AUS200": 1,       # A$1 por ponto
+        "EU50":   10,      # €10 por ponto
+    }
+
     TIMEFRAMES = {
-    "1m": ("Agressivo", "7d"),
-    "5m": ("Alto", "5d"),
-    "15m": ("Moderado", "5d"),
-    "30m": ("Conservador", "5d"),
-    "1h": ("Seguro", "60d"),
-    "4h": ("Muito Seguro", "60d")
+        "1m":  ("Agressivo",    "7d"),
+        "5m":  ("Alto",         "5d"),
+        "15m": ("Moderado",     "5d"),
+        "30m": ("Conservador",  "5d"),
+        "1h":  ("Seguro",      "60d"),
+        "4h":  ("Muito Seguro","60d"),
     }
     TIMEFRAME = "15m"
-    FOREX_OPEN_UTC = 7; FOREX_CLOSE_UTC = 17
-    COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
-    IDX_OPEN_UTC   = 7; IDX_CLOSE_UTC   = 21
+
+    # Horários de mercado (UTC) — compatível com sessões Tickmill
+    FOREX_OPEN_UTC = 7;  FOREX_CLOSE_UTC = 17   # Londres+NY
+    COMM_OPEN_UTC  = 7;  COMM_CLOSE_UTC  = 21   # Até fechamento NY
+    IDX_OPEN_UTC   = 7;  IDX_CLOSE_UTC   = 21
     STATE_FILE = "bot_state.json"
 def fmt(p: float) -> str:
     if not p: return "0"
@@ -89,42 +148,90 @@ def fmt(p: float) -> str:
     return f"{p:.6f}"
 def log(msg):
     print(f"[{datetime.now(Config.BR_TZ).strftime('%H:%M:%S')}] {msg}", flush=True)
+
+# ── Mapeamento: Símbolo Tickmill MT5 → Yahoo Finance (para dados de preço) ──
+TICKMILL_TO_YF = {
+    # Cripto
+    "BTCUSD":  "BTC-USD",  "ETHUSD":  "ETH-USD",  "SOLUSD":  "SOL-USD",
+    "BNBUSD":  "BNB-USD",  "XRPUSD":  "XRP-USD",  "ADAUSD":  "ADA-USD",
+    "DOGEUSD": "DOGE-USD", "LTCUSD":  "LTC-USD",
+    # Commodities
+    "XAUUSD":  "GC=F",     "XAGUSD":  "SI=F",
+    "USOIL":   "CL=F",     "UKOIL":   "BZ=F",
+    "NATGAS":  "NG=F",     "COPPER":  "HG=F",
+    # Índices
+    "US500":   "ES=F",     "US100":   "NQ=F",     "US30":    "YM=F",
+    "DE40":    "^GDAXI",   "UK100":   "^FTSE",    "JP225":   "^N225",
+    "AUS200":  "^AXJO",    "EU50":    "^STOXX50E","US2000":  "RTY=F",
+}
+
 def to_yf(s):
-    if "-" in s or s.startswith("^") or s.endswith("=F"): return s
+    """Converte símbolo Tickmill MT5 para Yahoo Finance."""
+    if s in TICKMILL_TO_YF:
+        return TICKMILL_TO_YF[s]
+    # Pares Forex: 6 letras → adiciona =X
+    if len(s) == 6 and s.isalpha():
+        return f"{s}=X"
+    # Já está no formato YF
+    if "-" in s or s.startswith("^") or s.endswith("=F"):
+        return s
     return f"{s}=X"
+
 def asset_cat(s):
     for cat, info in Config.MARKET_CATEGORIES.items():
         if s in info["assets"]: return cat
     return "CRYPTO"
+
 def asset_name(s):
     for info in Config.MARKET_CATEGORIES.values():
         if s in info["assets"]: return info["assets"][s]
     return s
+
 def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
+
 def contract_size_for(symbol):
-    specific = {"GC=F": 100, "SI=F": 5000, "CL=F": 1000, "BZ=F": 1000, "NG=F": 10000, "HG=F": 25000, "ZC=F": 50, "ZW=F": 50, "ZS=F": 50, "PL=F": 50, "ES=F": 50, "NQ=F": 20, "YM=F": 5, "RTY=F": 50, "^GDAXI": 1, "^FTSE": 1, "^N225": 1, "^BVSP": 1, "^HSI": 1, "^STOXX50E": 1}
-    return specific.get(symbol, Config.CONTRACT_SIZES.get(asset_cat(symbol), 1))
+    """Retorna o tamanho do contrato do símbolo na Tickmill MT5."""
+    return Config.CONTRACT_SIZES_SPECIFIC.get(
+        symbol, Config.CONTRACT_SIZES.get(asset_cat(symbol), 1))
+
+def commission_for(symbol, lot):
+    """Calcula comissão round-trip Tickmill para o lote dado (Raw ECN)."""
+    if Config.ACCOUNT_TYPE not in ("RAW",):
+        return 0.0  # Classic/Pro não têm comissão separada
+    cat = asset_cat(symbol)
+    rate = Config.COMMISSION_PER_LOT_RT.get(symbol,
+           Config.COMMISSION_PER_LOT_RT.get(cat, 0.0))
+    return round(rate * lot, 2)
+
+def max_leverage_for(symbol):
+    """Retorna a alavancagem máxima permitida pela Tickmill para o símbolo."""
+    if symbol in Config.MAX_LEVERAGE_BY_SYM:
+        return Config.MAX_LEVERAGE_BY_SYM[symbol]
+    return Config.MAX_LEVERAGE_BY_CAT.get(asset_cat(symbol), 100)
 
 def symbol_profile(symbol):
-    if symbol in {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY"}:
+    cat = asset_cat(symbol)
+    if cat == "FOREX":
         return {"kind": "FX", "base": symbol[:3], "quote": symbol[3:], "contract_size": 100000}
-    if symbol in {"GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "ZC=F", "ZW=F", "ZS=F", "PL=F"}:
+    if cat == "COMMODITIES":
         return {"kind": "CFD", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
-    if symbol in {"ES=F", "NQ=F", "YM=F", "RTY=F", "^GDAXI", "^FTSE", "^N225", "^BVSP", "^HSI", "^STOXX50E"}:
+    if cat == "INDICES":
         return {"kind": "INDEX", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
-    if asset_cat(symbol) == "CRYPTO":
-        return {"kind": "CRYPTO", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
+    if cat == "CRYPTO":
+        return {"kind": "CRYPTO", "base": "USD", "quote": "USD", "contract_size": 1}
     return {"kind": "CFD", "base": "USD", "quote": "USD", "contract_size": contract_size_for(symbol)}
 
 def asset_min_lot(symbol):
-    # Tickmill demo: exibimos o lote mínimo operacional configurado no bot.
+    # Tickmill: lote mínimo padrão = 0.01 para todos os instrumentos disponíveis.
     return Config.MIN_LOT
 
 def required_amount_for_lot(symbol, entry, leverage, lot=None):
     """Valor-base mínimo estimado para abrir um lote específico."""
     profile = symbol_profile(symbol)
     lot = Config.MIN_LOT if lot is None else float(lot)
-    leverage = max(float(leverage or 1), 1e-9)
+    # Respeita limite de alavancagem da Tickmill por símbolo
+    max_lev = max_leverage_for(symbol)
+    leverage = max(1.0, min(float(leverage or 1), float(max_lev)))
     entry = float(entry or 0)
     contract_size = float(profile["contract_size"])
     if profile["kind"] == "FX":
@@ -190,13 +297,16 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     if leverage <= 0:
         return {"ok": False, "error": "Alavancagem inválida."}
 
+    # ── Tickmill: garante que a alavancagem não excede o limite do símbolo ──
+    max_lev = max_leverage_for(symbol)
+    if leverage > max_lev:
+        leverage = float(max_lev)
+
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
         return {"ok": False, "error": "Distância do stop inválida."}
 
-    # Tickmill/MT5: o volume mínimo é 0.01 lote e a margem depende do ativo e da moeda da conta.
-    # O cálculo final da margem acontece depois que o lote ideal é definido.
-    # Risco por trade calculado sobre o valor escolhido, respeitando o SL e convertendo para USD.
+    # Tickmill/MT5: margem calculada pelo MT5 com base no contrato e na alavancagem.
     quote_to_usd = currency_to_usd(quote_ccy)
     base_to_usd = currency_to_usd(base_ccy)
     risk_money_target = amount * (risk_pct / 100.0)
@@ -206,15 +316,13 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     tp_gain_per_lot = abs(tp - entry) * contract_size * quote_to_usd
     lot_by_risk = risk_money_target / risk_loss_per_lot if risk_loss_per_lot > 0 else 0.0
 
-    # Margem no MT5: volume (em lotes) * tamanho do contrato / alavancagem,
-    # convertido para a moeda da conta quando o ativo não é cotado em USD.
+    # Margem no MT5 (Tickmill): volume * tamanho_contrato / alavancagem
     if profile["kind"] == "FX":
         if base_ccy == Config.BASE_CURRENCY:
             margin_per_lot = contract_size / leverage
         else:
             margin_per_lot = (contract_size * base_to_usd) / leverage
     else:
-        # CFDs/índices/cripto já são tratados em USD no bot.
         margin_per_lot = (entry * contract_size) / leverage
 
     max_lot_by_margin = amount / margin_per_lot if margin_per_lot > 0 else 0.0
@@ -242,6 +350,17 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     tp_gain = tp_gain_per_lot * lot
     potential_pnl_ratio = tp_gain / margin_required * 100 if margin_required else 0
 
+    # ── Tickmill: comissão round-trip (Raw ECN) ───────────────────────────────
+    commission = commission_for(symbol, lot)
+    if commission > 0:
+        note.append(f"Comissão Tickmill (Raw ECN RT): ~${commission:.2f} ({lot:.2f} lotes × ${Config.COMMISSION_PER_LOT_RT.get(asset_cat(symbol), 4.0):.0f}/lote).")
+    net_tp_gain = round(tp_gain - commission, 2)
+
+    # Aviso se alavancagem foi limitada
+    max_lev = max_leverage_for(symbol)
+    if float(leverage) == float(max_lev) and float(leverage) < float(leverage):
+        note.append(f"Alavancagem limitada ao máximo permitido pela Tickmill: {max_lev}x.")
+
     return {
         "ok": True,
         "symbol": symbol,
@@ -253,6 +372,7 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         "tp": tp,
         "amount": amount,
         "leverage": leverage,
+        "max_leverage": max_lev,
         "risk_pct": risk_pct,
         "min_lot": Config.MIN_LOT,
         "min_amount_required": required_amount_for_lot(symbol, entry, leverage, Config.MIN_LOT),
@@ -263,6 +383,8 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         "risk_money_target": round(risk_money_target, 2),
         "risk_loss": round(risk_loss, 2),
         "tp_gain": round(tp_gain, 2),
+        "commission": round(commission, 2),
+        "net_tp_gain": net_tp_gain,
         "potential_pnl_ratio": round(potential_pnl_ratio, 2),
         "note": note,
     }
@@ -343,6 +465,7 @@ def load_state(bot):
 def account_snapshot(bot):
     open_pnl_money = 0.0
     used_margin = 0.0
+    total_commission = 0.0
     for t in bot.active_trades:
         try:
             res = get_analysis(t["symbol"], bot.timeframe)
@@ -352,7 +475,14 @@ def account_snapshot(bot):
         pnl_pct = (cur - t["entry"]) / t["entry"] * 100
         if t["dir"] == "SELL":
             pnl_pct = -pnl_pct
-        open_pnl_money += float(t.get("margin_required", 0)) * (pnl_pct / 100.0)
+        lot = float(t.get("lot", Config.MIN_LOT))
+        contract_size = float(t.get("contract_size", contract_size_for(t["symbol"])))
+        move = (cur - t["entry"]) if t["dir"] == "BUY" else (t["entry"] - cur)
+        raw_pnl = move * contract_size * lot
+        # Subtrai comissão Tickmill do P&L flutuante
+        comm = commission_for(t["symbol"], lot)
+        open_pnl_money += raw_pnl - comm
+        total_commission += comm
         used_margin += float(t.get("margin_required", 0))
     balance = float(bot.balance)
     equity = round(balance + open_pnl_money, 2)
@@ -365,6 +495,7 @@ def account_snapshot(bot):
         "free_margin": free_margin,
         "margin_level": margin_level,
         "open_pnl_money": round(open_pnl_money, 2),
+        "total_commission": round(total_commission, 2),
     }
 
 RSS_FEEDS = [    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"), ("Cointelegraph", "https://cointelegraph.com/rss"),
@@ -662,11 +793,17 @@ class TradingBot:
         is_ct = "CONTRA-TENDÊNCIA" in (t.get("tipo") or "  ")
         header = "⚡ SINAL CT PENDENTE" if is_ct else "🎯 SINAL PENDENTE"
         snap = account_snapshot(self)
+        max_lev = max_leverage_for(t["symbol"])
+        eff_lev = min(self.leverage, max_lev)
+        comm_info = ""
+        if asset_cat(t["symbol"]) in ("FOREX", "COMMODITIES"):
+            comm_info = f"\n💳 Comissão RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
         text = "\n".join([
-            f"{header} – <b>{t['symbol']}</b> ({t['name']})",
+            f"{header} – <b>{t['symbol']}</b> ({t['name']}) [Tickmill MT5]",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
+            f"Alavancagem efetiva: <code>{eff_lev}x</code> (máx. Tickmill: <code>{max_lev}x</code>)",
             f"Lote mínimo: <code>{float(t.get('min_lot', Config.MIN_LOT)):.2f}</code> | Valor mínimo aprox.: <code>{fmt(float(t.get('min_amount_required', 0)))}</code>",
-            "Aguardando sua escolha de valor…",
+            f"Aguardando sua escolha de valor…{comm_info}",
             "",
             f"▶️ <b>{dl}</b>",
             "",
@@ -676,7 +813,7 @@ class TradingBot:
             "",
             f"🏦 <b>Saldo:</b> <code>{fmt(snap['balance'])}</code> | <b>Equity:</b> <code>{fmt(snap['equity'])}</code>",
             f"📉 <b>Margem usada:</b> <code>{fmt(snap['used_margin'])}</code> | <b>Free margin:</b> <code>{fmt(snap['free_margin'])}</code>",
-            f"📊 <b>Margin level:</b> <code>{snap['margin_level']:.1f}%</code> | <b>Alavancagem:</b> <code>{self.leverage}x</code> | <b>Risco:</b> <code>{self.risk_pct:.1f}%</code>",
+            f"📊 <b>Margin level:</b> <code>{snap['margin_level']:.1f}%</code> | <b>Alav.:</b> <code>{eff_lev}x</code> | <b>Risco:</b> <code>{self.risk_pct:.1f}%</code>",
             "",
         ])
         if is_ct and t.get("sinais"):
@@ -730,14 +867,16 @@ class TradingBot:
             warn = ""
             if plan.get("note"):
                 warn = "\n" + "\n".join(f"⚠ {n}" for n in plan["note"])
+            comm_txt = f"\n💳 <b>Comissão Tickmill (RT):</b> <code>${plan.get('commission', 0):.2f}</code> | <b>Ganho líq. TP:</b> <code>{fmt(plan.get('net_tp_gain', plan['tp_gain']))}</code>" if plan.get("commission", 0) > 0 else ""
             self.send(
-                f"✅ <b>TRADE ABERTO – {opened['symbol']}</b>\n"
+                f"✅ <b>TRADE ABERTO – {opened['symbol']}</b> [Tickmill MT5]\n"
                 f"{dl} | Entrada: <code>{fmt(opened['entry'])}</code>\n"
-                f"💵 Base escolhida: <code>{fmt(plan['amount'])}</code> | Alavancagem: <code>{int(plan['leverage'])}x</code>\n"
+                f"💵 Base escolhida: <code>{fmt(plan['amount'])}</code> | Alav.: <code>{int(plan['leverage'])}x</code> (máx {plan.get('max_leverage','--')}x)\n"
                 f"📦 Lote: <code>{plan['lot']:.2f}</code> | Margem usada: <code>{fmt(plan['margin_required'])}</code>\n"
                 f"🛡 SL: <code>{fmt(opened['sl'])}</code> | 🎯 TP: <code>{fmt(opened['tp'])}</code>\n"
-                f"📉 Risco até SL: <code>{fmt(plan['risk_loss'])}</code> | 📈 Potencial no TP: <code>{fmt(plan['tp_gain'])}</code>\n"
-                f"🧷 Lote mínimo do ativo: <code>{float(plan.get('min_lot', Config.MIN_LOT)):.2f}</code> | Base mínima aprox.: <code>{fmt(plan.get('min_amount_required', 0))}</code>\n"
+                f"📉 Risco até SL: <code>{fmt(plan['risk_loss'])}</code> | 📈 Potencial no TP: <code>{fmt(plan['tp_gain'])}</code>"
+                f"{comm_txt}\n"
+                f"🧷 Lote mínimo: <code>{float(plan.get('min_lot', Config.MIN_LOT)):.2f}</code> | Base mín. aprox.: <code>{fmt(plan.get('min_amount_required', 0))}</code>\n"
                 f"🏦 Saldo após reservar margem: <code>{fmt(self.balance)}</code>{warn}"
             )
             return True
@@ -1110,8 +1249,11 @@ class TradingBot:
                 contract_size = float(t.get("contract_size", contract_size_for(t["symbol"])))
                 move = (cur - t["entry"]) if t["dir"] == "BUY" else (t["entry"] - cur)
                 pnl_money = move * contract_size * lot
+                # Tickmill: desconta comissão round-trip do resultado final
+                comm = commission_for(t["symbol"], lot)
+                pnl_money_net = round(pnl_money - comm, 2)
                 margin_required = float(t.get("margin_required", t.get("capital_base", 0)))
-                self.balance = round(self.balance + margin_required + pnl_money, 2)
+                self.balance = round(self.balance + margin_required + pnl_money_net, 2)
                 st = "✅ TAKE PROFIT (WIN)" if is_win else "❌ STOP LOSS (LOSS)"
                 closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
                 if is_win:
@@ -1121,15 +1263,16 @@ class TradingBot:
                     self.losses += 1
                     self.consecutive_losses += 1
                     self.asset_cooldown[t["symbol"]] = time.time()
-                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl_pct, 2), "pnl_money": round(pnl_money, 2), "closed_at": closed_at, "lot": lot, "margin_required": round(margin_required, 2)})
+                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl_pct, 2), "pnl_money": pnl_money_net, "commission": round(comm, 2), "closed_at": closed_at, "lot": lot, "margin_required": round(margin_required, 2)})
+                comm_line = f"\n💳 Comissão Tickmill: <code>-${comm:.2f}</code> | P&L líquido: <code>{fmt(pnl_money_net)}</code>" if comm > 0 else ""
                 self.send("\n".join([
-                    "🏁 <b>OPERAÇÃO ENCERRADA</b>",
+                    "🏁 <b>OPERAÇÃO ENCERRADA</b> [Tickmill MT5]",
                     f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}",
                     f"Resultado: <b>{st}</b>",
                     "",
                     f"💰 Entrada: <code>{fmt(t['entry'])}</code>",
                     f"🔚 Saída: <code>{fmt(cur)}</code>",
-                    f"P&L: <code>{pnl_pct:+.2f}%</code> | <b>{fmt(pnl_money)}</b>",
+                    f"P&L bruto: <code>{pnl_pct:+.2f}%</code> | <b>{fmt(pnl_money)}</b>{comm_line}",
                     f"🏦 Saldo atual: <code>{fmt(self.balance)}</code>",
                 ]))
                 self.active_trades.remove(t)
@@ -1199,7 +1342,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 /* ── HEADER ── */
 #hdr{height:var(--head);flex-shrink:0;background:rgba(8,12,20,.97);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .hdr-l{display:flex;align-items:center;gap:10px}
-.logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--green2),var(--blue2));display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:18px;font-weight:800;color:#000;box-shadow:0 0 0 1px rgba(0,230,118,.3)}
+.logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#e8002d,#002868);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:18px;font-weight:800;color:#fff;box-shadow:0 0 0 1px rgba(232,0,45,.35)}
 .t1{font-size:15px;font-weight:700;letter-spacing:-.4px}.t2{font-size:10px;color:var(--muted2);letter-spacing:1.2px;text-transform:uppercase;margin-top:1px}
 .hdr-r{display:flex;align-items:center;gap:8px}
 .badge{display:flex;align-items:center;gap:4px;background:var(--g3);border:1px solid rgba(0,230,118,.2);border-radius:20px;padding:3px 8px;font-size:9px;color:var(--green);font-weight:600}
@@ -1362,8 +1505,8 @@ body.focus .focus-banner{display:block}
 <!-- ── HEADER ── -->
 <div id="hdr">
   <div class="hdr-l">
-    <div class="logo">S</div>
-    <div><div class="t1">Sniper Bot Pro</div><div class="t2">v7.3 • PRO</div></div>
+    <div class="logo">T</div>
+    <div><div class="t1">Tickmill Sniper</div><div class="t2">MT5 • PRO v7.3</div></div>
   </div>
   <div class="hdr-r">
     <div class="badge">LIVE <span class="dot"></span></div>
@@ -1392,7 +1535,7 @@ body.focus .focus-banner{display:block}
   </div>
   <!-- PAINEL DE RISCO -->
   <div class="risk-panel">
-    <div class="risk-head">⚖ Gestão de Risco</div>
+    <div class="risk-head">⚖ Gestão de Risco — Tickmill MT5</div>
     <div class="risk-grid">
       <div class="risk-item"><span class="risk-lbl">Saldo</span><span class="risk-val bl" id="r-balance">0</span></div>
       <div class="risk-item"><span class="risk-lbl">Equity</span><span class="risk-val" id="r-equity">0</span></div>
@@ -1405,6 +1548,8 @@ body.focus .focus-banner{display:block}
       <div class="risk-item"><span class="risk-lbl">CB Status</span><span class="risk-val" id="r-cb">OK</span></div>
       <div class="risk-item"><span class="risk-lbl">Seq. Perdas</span><span class="risk-val" id="r-losses">0 / 2</span></div>
       <div class="risk-item"><span class="risk-lbl">W / L Total</span><span class="risk-val" id="r-wl">--</span></div>
+      <div class="risk-item"><span class="risk-lbl">Tipo Conta</span><span class="risk-val cy" id="r-actype">RAW</span></div>
+      <div class="risk-item" style="grid-column:span 2"><span class="risk-lbl">Margin Call / Stop Out</span><span class="risk-val go" id="r-mcso">100% / 30%</span></div>
     </div>
   </div>
   <div class="chd">💼 Trades Ativos <span class="ts">Auto: 5s</span></div>
@@ -1457,6 +1602,8 @@ body.focus .focus-banner{display:block}
     <div class="pbox"><div class="plb">Take Profit</div><div class="pvl" id="p-tp">--</div></div>
     <div class="pbox"><div class="plb">Max Trades</div><div class="pvl" id="p-mt">--</div></div>
     <div class="pbox"><div class="plb">Confluência</div><div class="pvl" id="p-mc">--</div></div>
+    <div class="pbox"><div class="plb">Comissão RT</div><div class="pvl cy" id="p-comm">--</div></div>
+    <div class="pbox"><div class="plb">Lote Mínimo</div><div class="pvl" id="p-minlot">0.01</div></div>
   </div></div>
   <div class="cfgsec"><div class="cfgl">Saldo da Conta</div>
     <div class="pgrid">
@@ -1584,7 +1731,11 @@ function updRiskPanel(st){
   const freeEl=document.getElementById('r-free');
   if(freeEl){freeEl.textContent=fp(st.free_margin||0); freeEl.className='risk-val '+((st.free_margin||0)>0?'bl':'r');}
   const lvlEl=document.getElementById('r-level');
-  if(lvlEl){lvlEl.textContent=(st.margin_level||0).toFixed(1)+'%'; lvlEl.className='risk-val '+((st.margin_level||0)<= (st.stop_out_level||30)?'r':(st.margin_level||0)<= (st.margin_call_level||100)?'go':'g');}
+  if(lvlEl){
+    const ml=st.margin_level||0;
+    lvlEl.textContent=ml.toFixed(1)+'%';
+    lvlEl.className='risk-val '+(ml<=(st.stop_out_level||30)?'r':ml<=(st.margin_call_level||100)?'go':'g');
+  }
   const levEl=document.getElementById('r-leverage');
   levEl.textContent=(st.leverage||0)+'x';
   levEl.className='risk-val go';
@@ -1604,6 +1755,11 @@ function updRiskPanel(st){
   const wlEl=document.getElementById('r-wl');
   wlEl.textContent=st.wins+'W / '+st.losses+'L';
   wlEl.className='risk-val '+(st.winrate>=50?'g':'r');
+  // Campos específicos Tickmill
+  const actEl=document.getElementById('r-actype');
+  if(actEl){actEl.textContent=st.account_type||'RAW'; actEl.className='risk-val cy';}
+  const mcsoEl=document.getElementById('r-mcso');
+  if(mcsoEl){mcsoEl.textContent=(st.margin_call_level||100)+'% / '+(st.stop_out_level||30)+'%';}
 }
 async function loadDash(){
   try{
@@ -1634,9 +1790,10 @@ function renderOpenTrade(t){
   const cls=buy?'buy':'sell';
   const distSlClass=t.dist_sl<30?'near':'far';
   const distTpClass=t.dist_tp<30?'near':'far';
+  const maxLevTxt=t.max_leverage?` | máx ${t.max_leverage}x`:'';
   return`<div class="tcard ${cls}">
     <div class="tcard-head">
-      <div><div class="tsym">${t.symbol}</div><div class="tname">${t.name||''}</div></div>
+      <div><div class="tsym">${t.symbol}</div><div class="tname">${t.name||''} <span style="font-size:9px;color:var(--muted2)">[MT5]</span></div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         <div class="tdir ${buy?'':'sell'}">${buy?'▲ BUY':'▼ SELL'}</div>
         <span class="ttype-badge">${t.tipo||'TREND'}</span>
@@ -1650,7 +1807,7 @@ function renderOpenTrade(t){
     <div class="tlvs">
       <div class="tlv"><div class="tll">Lote</div><div class="tlvv bl">${(t.lot||0).toFixed(2)}</div></div>
       <div class="tlv"><div class="tll">Margem</div><div class="tlvv go">${fp(t.margin_required||0)}</div></div>
-      <div class="tlv"><div class="tll">Base</div><div class="tlvv">${fp(t.capital_base||0)}</div></div>
+      <div class="tlv"><div class="tll">Alav.</div><div class="tlvv" style="font-size:11px">${(_st&&_st.leverage)||'--'}x${maxLevTxt}</div></div>
     </div>
     <div class="tprog"><div class="tfill" style="width:${t.progress}%;background:${pos?'var(--green)':'var(--red)'}"></div></div>
     <div class="tdist">
@@ -1857,6 +2014,8 @@ async function loadCfg(){
     document.getElementById('p-mt').textContent=c.max_trades;
     document.getElementById('p-mc').textContent=c.min_conf+'/7';
     const pbal=document.getElementById('p-bal'); if(pbal) pbal.textContent=fp(c.balance||0);
+    const pcomm=document.getElementById('p-comm'); if(pcomm) pcomm.textContent='$'+c.commission_rt_forex+'/lote';
+    const pml=document.getElementById('p-minlot'); if(pml) pml.textContent=c.min_lot||'0.01';
   }catch(_){}
   updCfgBtns();
 }
@@ -1946,7 +2105,7 @@ def create_api(bot):
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
     @app.route("/api/health")
-    def api_health(): return jsonify({"status": "ok", "version": "7.3 PRO", "broker": Config.BROKER_NAME})
+    def api_health(): return jsonify({"status": "ok", "version": "7.3 PRO", "broker": Config.BROKER_NAME, "platform": Config.BROKER_PLATFORM, "account_type": Config.ACCOUNT_TYPE})
     @app.route("/api/status")
     def api_status():
         total = bot.wins + bot.losses
@@ -1956,6 +2115,7 @@ def create_api(bot):
         daily_pnl = sum(h.get("pnl", 0) for h in today_trades)
         daily_wins = sum(1 for h in today_trades if h.get("result") == "WIN")
         daily_losses = sum(1 for h in today_trades if h.get("result") == "LOSS")
+        snap = account_snapshot(bot)
         trades_out = []
         for t in bot.active_trades:           
             try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
@@ -1968,10 +2128,13 @@ def create_api(bot):
             trades_out.append({
                 "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
                 "tipo": t.get("tipo", " "), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
-                "current": cur, "pnl": round(pnl, 2), "pnl_money": round(t.get("pnl_money", 0), 2), "opened_at": t.get("opened_at", " "),
+                "current": cur, "pnl": round(pnl, 2), "pnl_money": round(t.get("pnl_money", 0), 2),
+                "opened_at": t.get("opened_at", " "),
                 "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1),
                 "lot": round(float(t.get("lot", 0)), 2), "margin_required": round(float(t.get("margin_required", 0)), 2),
-                "capital_base": round(float(t.get("capital_base", 0)), 2)
+                "capital_base": round(float(t.get("capital_base", 0)), 2),
+                "commission": round(float(t.get("commission", 0)), 2),
+                "max_leverage": max_leverage_for(t["symbol"]),
             })
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
@@ -1980,10 +2143,28 @@ def create_api(bot):
             "active_trades": trades_out, "pending_count": len(bot.pending_trades),
             "daily_pnl": round(daily_pnl, 2), "daily_wins": daily_wins, "daily_losses": daily_losses,
             "today_closed": len(today_trades), "history_today": today_trades,
-            "balance": round(bot.balance, 2), "leverage": bot.leverage, "risk_pct": bot.risk_pct,
+            "balance": snap["balance"], "equity": snap["equity"],
+            "used_margin": snap["used_margin"], "free_margin": snap["free_margin"],
+            "margin_level": snap["margin_level"],
+            "leverage": bot.leverage, "risk_pct": bot.risk_pct,
+            "margin_call_level": Config.MARGIN_CALL_LEVEL,
+            "stop_out_level": Config.STOP_OUT_LEVEL,
+            "broker": Config.BROKER_NAME,
+            "account_type": bot.account_type,
+            "platform": bot.platform,
         })
     @app.route("/api/config")
-    def api_config(): return jsonify({"atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP, "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE, "balance": bot.balance, "leverage": bot.leverage, "risk_pct": bot.risk_pct, "broker": Config.BROKER_NAME})
+    def api_config(): return jsonify({
+        "atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP,
+        "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE,
+        "balance": bot.balance, "leverage": bot.leverage, "risk_pct": bot.risk_pct,
+        "broker": Config.BROKER_NAME, "platform": Config.BROKER_PLATFORM,
+        "account_type": bot.account_type,
+        "margin_call_level": Config.MARGIN_CALL_LEVEL,
+        "stop_out_level": Config.STOP_OUT_LEVEL,
+        "commission_rt_forex": Config.COMMISSION_PER_LOT_RT["FOREX"],
+        "min_lot": Config.MIN_LOT,
+    })
     @app.route("/api/history")
     def api_history(): return jsonify(list(reversed(bot.history[-50:])))
     @app.route("/api/signals")
@@ -2208,7 +2389,7 @@ def bot_loop(bot):
             time.sleep(Config.SCAN_INTERVAL)
         except Exception as e: log(f"Erro loop: {e}"); time.sleep(10)
 def main():
-    log("🔌 Bot Sniper v7.2 PRO — Dashboard Profissional de Execução Rápida")
+    log("🔌 Tickmill Sniper Bot v7.3 PRO — MT5 | Raw ECN | Dashboard de Execução")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8) 
     except: pass
     bot = TradingBot()
