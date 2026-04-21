@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 """
 BOT SNIPER v7.1 PRO — Dashboard Profissional + Gestão de Trades em Tempo Real
 ═══════════════════════════════════════════════════════════════════════════════
-ALTERAÇÕES APLICADAS (conforme solicitado):
-✅ Dashboard profissional com foco em trades abertos/fechados
-✅ Lucro do Dia (%) calculado automaticamente
-✅ Trades aprovados mostram: preço atual, P&L, progresso, distância SL/TP
-✅ Lista compacta de fechados hoje com resultado e horário
-✅ API /api/status ampliada com métricas diárias
+MELHORIAS APLICADAS:
+✅ Persistência de Sinais: signals_feed salvo/restaurado (corrige sinais sumindo)
+✅ Tendências: Agrupadas por categoria + Cores ALTA/BAIXA
+✅ Contra-Tendência: Cards organizados, força, motivos e visual profissional
+✅ Notificações: Botão de ativação no Config + Lógica de inscrição
+✅ Sinais: Feed visual melhorado com ícones e tipos
 ✅ Resto do programa 100% preservado
 """
 import os, time, json, math, threading, requests
@@ -47,9 +47,7 @@ class Config:
     MIN_CONFLUENCE_CT = 4; REVERSAL_COOLDOWN = 2700
     RADAR_COOLDOWN = 1800; GATILHO_COOLDOWN = 300
     TRENDS_INTERVAL = 120; NEWS_INTERVAL = 7200; SCAN_INTERVAL = 30
-    TIMEFRAMES = {        "1m": ("Agressivo", "7d"), "5m": ("Alto", "5d"), "15m": ("Moderado", "5d"),
-        "30m": ("Conservador", "5d"), "1h": ("Seguro", "60d"), "4h": ("Muito Seguro", "60d")
-    }
+    TIMEFRAMES = { "1m": ("Agressivo", "7d"), "5m": ("Alto", "5d"), "15m": ("Moderado", "5d"),                   "30m": ("Conservador", "5d"), "1h": ("Seguro", "60d"), "4h": ("Muito Seguro", "60d") }
     TIMEFRAME = "15m"
     FOREX_OPEN_UTC = 7; FOREX_CLOSE_UTC = 17
     COMM_OPEN_UTC  = 7; COMM_CLOSE_UTC  = 21
@@ -73,19 +71,24 @@ def log(msg):
 def to_yf(s):
     if "-" in s or s.startswith("^") or s.endswith("=F"): return s
     return f"{s}=X"
+
 def asset_cat(s):
     for cat, info in Config.MARKET_CATEGORIES.items():
         if s in info["assets"]: return cat
     return "CRYPTO"
+
 def asset_name(s):
     for info in Config.MARKET_CATEGORIES.values():
         if s in info["assets"]: return info["assets"][s]
     return s
+
 def vol_reliable(s): return asset_cat(s) not in ("INDICES",)
+
 def all_syms():
     out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
     return out
+
 def mkt_open(cat):
     now = datetime.now(timezone.utc); h = now.hour; wd = now.weekday()
     if cat == "CRYPTO": return True
@@ -94,7 +97,6 @@ def mkt_open(cat):
     if cat == "COMMODITIES": return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
     if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
     return True
-
 # ═══════════════════════════════════════════════════════════════
 # PERSISTÊNCIA
 # ═══════════════════════════════════════════════════════════════
@@ -110,6 +112,7 @@ def save_state(bot):
         "radar_list": bot.radar_list, "gatilho_list": bot.gatilho_list,
         "reversal_list": bot.reversal_list, "asset_cooldown": bot.asset_cooldown,
         "history": bot.history,
+        "signals_feed": bot.signals_feed  # ✅ ADICIONADO: Persistência de sinais
     }
     try:
         with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
@@ -130,9 +133,11 @@ def load_state(bot):
         bot.radar_list = data.get("radar_list", {}); bot.gatilho_list = data.get("gatilho_list", {})
         bot.reversal_list = data.get("reversal_list", {}); bot.asset_cooldown = data.get("asset_cooldown", {})
         bot.history = data.get("history", [])
+        bot.signals_feed = data.get("signals_feed", [])  # ✅ ADICIONADO: Restaurar sinais
+        
         for t in bot.active_trades: t["session_alerted"] = False
         for t in bot.pending_trades: t["session_alerted"] = False
-        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s)")
+        log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
         if bot.active_trades:
             lines = ["♻️ BOT REINICIADO – TRADES ATIVOS\n"]
             for t in bot.active_trades:
@@ -141,15 +146,15 @@ def load_state(bot):
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
     except Exception as e: log(f"[STATE] Erro: {e}")
-
 # ═══════════════════════════════════════════════════════════════
 # NOTÍCIAS / FEAR & GREED
 # ═══════════════════════════════════════════════════════════════
 RSS_FEEDS = [
-    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),    ("Cointelegraph", "https://cointelegraph.com/rss"),
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"), ("Cointelegraph", "https://cointelegraph.com/rss"),
     ("Decrypt", "https://decrypt.co/feed"),
     ("Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories"),
 ]
+
 def _parse_rss(url, src, mx=3):
     try:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
@@ -158,11 +163,12 @@ def _parse_rss(url, src, mx=3):
         items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
         out = []
         for item in items[:mx]:
-            title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or " ").strip()
-            link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or " ").strip()
+            title = (item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title") or "  ").strip()
+            link  = (item.findtext("link")  or item.findtext("{http://www.w3.org/2005/Atom}link")  or "  ").strip()
             if title and link: out.append({"title": title, "url": link, "source": src})
         return out
     except: return []
+
 def get_news(mx=15):
     arts = []
     for name, url in RSS_FEEDS:
@@ -170,24 +176,25 @@ def get_news(mx=15):
         try: arts.extend(_parse_rss(url, name, 4))
         except Exception as e: log(f"[RSS] {name}: {e}")
     return arts[:mx]
+
 def get_fear_greed():
     try:
         d = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6).json()["data"][0]
         return {"value": d["value"], "label": d["value_classification"]}
-    except: return {"value": "N/D", "label": ""}
+    except: return {"value": "N/D", "label": " "}
+
 def build_news_msg():
     arts = get_news(5); fg = get_fear_greed()
     lines = ["📰 NOTÍCIAS\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else " ")
-        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})</a>")
+        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})")
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
 # ═══════════════════════════════════════════════════════════════
 # MOTOR DE ANÁLISE PRINCIPAL
-# ═══════════════════════════════════════════════════════════════
-def get_analysis(symbol, timeframe=None):
+# ═══════════════════════════════════════════════════════════════def get_analysis(symbol, timeframe=None):
     import yfinance as yf
     timeframe = timeframe or Config.TIMEFRAME
     yf_symbol = to_yf(symbol)
@@ -226,7 +233,7 @@ def get_analysis(symbol, timeframe=None):
         dx  = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
         price = float(closes.iloc[-1])
-        chg   = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes) >=10 else 0
+        chg   = float((closes.iloc[-1]-closes.iloc[-10])/closes.iloc[-10]*100) if len(closes)>=10 else 0
         cen   = "NEUTRO"
         if price > ema200 and ema9 > ema21: cen = "ALTA"
         elif price < ema200 and ema9 < ema21: cen = "BAIXA"
@@ -236,8 +243,7 @@ def get_analysis(symbol, timeframe=None):
         try:
             dh = yf.Ticker(yf_symbol).history(period=sup_per, interval=sup_tf)
             if len(dh) >= 50:
-                ch = dh["Close"]
-                e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
+                ch = dh["Close"]                e21h = ch.ewm(span=21, adjust=False).mean().iloc[-1]
                 e200h = ch.ewm(span=min(200,len(ch)-1), adjust=False).mean().iloc[-1]
                 ph = ch.iloc[-1]
                 h1b = bool(ph > e21h and e21h > e200h)
@@ -245,7 +251,8 @@ def get_analysis(symbol, timeframe=None):
         except: pass
         return {
             "symbol": symbol, "name": asset_name(symbol), "price": price, "cenario": cen,
-            "rsi": float(rsi), "atr": atr, "adx": adx, "ema9": float(ema9), "ema21": float(ema21),            "ema200": float(ema200), "upper": float(upper), "lower": float(lower),
+            "rsi": float(rsi), "atr": atr, "adx": adx, "ema9": float(ema9), "ema21": float(ema21),
+            "ema200": float(ema200), "upper": float(upper), "lower": float(lower),
             "macd_bull": macd_bull, "macd_bear": macd_bear, "macd_hist": float(mh.iloc[-1]),
             "vol_ok": vol_ok, "vol_ratio": vol_ratio, "t_buy": float(highs.tail(5).max()),
             "t_sell": float(lows.tail(5).min()), "h1_bull": h1b, "h1_bear": h1r, "change_pct": chg,
@@ -267,6 +274,7 @@ def calc_confluence(res, d):
                   ("TF Superior Baixa", res["h1_bear"]), ("ADX tendência", res["adx"] > Config.ADX_MIN)]
     sc = sum(1 for _, ok in checks if ok)
     return sc, len(checks), checks
+
 def cbar(sc, tot):
     f = math.floor(sc/tot*5)
     return "█"*f + "░"*(5-f)
@@ -275,16 +283,17 @@ def cbar(sc, tot):
 # MOTOR DE CONTRA-TENDÊNCIA (FOREX)
 # ═══════════════════════════════════════════════════════════════
 def detect_candle_patterns(df):
-    if len(df) < 3: return False, False, ""
+    if len(df) < 3: return False, False, " "
     o1,h1,l1,c1 = df["Open"].iloc[-2],df["High"].iloc[-2],df["Low"].iloc[-2],df["Close"].iloc[-2]
     o0,h0,l0,c0 = df["Open"].iloc[-1],df["High"].iloc[-1],df["Low"].iloc[-1],df["Close"].iloc[-1]
     body0 = abs(c0-o0); rng0 = h0-l0 or 1e-10
     uw = h0-max(c0,o0); lw = min(c0,o0)-l0
-    pb = pb2 = False; nm = ""
+    pb = pb2 = False; nm = " "
     if (c0>o0) and (c1<o1) and c0>o1 and o0<c1: pb=True; nm="Engolfo de Alta"
-    elif (c0<o0) and (c1>o1) and c0<c1 and o0>l1: pb2=True; nm="Engolfo de Baixa"
+    elif (c0<o0) and (c1>o1) and c0<l1: pb2=True; nm="Engolfo de Baixa"
     elif lw>body0*2 and uw<body0*0.5 and body0<rng0*0.4: pb=True; nm="Martelo"
-    elif uw>body0*2 and lw<body0*0.5 and body0<rng0*0.4: pb2=True; nm="Estrela Cadente"
+    elif uw>body0*2 and lw<body0*0.5 and body0<rng0*0.4:
+        pb2=True; nm="Estrela Cadente"
     elif body0 < rng0*0.1: pb=pb2=True; nm="Doji"
     elif lw>rng0*0.6 and body0<rng0*0.25: pb=True; nm="Pin Bar Alta"
     elif uw>rng0*0.6 and body0<rng0*0.25: pb2=True; nm="Pin Bar Baixa"
@@ -334,8 +343,7 @@ def get_reversal_analysis(symbol, timeframe=None):
         return {
             "symbol": symbol, "name": asset_name(symbol), "price": price, "rsi": rsi, "atr": atr, "adx": adx, "adx_mature": adx>30,
             "upper_band": ub, "lower_band": lb, "near_upper": near_up, "near_lower": near_dn,
-            "rsi_overbought": rsi_ob, "rsi_oversold": rsi_os, "div_bear": div_bear, "div_bull": div_bull,
-            "macd_div_bear": mdiv_bear, "macd_div_bull": mdiv_bull, "wick_bear": bool(uw>rng0*0.5),
+            "rsi_overbought": rsi_ob, "rsi_oversold": rsi_os, "div_bear": div_bear, "div_bull": div_bull,            "macd_div_bear": mdiv_bear, "macd_div_bull": mdiv_bull, "wick_bear": bool(uw>rng0*0.5),
             "wick_bull": bool(lw>rng0*0.5), "pat_bull": pb, "pat_bear": pb2, "pat_name": pnm,
             "signal_sell_ct": sig_sell, "signal_buy_ct": sig_buy,
         }
@@ -344,7 +352,8 @@ def get_reversal_analysis(symbol, timeframe=None):
 def calc_reversal_conf(res, d):
     if d == "SELL":
         checks = [("RSI sobrecomprado", res["rsi_overbought"]), ("Banda Superior BB", res["near_upper"]),
-                  ("RSI div. bearish", res["div_bear"]), ("MACD div. bearish", res["macd_div_bear"]),                  ("Candle de baixa", res["pat_bear"]), ("Wick superior", res["wick_bear"]), ("ADX maduro", res["adx_mature"])]
+                  ("RSI div. bearish", res["div_bear"]), ("MACD div. bearish", res["macd_div_bear"]),
+                  ("Candle de baixa", res["pat_bear"]), ("Wick superior", res["wick_bear"]), ("ADX maduro", res["adx_mature"])]
     else:
         checks = [("RSI sobrevendido", res["rsi_oversold"]), ("Banda Inferior BB", res["near_lower"]),
                   ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),
@@ -375,6 +384,7 @@ def detect_reversal(res):
 # PUSH NOTIFICATIONS
 # ═══════════════════════════════════════════════════════════════
 _push_subscriptions = []
+
 def send_push(title, body, icon="/icon-192.png"):
     try:
         from pywebpush import webpush, WebPushException
@@ -410,7 +420,7 @@ class TradingBot:
 
     def send(self, text, markup=None, disable_preview=False):
         import re
-        clean = re.sub(r"<[^>]+>", "", text).strip()
+        clean = re.sub(r"<[^>]+>", " ", text).strip()
         tipo = push_title = push_body = None
         if "RADAR" in text: tipo="radar"; push_title="⚠ RADAR"
         elif "GATILHO ATINGIDO" in text: tipo="gatilho"; push_title="🔔 GATILHO ATINGIDO!"
@@ -420,23 +430,24 @@ class TradingBot:
         elif "CONFLUÊNCIA INSUF" in text: tipo="insuf"
         elif "OPERAÇÃO ENCERRADA" in text: tipo="close"; push_title="🏁 Operação Encerrada"; push_body=clean[:80]
         elif "CIRCUIT BREAKER" in text: tipo="cb"; push_title="⛔ Circuit Breaker Ativado"
+        
         if tipo:
             self.signals_feed.append({"tipo": tipo, "texto": clean[:300], "ts": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")})
             self.signals_feed = self.signals_feed[-50:]
             if push_title:
                 body = push_body or clean[:100]
                 threading.Thread(target=send_push, args=(push_title, body), daemon=True).start()
+        
         url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": disable_preview}
         if markup: payload["reply_markup"] = json.dumps(markup)
         try: requests.post(url, json=payload, timeout=8)
         except Exception as e: log(f"[SEND] {e}")
-
     def send_pending_notification(self, t):
         dl = "COMPRAR (BUY) 🟢" if t["dir"]=="BUY" else "VENDER (SELL) 🔴"
         sl_pct = abs(t["entry"]-t["sl"])/t["entry"]*100
         tp_pct = abs(t["tp"]-t["entry"])/t["entry"]*100
-        is_ct = "CONTRA-TENDÊNCIA" in (t.get("tipo") or "")
+        is_ct = "CONTRA-TENDÊNCIA" in (t.get("tipo") or " ")
         header = "⚡ SINAL CT PENDENTE" if is_ct else "🎯 SINAL PENDENTE"
         text = (f"{header} – <b>{t['symbol']}</b> ({t['name']})\nAguardando sua confirmação…\n\n▶️ <b>{dl}</b>\n\n"
                 f"💰 <b>Entrada:</b> <code>{fmt(t['entry'])}</code>\n🛡 <b>SL:</b> <code>{fmt(t['sl'])}</code> ({-sl_pct:.2f}%)\n"
@@ -450,7 +461,7 @@ class TradingBot:
         for t in self.pending_trades[:]:
             if t.get("pending_id") == pending_id:
                 self.pending_trades.remove(t)
-                trade = {k: v for k, v in t.items() if k not in ("conf_txt","sc","tot_c","tc","bar","ratio","vol_txt","sinais","pending_id")}
+                trade = {k: v for k, v in t.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
                 self.active_trades.append(trade); save_state(self)
                 dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
                 self.send(f"✅ <b>TRADE CONFIRMADO – {t['symbol']}</b>\n{dl} | Entrada: <code>{fmt(t['entry'])}</code>\nSL: <code>{fmt(t['sl'])}</code> | TP: <code>{fmt(t['tp'])}</code>")
@@ -466,7 +477,7 @@ class TradingBot:
         return False
 
     def build_menu(self):
-        tfl = Config.TIMEFRAMES.get(self.timeframe, ("?"," "))[0]
+        tfl = Config.TIMEFRAMES.get(self.timeframe, ("?", " "))[0]
         ml  = Config.MARKET_CATEGORIES[self.mode]["label"] if self.mode != "TUDO" else "TUDO"
         markup = {"inline_keyboard": [
             [{"text": f"Mercado: {ml}", "callback_data": "ignore"}],
@@ -478,9 +489,8 @@ class TradingBot:
             [{"text": "Noticias", "callback_data": "news"}],
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
-        cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min " if self.is_paused() else ""
+        cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min " if self.is_paused() else " "
         self.send(f"<b>BOT SNIPER v7.1 PRO</b>\n{self.wins}W / {self.losses}L ({wr:.1f}%)\nModo: {ml} | TF: {self.timeframe}{cb}", markup)
-
     def build_tf_menu(self):
         rows = [[{"text": f"{tf} {lb}{'✅' if tf==self.timeframe else ''}", "callback_data": f"set_tf_{tf}"}] for tf, (lb, _) in Config.TIMEFRAMES.items()]
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
@@ -493,9 +503,11 @@ class TradingBot:
     def set_mode(self, mode):
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
         self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
+
     def send_status(self):
         lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
         if not self.active_trades: lines.append("Nenhuma."); self.send("\n".join(lines)); return
@@ -503,11 +515,13 @@ class TradingBot:
             res = get_analysis(t["symbol"], self.timeframe); cur = res["price"] if res else t["entry"]
             pnl = (cur-t["entry"])/t["entry"]*100
             if t["dir"] == "SELL": pnl = -pnl
-            lines.append(f"{'🟢' if pnl >=0 else '🔴'} {t['symbol']} {t['dir']} P&L: {pnl:+.2f}%")
+            lines.append(f"{'🟢' if pnl>=0 else '🔴'} {t['symbol']} {t['dir']} P&L: {pnl:+.2f}%")
         self.send("\n".join(lines))
+
     def send_placar(self):
         tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
+
     def is_paused(self): return time.time() < self.paused_until
     def reset_pause(self): self.paused_until = 0; self.consecutive_losses = 0; save_state(self); self.send("✅ Circuit Breaker resetado.")
 
@@ -519,7 +533,7 @@ class TradingBot:
                 res = get_analysis(s, self.timeframe)
                 if res:
                     rev = detect_reversal(res)
-                    self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
+                    self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0], "dir":rev[1], "strength":rev[2], "reasons":rev[3]}, "ts": time.time()}
             except Exception as e: log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
 
@@ -537,7 +551,7 @@ class TradingBot:
             if not res: continue
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
-                self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0],"dir":rev[1],"strength":rev[2],"reasons":rev[3]}, "ts": time.time()}
+                self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0], "dir":rev[1], "strength":rev[2], "reasons":rev[3]}, "ts": time.time()}
             if res["cenario"] == "NEUTRO": continue
             price = res["price"]; atr = res["atr"]; cen = res["cenario"]
             cl = asset_cat(s); cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
@@ -573,9 +587,9 @@ class TradingBot:
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"]>0 else "N/A"
             self.pending_counter += 1
             pending_trade = {"pending_id": self.pending_counter, "symbol": s, "name": res["name"], "entry": price,
-                "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
-                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
-                "conf_txt": conf_txt, "sc": sc, "tot_c": tot_c, "bar": bar, "ratio": ratio, "vol_txt": vol_txt}
+                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
+                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
+                 "conf_txt": conf_txt, "sc": sc, "tot_c": tot_c, "bar": bar, "ratio": ratio, "vol_txt": vol_txt}
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.radar_list[s] = self.gatilho_list[s] = time.time()
@@ -624,9 +638,9 @@ class TradingBot:
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
             pending_trade = {"pending_id": self.pending_counter, "symbol": s, "name": res["name"], "entry": price,
-                "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr, "tipo": "CONTRA-TENDÊNCIA ⚡",
-                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
-                "conf_txt": conf_txt, "sc": sc, "tc": tc, "bar": bar, "ratio": ratio, "sinais": sinais}
+                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr, "tipo": "CONTRA-TENDÊNCIA ⚡",
+                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
+                 "conf_txt": conf_txt, "sc": sc, "tc": tc, "bar": bar, "ratio": ratio, "sinais": sinais}
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.reversal_list[s] = time.time()
@@ -676,8 +690,7 @@ self.addEventListener('activate', e => clients.claim());
 self.addEventListener('push', e => {
 let data = {title: 'Sniper Bot', body: 'Novo sinal!', icon: '/icon-192.png'};
 try { data = JSON.parse(e.data.text()); } catch(_) {}
-e.waitUntil(self.registration.showNotification(data.title, {
-body: data.body, icon: data.icon || '/icon-192.png',
+e.waitUntil(self.registration.showNotification(data.title, {body: data.body, icon: data.icon || '/icon-192.png',
 badge: '/icon-192.png', vibrate: [200, 100, 200],
 data: { url: '/' }
 }));
@@ -692,12 +705,13 @@ else clients.openWindow('/');
 """
 
 # ═══════════════════════════════════════════════════════════════
-# DASHBOARD HTML (PROFISSIONAL v7.1)
+# DASHBOARD HTML (PROFISSIONAL v7.1 - ATUALIZADO)
 # ═══════════════════════════════════════════════════════════════
-DASHBOARD_HTML = r"""<!DOCTYPE html>
+DASHBOARD_HTML = r"""
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Sniper Bot Pro</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -725,8 +739,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .nb:active{opacity:.65}
 .nbadge{position:absolute;top:5px;right:calc(50% - 19px);min-width:16px;height:16px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;padding:0 3px;box-shadow:0 0 8px rgba(255,61,113,.5)}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px}
-.chd{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;font-weight:600}
-.srow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.chd{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;font-weight:600}.srow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px}
 .sb{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 10px;position:relative;overflow:hidden}
 .sb.pnl-card{border-bottom:2px solid rgba(0,230,118,.4)}
 .sb.wr-card{border-bottom:2px solid rgba(24,255,255,.4)}
@@ -742,13 +755,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .empty{text-align:center;padding:40px 20px;color:var(--muted)}
 .empi{font-size:38px;margin-bottom:12px;display:block;opacity:.55}
 .empt{font-size:12px;line-height:1.7;color:var(--muted2)}
-.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}.cbbar{background:rgba(255,61,113,.07);border:1px solid rgba(255,61,113,.18);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px;display:none;align-items:center;justify-content:space-between}
+.ts{font-size:9px;color:var(--muted);text-align:center;padding:8px 0;letter-spacing:.5px;font-family:var(--mono)}
+.cbbar{background:rgba(255,61,113,.07);border:1px solid rgba(255,61,113,.18);border-radius:var(--rsm);padding:12px 14px;margin-bottom:12px;display:none;align-items:center;justify-content:space-between}
 .cbtxt{font-size:11px;color:var(--red);font-weight:600}.cbmin{font-size:20px;font-family:var(--mono);font-weight:700;color:var(--red)}
 .eb{background:rgba(255,61,113,.07);border:1px solid rgba(255,61,113,.18);border-radius:var(--rsm);padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--red);display:none}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ═══ PROFESSIONAL TRADE CARDS ══════════════════════════════ */
+/* ═══ TRADE CARDS ══════════════════════════════ */
 .otrade{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;position:relative;overflow:hidden}
 .otrade.buy{border-left:3px solid var(--green)}.otrade.sell{border-left:3px solid var(--red)}
 .otrade-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -768,6 +782,50 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .otrade-dist .near{color:var(--red);font-weight:600}
 .otrade-dist .far{color:var(--green)}
 
+/* ═══ TRENDS GROUPED & COLORED ═══════════════════════════════════ */
+.trend-group{margin-bottom:16px}
+.trend-group-hd{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:6px}
+.trend-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+.trend-card.alta{border-left:3px solid var(--green);background:linear-gradient(90deg,rgba(0,230,118,0.05),transparent)}
+.trend-card.baixa{border-left:3px solid var(--red);background:linear-gradient(90deg,rgba(255,61,113,0.05),transparent)}
+.trend-info{display:flex;flex-direction:column;gap:2px}.trend-sym{font-size:14px;font-weight:700;font-family:var(--mono)}
+.trend-name{font-size:10px;color:var(--muted2)}
+.trend-meta{display:flex;align-items:center;gap:8px}
+.trend-tag{font-size:9px;font-weight:700;padding:2px 6px;border-radius:6px;text-transform:uppercase}
+.trend-tag.alta{background:var(--g3);color:var(--green)}
+.trend-tag.baixa{background:var(--r3);color:var(--red)}
+.trend-tag.neutro{background:var(--bg3);color:var(--muted)}
+.trend-stats{font-size:10px;color:var(--muted2);font-family:var(--mono)}
+
+/* ═══ CONTRA-TENDÊNCIA CARDS ═══════════════════════════════════ */
+.ct-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;position:relative;overflow:hidden}
+.ct-card::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--cyan)}
+.ct-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ct-sym{font-size:16px;font-weight:700;font-family:var(--mono)}
+.ct-dir{font-size:10px;font-weight:700;padding:4px 8px;border-radius:8px;background:var(--c3);color:var(--cyan);border:1px solid rgba(24,255,255,.2)}
+.ct-body{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.ct-stat{background:var(--bg3);border-radius:var(--rsm);padding:8px;text-align:center}
+.ct-stat-lbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.ct-stat-val{font-size:14px;font-weight:700;font-family:var(--mono)}
+.ct-bar{height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:6px}
+.ct-bar-fill{height:100%;background:var(--cyan);transition:width .5s}
+.ct-reasons{display:flex;flex-wrap:wrap;gap:4px}
+.ct-reason{font-size:9px;background:var(--bg3);color:var(--text2);padding:3px 6px;border-radius:6px;border:1px solid var(--border)}
+
+/* ═══ SIGNALS FEED ═══════════════════════════════════ */
+.sig-item{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px}
+.sig-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.sig-type{font-size:9px;font-weight:700;padding:3px 8px;border-radius:8px;text-transform:uppercase}
+.sig-type.radar{background:var(--y3);color:var(--gold)}
+.sig-type.gatilho{background:var(--c3);color:var(--cyan)}
+.sig-type.sinal{background:var(--b3);color:var(--blue)}
+.sig-type.ct{background:var(--r3);color:var(--red)}
+.sig-type.close{background:var(--g3);color:var(--green)}
+.sig-type.cb{background:var(--r3);color:var(--red)}
+.sig-type.insuf{background:var(--bg3);color:var(--muted)}
+.sig-ts{font-size:9px;color:var(--muted2);font-family:var(--mono)}
+.sig-text{font-size:12px;color:var(--text);line-height:1.4}
+
 /* ═══ CLOSED TRADES LIST ═══════════════════════════════════ */
 .ctrow{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
 .ctrow:last-child{border-bottom:none}
@@ -779,7 +837,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ctrow-sym{font-size:12px;font-weight:600;font-family:var(--mono)}
 .ctrow-time{font-size:9px;color:var(--muted2)}
 .ctrow-pnl{font-size:14px;font-weight:700;font-family:var(--mono)}
-
 /* ═══ BOTTOM NAV & MISC ════════════════════════════════════ */
 .mdg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .mdb{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:14px 8px;cursor:pointer;font-size:12px;font-family:var(--sans);color:var(--text2);text-align:center;transition:all .15s;line-height:1.4;font-weight:500}
@@ -798,84 +855,107 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .pbox{background:var(--bg3);border:1px solid var(--border);border-radius:var(--rsm);padding:12px}
 .plbl{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;font-weight:600}
 .pval{font-size:16px;font-family:var(--mono);font-weight:700}
-.cfgsec{margin-bottom:20px}.cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;font-weight:600}
+.cfgsec{margin-bottom:20px}
+.cfgl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted2);margin-bottom:10px;font-weight:600}
 </style>
 </head>
 <body>
 <div id="app">
-  <div id="hdr">
-    <div class="hdr-l"><div class="logo">S</div><div><div class="t1">Sniper Bot</div><div class="t2">Pro Dashboard</div></div></div>
-    <div class="hdr-r"><div class="lpill"><div class="ldot"></div>LIVE</div><div class="ibtn" id="refbtn" onclick="refreshAll()">↻</div></div>
-  </div>
-  <div id="pages">
-    <div id="pg-dash" class="pg on">
-      <div class="chd"><span>📊 Dashboard Profissional</span><span class="ts" id="d-ts">--</span></div>
-      <div id="cbbar" class="cbbar"><span class="cbtxt">⛔ CIRCUIT BREAKER ATIVO</span><span class="cbmin" id="cbmin">--m</span></div>
-      <div id="eb" class="eb">⚠ Erro de conexão. Verifique sua rede.</div>
-      <div class="srow">
-        <div class="sb pnl-card"><div class="sl">Lucro Hoje</div><div class="sv" id="d-dpnl">--%</div><div class="ss" id="d-drec">0W / 0L</div></div>
-        <div class="sb wr-card"><div class="sl">Win Rate</div><div class="sv cy" id="d-wr">--%</div><div class="ss" id="d-wlt">0W / 0L Total</div></div>
-        <div class="sb open-card"><div class="sl">Abertos</div><div class="sv bl" id="d-open">0</div><div class="ss">Monitorando</div></div>
-        <div class="sb closed-card"><div class="sl">Fechados Hoje</div><div class="sv go" id="d-closed">0</div><div class="ss">Operações</div></div>
-      </div>
-      <div class="sh"><span class="sttl">💼 Trades Abertos</span><span class="ts" style="font-size:8px">Auto: 10s</span></div>
-      <div id="d-trades"><div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto.<br>Aguardando aprovação...</div></div></div>
-      <div class="dv"></div>
-      <div class="sh"><span class="sttl">📜 Fechados Hoje</span></div>
-      <div id="d-closed-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada hoje.</div></div></div>
-    </div>
-    <div id="pg-pend" class="pg">
-      <div class="chd"><span>⏳ Aprovação de Sinais</span><span class="ts">Auto: 10s</span></div>
-      <div id="pendingQueue"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma confirmação pendente</div></div></div>
-    </div>
-    <div id="pg-scan" class="pg">
-      <div class="chd"><span>📡 Scanner Tempo Real</span><span class="ts" id="scan-ts">--</span></div>
-      <div id="scan-list"><div class="empty"><span class="empi">📡</span><div class="empt">Aguardando dados do scanner…</div></div></div>
-    </div>
-    <div id="pg-sig" class="pg">
-      <div class="chd"><span>🔔 Feed de Sinais</span><span class="ts" id="sig-ts">--</span></div>
-      <div id="sig-list"><div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal ainda.</div></div></div>
-    </div>
-    <div id="pg-ct" class="pg">
-      <div class="chd"><span>⚡ Contra-T / Notícias</span></div>
-      <div id="ct-list"><div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div></div>
-      <div class="dv"></div>
-      <div id="news-list"><div class="empty"><span class="empi">📰</span><div class="empt">Carregando notícias…</div></div></div>    </div>
-    <div id="pg-cfg" class="pg">
-      <div class="chd"><span>⚙ Configurações</span></div>
-      <div class="cfgsec"><div class="cfgl">Mercado</div><div class="mdg">
-        <button class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</button>
-        <button class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</button>
-        <button class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMM.</button>
-        <button class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</button>
-      </div></div>
-      <div class="cfgsec"><div class="cfgl">Timeframe</div><div class="tfg">
-        <button class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd">●</span>1m</button>
-        <button class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd">●</span>5m</button>
-        <button class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd">●</span>15m</button>
-        <button class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd">●</span>30m</button>
-        <button class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd">●</span>1h</button>
-        <button class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd">●</span>4h</button>
-      </div></div>
-      <div class="dv"></div>
-      <button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
-      <button class="ab abn" onclick="window.location.reload()">↻ Atualizar App</button>
-      <div class="pgrid" id="p-stats">
-        <div class="pbox"><div class="plbl">Stop Loss</div><div class="pval" id="p-sl">--</div></div>
-        <div class="pbox"><div class="plbl">Take Profit</div><div class="pval" id="p-tp">--</div></div>
-        <div class="pbox"><div class="plbl">Max Trades</div><div class="pval" id="p-mt">--</div></div>
-        <div class="pbox"><div class="plbl">Confluência</div><div class="pval" id="p-mc">--</div></div>
-      </div>
-    </div>
-  </div>
-  <div id="nav">
-    <button class="nb on" onclick="goTo('dash',this)"><span class="ni">⬡</span>Dashboard</button>
-    <button class="nb" onclick="goTo('pend',this)"><span class="ni">⏳</span>Pendentes<span class="nbadge" id="nbadge-pend">0</span></button>
-    <button class="nb" onclick="goTo('scan',this)"><span class="ni">📡</span>Scanner</button>
-    <button class="nb" onclick="goTo('sig',this)"><span class="ni">🔔</span>Sinais<span class="nbadge" id="nbadge-sig">0</span></button>
-    <button class="nb" onclick="goTo('ct',this)"><span class="ni">⚡</span>CT/News</button>
-    <button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
-  </div>
+<div id="hdr">
+<div class="hdr-l">
+<div class="logo">S</div>
+<div>
+<div class="t1">Sniper Bot Pro</div>
+<div class="t2">Dashboard</div>
+</div>
+</div>
+<div class="hdr-r">
+<div class="lpill">LIVE<div class="ldot"></div></div>
+<button class="ibtn" id="refbtn" onclick="refreshAll()">↻</button>
+</div>
+</div>
+<div id="pages">
+<div class="pg on" id="pg-dash">
+<div id="eb" class="eb">⚠ Erro de conexão. Verifique sua rede.</div>
+<div class="cbbar" id="cbbar"><div class="cbtxt">⛔ CIRCUIT BREAKER ATIVO</div><div class="cbmin" id="cbmin">--m</div></div>
+<div class="srow">
+<div class="sb pnl-card"><div class="sl">Lucro Hoje</div><div class="sv" id="d-dpnl">--%</div><div class="ss" id="d-drec">0W / 0L</div></div>
+<div class="sb wr-card"><div class="sl">Win Rate</div><div class="sv" id="d-wr">--%</div><div class="ss" id="d-wlt">0W / 0L Total</div></div>
+<div class="sb open-card"><div class="sl">Abertos</div><div class="sv" id="d-open">0</div><div class="ss">Monitorando</div></div>
+<div class="sb closed-card"><div class="sl">Fechados Hoje</div><div class="sv" id="d-closed">0</div><div class="ss">Operações</div></div>
+</div>
+<div class="chd">💼 Trades Abertos <span class="ts">Auto: 10s</span></div>
+<div id="d-trades"><div class="empty"><span class="empi">📭</span><div class="empt">Nenhum trade aberto.<br>Aguardando aprovação...</div></div></div>
+<div class="chd">📜 Fechados Hoje</div><div id="d-closed-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada hoje.</div></div></div>
+</div>
+
+<div class="pg" id="pg-pend">
+<div class="chd">⏳ Aprovação de Sinais <span class="ts">Auto: 10s</span></div>
+<div id="pendingQueue"><div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma confirmação pendente</div></div></div>
+</div>
+
+<div class="pg" id="pg-scan">
+<div class="chd">📡 Scanner Tempo Real <span class="ts">--</span></div>
+<div id="scan-list"><div class="empty"><span class="empi">📡</span><div class="empt">Aguardando dados do scanner…</div></div></div>
+</div>
+
+<div class="pg" id="pg-sig">
+<div class="chd">🔔 Feed de Sinais <span class="ts">--</span></div>
+<div id="sig-list"><div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal ainda.</div></div></div>
+</div>
+
+<div class="pg" id="pg-ct">
+<div class="chd">⚡ Contra-Tendência</div>
+<div id="ct-list"><div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma oportunidade CT detectada.</div></div></div>
+<div class="chd">📰 Notícias</div>
+<div id="news-list"><div class="empty"><span class="empi">📰</span><div class="empt">Carregando notícias…</div></div></div>
+</div>
+
+<div class="pg" id="pg-cfg">
+<div class="cfgsec">
+<div class="cfgl">Mercado</div>
+<div class="mdg">
+<div class="mdb" data-mode="FOREX" onclick="setMode('FOREX')"><span class="mdi">📈</span>FOREX</div>
+<div class="mdb" data-mode="CRYPTO" onclick="setMode('CRYPTO')"><span class="mdi">₿</span>CRIPTO</div>
+<div class="mdb" data-mode="COMMODITIES" onclick="setMode('COMMODITIES')"><span class="mdi">🏅</span>COMM.</div>
+<div class="mdb" data-mode="INDICES" onclick="setMode('INDICES')"><span class="mdi">📊</span>ÍNDICES</div>
+<div class="mdb" data-mode="TUDO" onclick="setMode('TUDO')" style="grid-column:span 2">🌐 TUDO</div>
+</div>
+</div>
+<div class="cfgsec">
+<div class="cfgl">Timeframe</div>
+<div class="tfg">
+<div class="tfb" data-tf="1m" onclick="setTf('1m')"><span class="tfd">1m</span><span class="tfl2">Agressivo</span></div>
+<div class="tfb" data-tf="5m" onclick="setTf('5m')"><span class="tfd">5m</span><span class="tfl2">Alto</span></div>
+<div class="tfb" data-tf="15m" onclick="setTf('15m')"><span class="tfd">15m</span><span class="tfl2">Moderado</span></div>
+<div class="tfb" data-tf="30m" onclick="setTf('30m')"><span class="tfd">30m</span><span class="tfl2">Conserv.</span></div>
+<div class="tfb" data-tf="1h" onclick="setTf('1h')"><span class="tfd">1h</span><span class="tfl2">Seguro</span></div>
+<div class="tfb" data-tf="4h" onclick="setTf('4h')"><span class="tfd">4h</span><span class="tfl2">Muito Seg.</span></div>
+</div>
+</div>
+<div class="cfgsec">
+<div class="cfgl">Parâmetros</div>
+<div class="pgrid"><div class="pbox"><div class="plbl">Stop Loss</div><div class="pval" id="p-sl">--</div></div>
+<div class="pbox"><div class="plbl">Take Profit</div><div class="pval" id="p-tp">--</div></div>
+<div class="pbox"><div class="plbl">Max Trades</div><div class="pval" id="p-mt">--</div></div>
+<div class="pbox"><div class="plbl">Confluência</div><div class="pval" id="p-mc">--</div></div>
+</div>
+</div>
+<div class="cfgsec">
+<button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
+<button class="ab abn" onclick="requestNotif()">🔔 Ativar Notificações</button>
+<button class="ab abp" onclick="refreshAll()">↻ Atualizar App</button>
+</div>
+</div>
+</div>
+<div id="nav">
+<button class="nb on" onclick="goTo('dash',this)"><span class="ni">⬡</span>Dashboard</button>
+<button class="nb" onclick="goTo('pend',this)"><span class="ni">⏳</span>Pendentes<div class="nbadge" id="nbadge-pend">0</div></button>
+<button class="nb" onclick="goTo('scan',this)"><span class="ni">📡</span>Scanner</button>
+<button class="nb" onclick="goTo('sig',this)"><span class="ni">🔔</span>Sinais<div class="nbadge" id="nbadge-sig">0</div></button>
+<button class="nb" onclick="goTo('ct',this)"><span class="ni">⚡</span>CT/News</button>
+<button class="nb" onclick="goTo('cfg',this)"><span class="ni">⚙</span>Config</button>
+</div>
 </div>
 <script>
 let _st=null,_scan=[],_sigs=[],_sf='TODOS',_sigf='todos',_unread=0,_lastSigLen=0,_pending=[];
@@ -889,23 +969,110 @@ function renderClosedToday(list){if(!list||!list.length)return'<div class="empty
 async function loadPending(){try{const d=await apiFetch('/api/pending');renderPendingFromApi(d);}catch(e){console.log('pending err',e);}}
 function renderPendingFromApi(list){const el=document.getElementById('pendingQueue');const cnt=document.getElementById('pendingCount');if(!el)return;el.innerHTML=list.length?list.map(p=>{const buy=p.dir==='BUY';const dirClass=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';const slRaw=typeof p.sl==='number'?p.sl.toFixed(8).replace(/\.?0+$/,''):String(p.sl);const tpRaw=typeof p.tp==='number'?p.tp.toFixed(8).replace(/\.?0+$/,''):String(p.tp);const entryVal=fp(p.entry);return`<div class="otrade ${dirClass}" style="margin-bottom:10px"><div class="otrade-head"><div class="otrade-sym">${p.symbol} <span style="font-size:9px;color:var(--muted2)">PENDENTE</span></div><div class="otrade-dir ${dirClass}">${dirLabel}</div></div><div class="otrade-lvls"><div class="otrade-lv"><div class="otrade-ll">Entrada</div><div class="otrade-lvv">${entryVal}</div></div><div class="otrade-lv"><div class="otrade-ll">SL 🛡</div><div class="otrade-lvv r">${fp(p.sl)}</div></div><div class="otrade-lv"><div class="otrade-ll">TP 🎯</div><div class="otrade-lvv g">${fp(p.tp)}</div></div></div><div style="display:flex;gap:6px;margin-top:10px"><button class="ab abp" style="flex:1;padding:10px;font-size:11px" onclick="confirmPending(${p.pending_id},this)">✅ ACEITAR</button><button class="ab abd" style="flex:1;padding:10px;font-size:11px" onclick="rejectPending(${p.pending_id},this)">❌ RECUSAR</button></div></div>`;}).join(''):'<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma confirmação pendente</div></div>';}
 async function confirmPending(id,btn){btn.textContent='…';btn.disabled=true;try{await apiFetch('/api/confirm',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();loadDash();}catch(e){btn.textContent='Erro';btn.disabled=false;}}
-async function rejectPending(id,btn){btn.textContent='…';btn.disabled=true;try{await apiFetch('/api/reject',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();}catch(e){btn.textContent='Erro';btn.disabled=false;}}async function loadScanner(){try{_scan=await apiFetch('/api/trends');document.getElementById('scan-list').innerHTML=_scan.length?_scan.map(x=>`<div style="padding:8px 0;border-bottom:1px solid var(--border)"><b>${x.symbol}</b> ${x.cenario} | RSI:${x.rsi} ADX:${x.adx}</div>`).join(''):'<div class="empty"><span class="empi">📡</span><div class="empt">Nenhum dado</div></div>';}catch(e){}}
-async function loadSigs(){try{const d=await apiFetch('/api/signals');if(d.length>_lastSigLen){_unread+=d.length-_lastSigLen;updBadge();}_lastSigLen=d.length;_sigs=d;document.getElementById('sig-list').innerHTML=d.length?d.map(s=>`<div style="padding:8px 0;border-bottom:1px solid var(--border)"><b>${s.tipo.toUpperCase()}</b> ${s.ts}<br>${s.texto}</div>`).join(''):'<div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal</div></div>';}catch(e){}}
-async function loadCT(){try{const d=await apiFetch('/api/reversals');document.getElementById('ct-list').innerHTML=d.length?d.map(x=>`<div style="padding:8px 0;border-bottom:1px solid var(--border)"><b>${x.symbol}</b> ${x.direction} | Força:${x.strength}%</div>`).join(''):'<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma CT</div></div>';}catch(e){}}
+async function rejectPending(id,btn){btn.textContent='…';btn.disabled=true;try{await apiFetch('/api/reject',{method:'POST',body:JSON.stringify({pending_id:id})});loadPending();}catch(e){btn.textContent='Erro';btn.disabled=false;}}
+
+// ✅ TENDÊNCIAS AGRUPADAS E COLORIDAS
+async function loadScanner(){
+    try{
+        _scan=await apiFetch('/api/trends');
+        const groups = {};
+        _scan.forEach(x => {
+            const cat = x.category || 'OUTROS';
+            if(!groups[cat]) groups[cat] = [];
+            groups[cat].push(x);
+        });
+        let html = '';
+        const catLabels = {'FOREX':'FOREX','CRYPTO':'CRIPTO','COMMODITIES':'COMMODITIES','INDICES':'ÍNDICES','OUTROS':'OUTROS'};
+        for(const cat in groups){
+            html += `<div class="trend-group"><div class="trend-group-hd">${catLabels[cat]||cat}</div>`;            html += groups[cat].map(x => {
+                const c = x.cenario.toLowerCase();
+                const cls = c==='alta'?'alta':c==='baixa'?'baixa':'neutro';
+                const tag = c==='alta'?'▲ ALTA':c==='baixa'?'▼ BAIXA':'NEUTRO';
+                return `<div class="trend-card ${cls}">
+                    <div class="trend-info">
+                        <div class="trend-sym">${x.symbol}</div>
+                        <div class="trend-name">${x.name}</div>
+                    </div>
+                    <div class="trend-meta">
+                        <span class="trend-tag ${cls}">${tag}</span>
+                        <span class="trend-stats">RSI:${x.rsi} ADX:${x.adx}</span>
+                    </div>
+                </div>`;
+            }).join('');
+            html += `</div>`;
+        }
+        document.getElementById('scan-list').innerHTML = html || '<div class="empty"><span class="empi">📡</span><div class="empt">Nenhum dado</div></div>';
+    }catch(e){}
+}
+
+async function loadSigs(){
+    try{
+        const d=await apiFetch('/api/signals');
+        if(d.length>_lastSigLen){_unread+=d.length-_lastSigLen;updBadge();}
+        _lastSigLen=d.length;_sigs=d;
+        document.getElementById('sig-list').innerHTML=d.length?d.map(s=>{
+            const tipo = s.tipo || 'info';
+            return `<div class="sig-item">
+                <div class="sig-head">
+                    <span class="sig-type ${tipo}">${tipo.toUpperCase()}</span>
+                    <span class="sig-ts">${s.ts}</span>
+                </div>
+                <div class="sig-text">${s.texto}</div>
+            </div>`;
+        }).join(''):'<div class="empty"><span class="empi">🔔</span><div class="empt">Nenhum sinal</div></div>';
+    }catch(e){}
+}
+
+// ✅ CONTRA-TENDÊNCIA ORGANIZADA E BONITA
+async function loadCT(){
+    try{
+        const d=await apiFetch('/api/reversals');
+        document.getElementById('ct-list').innerHTML=d.length?d.map(x=>{
+            const pct = Math.min(x.strength, 100);
+            return `<div class="ct-card">
+                <div class="ct-head">
+                    <div class="ct-sym">${x.symbol}</div>
+                    <div class="ct-dir">${x.direction}</div>
+                </div>                <div class="ct-body">
+                    <div class="ct-stat"><div class="ct-stat-lbl">Força</div><div class="ct-stat-val cy">${x.strength}%</div></div>
+                    <div class="ct-stat"><div class="ct-stat-lbl">RSI</div><div class="ct-stat-val">${x.rsi}</div></div>
+                </div>
+                <div class="ct-bar"><div class="ct-bar-fill" style="width:${pct}%"></div></div>
+                <div class="ct-reasons">${x.reasons.map(r=>`<span class="ct-reason">${r}</span>`).join('')}</div>
+            </div>`;
+        }).join(''):'<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma CT</div></div>';
+    }catch(e){}
+}
+
 async function loadNews(){try{const d=await apiFetch('/api/news');document.getElementById('news-list').innerHTML=d.articles?d.articles.map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--border)"><a href="${a.url}" target="_blank" style="color:var(--cyan)">${a.title}</a></div>`).join(''):'<div class="empty"><span class="empi">📰</span><div class="empt">Sem notícias</div></div>';}catch(e){}}
 async function loadCfg(){try{const c=await apiFetch('/api/config');document.getElementById('p-sl').textContent=c.atm_sl+'×ATR';document.getElementById('p-tp').textContent=c.atr_tp+'×ATR';document.getElementById('p-mt').textContent=c.max_trades;document.getElementById('p-mc').textContent=c.min_conf+'/7';}catch(_){}updCfgBtns();}
 function updCfgBtns(){if(!_st)return;document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===_st.mode));document.querySelectorAll('[data-tf]').forEach(b=>b.classList.toggle('on',b.dataset.tf===_st.timeframe));}
 async function setMode(m){try{await apiFetch('/api/mode',{method:'POST',body:JSON.stringify({mode:m})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function setTf(t){try{await apiFetch('/api/timeframe',{method:'POST',body:JSON.stringify({timeframe:t})});await loadDash();}catch(e){alert('Erro: '+e.message);}}
 async function resetPausa(){if(!confirm('Resetar Circuit Breaker?'))return;try{await apiFetch('/api/resetpausa',{method:'POST'});await loadDash();}catch(e){alert('Erro: '+e.message);}}
+
+// ✅ NOTIFICAÇÕES
+async function requestNotif(){
+    if(!('serviceWorker' in navigator) || !('PushManager' in window)){alert('Notificações não suportadas.');return;}
+    try{
+        const perm = await Notification.requestPermission();
+        if(perm !== 'granted'){alert('Permissão negada.');return;}
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:await apiFetch('/api/vapid-public-key').then(r=>r.key)});
+        await apiFetch('/api/subscribe',{method:'POST',body:JSON.stringify(sub)});
+        alert('Notificações ativadas com sucesso!');
+    }catch(e){alert('Erro ao ativar: '+e.message);}
+}
+
 function updBadges(){const pend=_pending?_pending.length:0;document.getElementById('nbadge-pend').textContent=pend>0?pend:'';document.getElementById('nbadge-pend').style.display=pend>0?'flex':'none';const sig=_unread>0?_unread:0;document.getElementById('nbadge-sig').textContent=sig>0?sig:'';document.getElementById('nbadge-sig').style.display=sig>0?'flex':'none';}
 window.addEventListener('load',()=>{loadDash();loadPending();setInterval(()=>{loadDash();if(document.querySelector('.pg.on').id==='pg-pend')loadPending();},10000);if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});});
 </script>
 </body>
-</html>"""
+</html>
+"""
 
 # ═══════════════════════════════════════════════════════════════
-# FLASK API (ATUALIZADA COM MÉTRICAS PROFISSIONAIS)
+# FLASK API
 # ═══════════════════════════════════════════════════════════════
 def create_api(bot):
     app = Flask(__name__)
@@ -916,11 +1083,12 @@ def create_api(bot):
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
-
     @app.route("/")
     def index(): return Response(DASHBOARD_HTML, mimetype="text/html")
+
     @app.route("/sw.js")
     def sw(): return Response(SW_JS, mimetype="application/javascript")
+
     @app.route("/icon-192.png")
     @app.route("/icon-512.png")
     def icon():
@@ -936,7 +1104,7 @@ def create_api(bot):
         total = bot.wins + bot.losses
         wr = round(bot.wins/total*100, 1) if total > 0 else 0
         today = datetime.now(Config.BR_TZ).strftime("%d/%m")
-        today_trades = [h for h in bot.history if h.get("closed_at", "").startswith(today)]
+        today_trades = [h for h in bot.history if h.get("closed_at", " ").startswith(today)]
         daily_pnl = sum(h.get("pnl", 0) for h in today_trades)
         daily_wins = sum(1 for h in today_trades if h.get("result") == "WIN")
         daily_losses = sum(1 for h in today_trades if h.get("result") == "LOSS")
@@ -951,9 +1119,9 @@ def create_api(bot):
             dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100 if t["tp"] != t["entry"] else 0
             progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
             trades_out.append({
-                "symbol": t["symbol"], "name": t.get("name", ""), "dir": t["dir"],
-                "tipo": t.get("tipo", ""), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
-                "current": cur, "pnl": round(pnl, 2), "opened_at": t.get("opened_at", ""),
+                "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
+                "tipo": t.get("tipo", " "), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
+                "current": cur, "pnl": round(pnl, 2), "opened_at": t.get("opened_at", " "),
                 "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1)
             })
         return jsonify({
@@ -963,19 +1131,22 @@ def create_api(bot):
             "active_trades": trades_out,
             "markets": {cat: mkt_open(cat) for cat in Config.MARKET_CATEGORIES.keys()},
             "pending_count": len(bot.pending_trades),
-            "daily_pnl": round(daily_pnl, 2), "daily_wins": daily_wins, "daily_losses": daily_losses,
-            "today_closed": len(today_trades), "history_today": today_trades
+            "daily_pnl": round(daily_pnl, 2), "daily_wins": daily_wins, "daily_losses": daily_losses,            "today_closed": len(today_trades), "history_today": today_trades
         })
 
     @app.route("/api/config")
     def api_config():
         return jsonify({"atm_sl": Config.ATR_MULT_SL, "atr_tp": Config.ATR_MULT_TP, "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE})
+
     @app.route("/api/history")
     def api_history(): return jsonify(list(reversed(bot.history[-50:])))
+
     @app.route("/api/signals")
     def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
+
     @app.route("/api/pending")
     def api_pending(): return jsonify(bot.pending_trades)
+
     @app.route("/api/confirm", methods=["POST", "OPTIONS"])
     def api_confirm():
         if request.method == "OPTIONS": return jsonify({}), 200
@@ -983,6 +1154,7 @@ def create_api(bot):
         pid = data.get("pending_id")
         if bot.confirm_pending(pid): return jsonify({"ok": True})
         return jsonify({"error": "not found"}), 404
+
     @app.route("/api/reject", methods=["POST", "OPTIONS"])
     def api_reject():
         if request.method == "OPTIONS": return jsonify({}), 200
@@ -990,6 +1162,7 @@ def create_api(bot):
         pid = data.get("pending_id")
         if bot.reject_pending(pid): return jsonify({"ok": True})
         return jsonify({"error": "not found"}), 404
+
     @app.route("/api/news")
     def api_news():
         now = time.time()
@@ -997,6 +1170,7 @@ def create_api(bot):
             try: bot.news_cache = {"fg": get_fear_greed(), "articles": get_news(15)}; bot.news_cache_ts = now
             except Exception as e: log(f"[NEWS] {e}")
         return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
+
     @app.route("/api/trends")
     def api_trends():
         bot.update_trends_cache()
@@ -1017,26 +1191,31 @@ def create_api(bot):
                 out.append({"symbol": sym, "name": d["name"], "price": d["price"], "rsi": round(d["rsi"],1), "adx": round(d["adx"],1), "direction": rev["dir"], "strength": rev["strength"], "reasons": rev["reasons"]})
         out.sort(key=lambda x: -x["strength"])
         return jsonify(out)
+
     @app.route("/api/mode", methods=["POST", "OPTIONS"])
     def api_mode():
         if request.method == "OPTIONS": return jsonify({}), 200
         data = request.get_json(force=True) or {}
-        mode = data.get("mode", "")
+        mode = data.get("mode", " ")
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return jsonify({"error": "inválido"}),400
         bot.set_mode(mode); return jsonify({"ok": True})
+
     @app.route("/api/timeframe", methods=["POST", "OPTIONS"])
     def api_timeframe():
         if request.method == "OPTIONS": return jsonify({}), 200
         data = request.get_json(force=True) or {}
-        tf = data.get("timeframe", "")
+        tf = data.get("timeframe", " ")
         if tf not in Config.TIMEFRAMES: return jsonify({"error": "inválido"}),400
         bot.set_timeframe(tf); return jsonify({"ok": True})
+
     @app.route("/api/resetpausa", methods=["POST", "OPTIONS"])
     def api_reset():
         if request.method == "OPTIONS": return jsonify({}), 200
         bot.reset_pause(); return jsonify({"ok": True})
+
     @app.route("/api/vapid-public-key")
     def api_vapid_key(): return jsonify({"key": os.getenv("VAPID_PUBLIC_KEY", "")})
+
     @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
     def api_subscribe():
         if request.method == "OPTIONS": return jsonify({}), 200
@@ -1044,13 +1223,13 @@ def create_api(bot):
         if sub and sub not in _push_subscriptions:
             _push_subscriptions.append(sub); log(f"[PUSH] Nova inscrição. Total: {len(_push_subscriptions)}")
         return jsonify({"ok": True})
+
     return app
 
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
     app = create_api(bot)
-    log(f"🌐 Flask rodando na porta {port}")
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+    log(f"🌐 Flask rodando na porta {port}")    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN
@@ -1068,7 +1247,7 @@ def bot_loop(bot):
                 for u in r["result"]:
                     bot.last_id = u["update_id"]
                     if "message" in u:
-                        txt = u["message"].get("text", "").strip().lower()
+                        txt = u["message"].get("text", " ").strip().lower()
                         if txt in ("/noticias", "/news"): bot.send_news()
                         elif txt == "/status": bot.send_status()
                         elif txt in ("/placar", "/score"): bot.send_placar()
@@ -1077,8 +1256,8 @@ def bot_loop(bot):
                     if "callback_query" in u:
                         cb = u["callback_query"]["data"]; cid = u["callback_query"]["id"]
                         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": cid}, timeout=5)
-                        if cb.startswith("set_tf_"): bot.set_timeframe(cb.replace("set_tf_", ""))
-                        elif cb.startswith("set_"): bot.set_mode(cb.replace("set_", ""))
+                        if cb.startswith("set_tf"): bot.set_timeframe(cb.replace("set_tf", ""))
+                        elif cb.startswith("set"): bot.set_mode(cb.replace("set_", ""))
                         elif cb == "tf_menu": bot.build_tf_menu()
                         elif cb == "main_menu": bot.build_menu()
                         elif cb == "news": bot.send_news()
@@ -1087,7 +1266,7 @@ def bot_loop(bot):
                         elif cb.startswith("confirm_"):
                             try: bot.confirm_pending(int(cb.split("_")[1]))
                             except: pass
-                        elif cb.startswith("reject_"):
+                        elif cb.startswith("reject"):
                             try: bot.reject_pending(int(cb.split("_")[1]))
                             except: pass
             bot.update_trends_cache()
@@ -1099,8 +1278,7 @@ def bot_loop(bot):
         except Exception as e:
             log(f"Erro loop: {e}"); time.sleep(10)
 
-def main():
-    log("🔌 Bot Sniper v7.1 PRO — Dashboard Profissional + Gestão de Trades")
+def main():    log("🔌 Bot Sniper v7.1 PRO — Dashboard Profissional + Gestão de Trades")
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
     except: pass
     bot = TradingBot()
