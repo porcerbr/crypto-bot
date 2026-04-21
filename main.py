@@ -964,8 +964,8 @@ def create_api(bot):
         daily_wins = sum(1 for h in today_trades if h.get("result") == "WIN")
         daily_losses = sum(1 for h in today_trades if h.get("result") == "LOSS")
         trades_out = []
-        for t in bot.active_trades:            
-        try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
+        for t in bot.active_trades:           
+            try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
             except: cur = t["entry"]
             pnl = (cur - t["entry"]) / t["entry"] * 100
             if t["dir"] == "SELL": pnl = -pnl
