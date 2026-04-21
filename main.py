@@ -503,124 +503,216 @@ class TradingBot:
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
 
-def send_status(self):
-    lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
+    def send_status(self):
+        lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
 
-    if not self.active_trades:
-        lines.append("Nenhuma.")
+        if not self.active_trades:
+            lines.append("Nenhuma.")
+            self.send("\n".join(lines))
+            return
+
+        for t in self.active_trades:
+            res = get_analysis(t["symbol"], self.timeframe)
+            cur = res["price"] if res else t["entry"]
+
+            pnl = (cur - t["entry"]) / t["entry"] * 100
+
+            if t["dir"] == "SELL":
+                pnl = -pnl
+
+            lines.append(
+                f"{'🟢' if pnl>=0 else '🔴'} "
+                f"{t['symbol']} {t['dir']} "
+                f"P&L: {pnl:+.2f}%"
+            )
+
         self.send("\n".join(lines))
-        return
 
-    for t in self.active_trades:
-        res = get_analysis(t["symbol"], self.timeframe)
-        cur = res["price"] if res else t["entry"]
-
-        pnl = (cur - t["entry"]) / t["entry"] * 100
-
-        if t["dir"] == "SELL":
-            pnl = -pnl
-
-        lines.append(
-            f"{'🟢' if pnl>=0 else '🔴'} "
-            f"{t['symbol']} {t['dir']} "
-            f"P&L: {pnl:+.2f}%"
-        )
-
-    self.send("\n".join(lines))
-    
     def send_placar(self):
-        tot = self.wins+self.losses; wr = (self.wins/tot*100) if tot>0 else 0
+        tot = self.wins + self.losses
+        wr = (self.wins / tot * 100) if tot > 0 else 0
         self.send(f"🏆 W/L: {self.wins}/{self.losses} ({wr:.1f}%)")
 
-    def is_paused(self): return time.time() < self.paused_until
-    def reset_pause(self): self.paused_until = 0; self.consecutive_losses = 0; save_state(self); self.send("✅ Circuit Breaker resetado.")
+    def is_paused(self):
+        return time.time() < self.paused_until
+
+    def reset_pause(self):
+        self.paused_until = 0
+        self.consecutive_losses = 0
+        save_state(self)
+        self.send("✅ Circuit Breaker resetado.")
 
     def update_trends_cache(self):
-        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
+        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL:
+            return
         log("📡 Atualizando cache tendências...")
         for s in all_syms():
             try:
                 res = get_analysis(s, self.timeframe)
                 if res:
                     rev = detect_reversal(res)
-                    self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0], "dir":rev[1], "strength":rev[2], "reasons":rev[3]}, "ts": time.time()}
-            except Exception as e: log(f"[TRENDS] {s}: {e}")
+                    self.trend_cache[s] = {
+                        "data": res,
+                        "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
+                        "ts": time.time(),
+                    }
+            except Exception as e:
+                log(f"[TRENDS] {s}: {e}")
         self.last_trends_update = time.time()
 
     def scan(self):
-        if self.is_paused(): return
-        if len(self.active_trades) >= Config.MAX_TRADES: return
+        if self.is_paused():
+            return
+        if len(self.active_trades) >= Config.MAX_TRADES:
+            return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
         for s in universe:
             cat = asset_cat(s)
-            if not mkt_open(cat): continue
-            if any(t["symbol"] == s for t in self.active_trades): continue
-            if any(t["symbol"] == s for t in self.pending_trades): continue
-            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
+            if not mkt_open(cat):
+                continue
+            if any(t["symbol"] == s for t in self.active_trades):
+                continue
+            if any(t["symbol"] == s for t in self.pending_trades):
+                continue
+            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN:
+                continue
             res = self.trend_cache.get(s, {}).get("data") or get_analysis(s, self.timeframe)
-            if not res: continue
+            if not res:
+                continue
             if s not in self.trend_cache:
                 rev = detect_reversal(res)
-                self.trend_cache[s] = {"data": res, "reversal": {"has":rev[0], "dir":rev[1], "strength":rev[2], "reasons":rev[3]}, "ts": time.time()}
-            if res["cenario"] == "NEUTRO": continue
-            price = res["price"]; atr = res["atr"]; cen = res["cenario"]
-            cl = asset_cat(s); cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
+                self.trend_cache[s] = {
+                    "data": res,
+                    "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
+                    "ts": time.time(),
+                }
+            if res["cenario"] == "NEUTRO":
+                continue
+            price = res["price"]
+            atr = res["atr"]
+            cen = res["cenario"]
+            cl = asset_cat(s)
+            cl_lbl = Config.MARKET_CATEGORIES.get(cl, {}).get("label", cl)
             if cen == "ALTA":
-                gatilho = res["t_buy"]; dir_s = "BUY"
-                sl_est = gatilho - Config.ATR_MULT_SL * atr; tp_est = gatilho + Config.ATR_MULT_TP * atr
+                gatilho = res["t_buy"]
+                dir_s = "BUY"
+                sl_est = gatilho - Config.ATR_MULT_SL * atr
+                tp_est = gatilho + Config.ATR_MULT_TP * atr
                 preco_ok = price >= gatilho and price < res["upper"] and res["rsi"] < 70
             else:
-                gatilho = res["t_sell"]; dir_s = "SELL"                
-                sl_est = gatilho + Config.ATR_MULT_SL * atr; tp_est = gatilho - Config.ATR_MULT_TP * atr
+                gatilho = res["t_sell"]
+                dir_s = "SELL"
+                sl_est = gatilho + Config.ATR_MULT_SL * atr
+                tp_est = gatilho - Config.ATR_MULT_TP * atr
                 preco_ok = price <= gatilho and price > res["lower"] and res["rsi"] > 30
-            sl_p = abs(gatilho-sl_est)/gatilho*100; tp_p = abs(tp_est-gatilho)/gatilho*100
-            ratio = f"1:{Config.ATR_MULT_TP/Config.ATR_MULT_SL:.1f}"
+            sl_p = abs(gatilho - sl_est) / gatilho * 100
+            tp_p = abs(tp_est - gatilho) / gatilho * 100
+            ratio = f"1:{Config.ATR_MULT_TP / Config.ATR_MULT_SL:.1f}"
             if not preco_ok:
                 if time.time() - self.radar_list.get(s, 0) > Config.RADAR_COOLDOWN:
-                    dist = abs(price-gatilho)/price*100; dl = "COMPRA" if dir_s=="BUY" else "VENDA"
-                    self.send(f"⚠️ <b>RADAR – {s}</b> ({res['name']})\n{cl_lbl} | TF: <code>{self.timeframe}</code>\n\nTendência de <b>{cen}</b> detectada\nAguardando gatilho de <b>{dl}</b>\n\n🎯 Gatilho: <code>{fmt(gatilho)}</code>\n📍 Atual: <code>{fmt(price)}</code> ({dist:.2f}%)\n🛡 SL est.: <code>{fmt(sl_est)}</code> ({-sl_p:.2f}%)\n🎯 TP est.: <code>{fmt(tp_est)}</code> ({tp_p:+.2f}%)\n⚖️ Ratio: <b>{ratio}</b>\nRSI: <code>{res['rsi']:.1f}</code> | ADX: <code>{res['adx']:.1f}</code>")
+                    dist = abs(price - gatilho) / price * 100
+                    dl = "COMPRA" if dir_s == "BUY" else "VENDA"
+                    self.send(
+                        f"⚠️ <b>RADAR – {s}</b> ({res['name']})\n"
+                        f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
+                        f"Tendência de <b>{cen}</b> detectada\n"
+                        f"Aguardando gatilho de <b>{dl}</b>\n\n"
+                        f"🎯 Gatilho: <code>{fmt(gatilho)}</code>\n"
+                        f"📍 Atual: <code>{fmt(price)}</code> ({dist:.2f}%)\n"
+                        f"🛡 SL est.: <code>{fmt(sl_est)}</code> ({-sl_p:.2f}%)\n"
+                        f"🎯 TP est.: <code>{fmt(tp_est)}</code> ({tp_p:+.2f}%)\n"
+                        f"⚖️ Ratio: <b>{ratio}</b>\n"
+                        f"RSI: <code>{res['rsi']:.1f}</code> | ADX: <code>{res['adx']:.1f}</code>"
+                    )
                     self.radar_list[s] = time.time()
                 continue
             if time.time() - self.gatilho_list.get(s, 0) > Config.GATILHO_COOLDOWN:
-                dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-                self.send(f"🔔 <b>GATILHO ATINGIDO – {s}</b> ({res['name']})\n{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n✅ Preço chegou no nível de entrada!\n\n▶️ <b>AÇÃO: {dl}</b>\n\n💰 Entrada: <code>{fmt(price)}</code>\n🛡 SL: <code>{fmt(sl_est)}</code> ({-sl_p:.2f}%)\n🎯 TP: <code>{fmt(tp_est)}</code> ({tp_p:+.2f}%)\n⚖️ Ratio: <b>{ratio}</b>\n\n⏳ <i>Verificando confluência…</i>")
+                dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
+                self.send(
+                    f"🔔 <b>GATILHO ATINGIDO – {s}</b> ({res['name']})\n"
+                    f"{cl_lbl} | TF: <code>{self.timeframe}</code>\n\n"
+                    f"✅ Preço chegou no nível de entrada!\n\n"
+                    f"▶️ <b>AÇÃO: {dl}</b>\n\n"
+                    f"💰 Entrada: <code>{fmt(price)}</code>\n"
+                    f"🛡 SL: <code>{fmt(sl_est)}</code> ({-sl_p:.2f}%)\n"
+                    f"🎯 TP: <code>{fmt(tp_est)}</code> ({tp_p:+.2f}%)\n"
+                    f"⚖️ Ratio: <b>{ratio}</b>\n\n"
+                    f"⏳ <i>Verificando confluência…</i>"
+                )
                 self.gatilho_list[s] = time.time()
-            sc, tot_c, checks = calc_confluence(res, dir_s); bar = cbar(sc, tot_c)
+            sc, tot_c, checks = calc_confluence(res, dir_s)
+            bar = cbar(sc, tot_c)
             conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
             if sc < Config.MIN_CONFLUENCE:
                 falhou = [nm for nm, ok in checks if not ok]
-                self.send(f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\nGatilho atingido mas bot NÃO entrou.\nScore: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)); continue
-            if dir_s == "BUY": sl = price - Config.ATR_MULT_SL * atr; tp = price + Config.ATR_MULT_TP * atr
-            else: sl = price + Config.ATR_MULT_SL * atr; tp = price - Config.ATR_MULT_TP * atr
-            sl_pct = abs(price-sl)/price*100; tp_pct = abs(tp-price)/price*100
-            dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
-            vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"]>0 else "N/A"
+                self.send(
+                    f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\n"
+                    f"Gatilho atingido mas bot NÃO entrou.\n"
+                    f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
+                    f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)
+                )
+                continue
+            if dir_s == "BUY":
+                sl = price - Config.ATR_MULT_SL * atr
+                tp = price + Config.ATR_MULT_TP * atr
+            else:
+                sl = price + Config.ATR_MULT_SL * atr
+                tp = price - Config.ATR_MULT_TP * atr
+            sl_pct = abs(price - sl) / price * 100
+            tp_pct = abs(tp - price) / price * 100
+            dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
+            vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"] > 0 else "N/A"
             self.pending_counter += 1
-            pending_trade = {"pending_id": self.pending_counter, "symbol": s, "name": res["name"], "entry": price,
-                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr,
-                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
-                 "conf_txt": conf_txt, "sc": sc, "tot_c": tot_c, "bar": bar, "ratio": ratio, "vol_txt": vol_txt}
+            pending_trade = {
+                "pending_id": self.pending_counter,
+                "symbol": s,
+                "name": res["name"],
+                "entry": price,
+                "tp": tp,
+                "sl": sl,
+                "dir": dir_s,
+                "peak": price,
+                "atr": atr,
+                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "session_alerted": True,
+                "conf_txt": conf_txt,
+                "sc": sc,
+                "tot_c": tot_c,
+                "bar": bar,
+                "ratio": ratio,
+                "vol_txt": vol_txt,
+            }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.radar_list[s] = self.gatilho_list[s] = time.time()
             save_state(self)
 
     def scan_reversal_forex(self):
-        if self.is_paused(): return
-        if not mkt_open("FOREX"): return
-        if len(self.active_trades) >= Config.MAX_TRADES: return
+        if self.is_paused():
+            return
+        if not mkt_open("FOREX"):
+            return
+        if len(self.active_trades) >= Config.MAX_TRADES:
+            return
         for s in Config.MARKET_CATEGORIES["FOREX"]["assets"].keys():
-            if any(t["symbol"] == s for t in self.active_trades): continue
-            if any(t["symbol"] == s for t in self.pending_trades): continue
-            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN: continue
-            if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN: continue
+            if any(t["symbol"] == s for t in self.active_trades):
+                continue
+            if any(t["symbol"] == s for t in self.pending_trades):
+                continue
+            if time.time() - self.asset_cooldown.get(s, 0) < Config.ASSET_COOLDOWN:
+                continue
+            if time.time() - self.reversal_list.get(s, 0) < Config.REVERSAL_COOLDOWN:
+                continue
             res = get_reversal_analysis(s, self.timeframe)
-            if not res: continue
-            price = res["price"]; atr = res["atr"]; cands = []
+            if not res:
+                continue
+            price = res["price"]
+            atr = res["atr"]
+            cands = []
             for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
                 sc, tc, ch = calc_reversal_conf(res, d)
                 if sc >= Config.MIN_CONFLUENCE_CT:
-                    sinais = []                    
+                    sinais = []
                     if d == "SELL":
                         if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
                         if res["near_upper"]: sinais.append("BB Superior atingida")
@@ -636,21 +728,43 @@ def send_status(self):
                         if res["wick_bull"]: sinais.append("Wick de rejeição")
                         if res["pat_bull"] and res["pat_name"]: sinais.append(res["pat_name"])
                     cands.append((sc, tc, ch, d, sinais))
-            if not cands: continue
+            if not cands:
+                continue
             cands.sort(key=lambda x: x[0], reverse=True)
-            sc, tc, ch, dir_s, sinais = cands[0]; bar = cbar(sc, tc)
+            sc, tc, ch, dir_s, sinais = cands[0]
+            bar = cbar(sc, tc)
             conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
-            sl_m = Config.ATR_MULT_SL; tp_m = Config.ATR_MULT_SL * 1.5
-            if dir_s == "BUY": sl = price - sl_m*atr; tp = price + tp_m*atr
-            else: sl = price + sl_m*atr; tp = price - tp_m*atr
-            sl_p = abs(price-sl)/price*100; tp_p = abs(tp-price)/price*100
-            ratio = f"1:{tp_m/sl_m:.1f}"; dl = "COMPRAR (BUY) 🟢" if dir_s=="BUY" else "VENDER (SELL) 🔴"
+            sl_m = Config.ATR_MULT_SL
+            tp_m = Config.ATR_MULT_SL * 1.5
+            if dir_s == "BUY":
+                sl = price - sl_m * atr
+                tp = price + tp_m * atr
+            else:
+                sl = price + sl_m * atr
+                tp = price - tp_m * atr
+            dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
-            pending_trade = {"pending_id": self.pending_counter, "symbol": s, "name": res["name"], "entry": price,
-                 "tp": tp, "sl": sl, "dir": dir_s, "peak": price, "atr": atr, "tipo": "CONTRA-TENDÊNCIA ⚡",
-                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"), "session_alerted": True,
-                 "conf_txt": conf_txt, "sc": sc, "tc": tc, "bar": bar, "ratio": ratio, "sinais": sinais}
+            pending_trade = {
+                "pending_id": self.pending_counter,
+                "symbol": s,
+                "name": res["name"],
+                "entry": price,
+                "tp": tp,
+                "sl": sl,
+                "dir": dir_s,
+                "peak": price,
+                "atr": atr,
+                "tipo": "CONTRA-TENDÊNCIA ⚡",
+                "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "session_alerted": True,
+                "conf_txt": conf_txt,
+                "sc": sc,
+                "tc": tc,
+                "bar": bar,
+                "ratio": f"1:{tp_m/sl_m:.1f}",
+                "sinais": sinais,
+            }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
             self.reversal_list[s] = time.time()
@@ -660,36 +774,72 @@ def send_status(self):
         changed = False
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
-            if not res: continue
-            cur = res["price"]; atr = res["atr"]
+            if not res:
+                continue
+            cur = res["price"]
+            atr = res["atr"]
             if not t.get("session_alerted", True):
-                dl = "BUY 🟢" if t["dir"]=="BUY" else "SELL 🔴"
-                sl_p = abs(t["entry"]-t["sl"])/t["entry"]*100; tp_p = abs(t["tp"]-t["entry"])/t["entry"]*100
-                self.send(f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\nAção: <b>{dl}</b> | Aberto: {t.get('opened_at','?')}\nEntrada: <code>{fmt(t['entry'])}</code> | Atual: <code>{fmt(cur)}</code>\n🎯 TP: <code>{fmt(t['tp'])}</code> ({tp_p:+.2f}%)\n🛡 SL: <code>{fmt(t['sl'])}</code> ({-sl_p:.2f}%)")
-                t["session_alerted"] = True; changed = True
+                dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
+                sl_p = abs(t["entry"] - t["sl"]) / t["entry"] * 100
+                tp_p = abs(t["tp"] - t["entry"]) / t["entry"] * 100
+                self.send(
+                    f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\n"
+                    f"Ação: <b>{dl}</b> | Aberto: {t.get('opened_at','?')}\n"
+                    f"Entrada: <code>{fmt(t['entry'])}</code> | Atual: <code>{fmt(cur)}</code>\n"
+                    f"🎯 TP: <code>{fmt(t['tp'])}</code> ({tp_p:+.2f}%)\n"
+                    f"🛡 SL: <code>{fmt(t['sl'])}</code> ({-sl_p:.2f}%)"
+                )
+                t["session_alerted"] = True
+                changed = True
             if t["dir"] == "BUY" and cur > t.get("peak", t["entry"]):
-                t["peak"] = cur; nsl = cur - Config.ATR_MULT_TRAIL*atr
-                if nsl > t["sl"]: t["sl"] = nsl; changed = True
-            elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):                
-                t["peak"] = cur; nsl = cur + Config.ATR_MULT_TRAIL*atr
-                if nsl < t["sl"]: t["sl"] = nsl; changed = True
-            is_win  = (t["dir"]=="BUY" and cur>=t["tp"]) or (t["dir"]=="SELL" and cur<=t["tp"])
-            is_loss = (t["dir"]=="BUY" and cur<=t["sl"]) or (t["dir"]=="SELL" and cur>=t["sl"])
+                t["peak"] = cur
+                nsl = cur - Config.ATR_MULT_TRAIL * atr
+                if nsl > t["sl"]:
+                    t["sl"] = nsl
+                    changed = True
+            elif t["dir"] == "SELL" and cur < t.get("peak", t["entry"]):
+                t["peak"] = cur
+                nsl = cur + Config.ATR_MULT_TRAIL * atr
+                if nsl < t["sl"]:
+                    t["sl"] = nsl
+                    changed = True
+            is_win = (t["dir"] == "BUY" and cur >= t["tp"]) or (t["dir"] == "SELL" and cur <= t["tp"])
+            is_loss = (t["dir"] == "BUY" and cur <= t["sl"]) or (t["dir"] == "SELL" and cur >= t["sl"])
             if is_win or is_loss:
-                pnl = (cur-t["entry"])/t["entry"]*100
-                if t["dir"] == "SELL": pnl = -pnl
+                pnl = (cur - t["entry"]) / t["entry"] * 100
+                if t["dir"] == "SELL":
+                    pnl = -pnl
                 st = "✅ TAKE PROFIT (WIN)" if is_win else "❌ STOP LOSS (LOSS)"
                 closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
-                if is_win: self.wins += 1; self.consecutive_losses = 0
-                else: self.losses += 1; self.consecutive_losses += 1; self.asset_cooldown[t["symbol"]] = time.time()
-                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl,2), "closed_at": closed_at})
-                self.send(f"🏁 <b>OPERAÇÃO ENCERRADA</b>\nAtivo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}\nResultado: <b>{st}</b>\n\n💰 Entrada: <code>{fmt(t['entry'])}</code>\n🔚 Saída: <code>{fmt(cur)}</code>\nP&L: <code>{pnl:+.2f}%</code>")
-                self.active_trades.remove(t); changed = True
+                if is_win:
+                    self.wins += 1
+                    self.consecutive_losses = 0
+                else:
+                    self.losses += 1
+                    self.consecutive_losses += 1
+                    self.asset_cooldown[t["symbol"]] = time.time()
+                self.history.append({"symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS", "pnl": round(pnl, 2), "closed_at": closed_at})
+                self.send(
+                    f"🏁 <b>OPERAÇÃO ENCERRADA</b>\n"
+                    f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}\n"
+                    f"Resultado: <b>{st}</b>\n\n"
+                    f"💰 Entrada: <code>{fmt(t['entry'])}</code>\n"
+                    f"🔚 Saída: <code>{fmt(cur)}</code>\n"
+                    f"P&L: <code>{pnl:+.2f}%</code>"
+                )
+                self.active_trades.remove(t)
+                changed = True
                 if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                     self.paused_until = time.time() + Config.PAUSE_DURATION
                     mins = Config.PAUSE_DURATION // 60
-                    self.send(f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n{self.consecutive_losses} losses consecutivos.\nPausado por <b>{mins} minutos</b>.\n\nUse /resetpausa para retomar.")
-        if changed: save_state(self)
+                    self.send(
+                        f"⛔ <b>CIRCUIT BREAKER ATIVADO</b>\n\n"
+                        f"{self.consecutive_losses} losses consecutivos.\n"
+                        f"Pausado por <b>{mins} minutos</b>.\n\n"
+                        f"Use /resetpausa para retomar."
+                    )
+        if changed:
+            save_state(self)
 
 # ═══════════════════════════════════════════════════════════════
 # SERVICE WORKER
@@ -1132,4 +1282,5 @@ def main():
     t.start()
     run_api(bot)
 
-if __name__ == "__main__":    main()
+if __name__ == "__main__":   
+    main()
