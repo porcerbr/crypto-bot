@@ -504,7 +504,7 @@ class TradingBot:
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
 
     def send_status(self):
-    lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
+        lines = ["<b>OPERAÇÕES ABERTAS</b>\n"]
 
     if not self.active_trades:
         lines.append("Nenhuma.")
