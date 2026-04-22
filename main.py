@@ -2419,14 +2419,17 @@ def create_api(bot):
         if sub and sub not in _push_subscriptions: _push_subscriptions.append(sub)
         return jsonify({"ok": True})
     return app
-def run_api(bot):
-    port = int(os.getenv("PORT", 8080))
-    app = create_api(bot)
-    from flask_extensions import register_dashboard_routes
-    register_dashboard_routes(app, bot)
+    def run_api(bot):
+        port = int(os.getenv("PORT", 8080))
+        app = create_api(bot)
+    
+    # ADICIONE ESTAS 2 LINHAS:
+        from flask_extensions import register_dashboard_routes
+        register_dashboard_routes(app, bot)
+    
+        log(f"🌐 Flask rodando na porta {port}")
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 
-    log(f"🌐 Flask rodando na porta {port}")
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN (100% PRESERVADO)
 # ═══════════════════════════════════════════════════════════════
