@@ -982,7 +982,9 @@ class TradingBot:
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
     def set_timeframe(self, tf):
         if tf not in Config.TIMEFRAMES: return
-            old = self.timeframe; self.timeframe = tf; save_state(self);
+            old = self.timeframe; 
+            self.timeframe = tf; 
+            save_state(self);
             self.send(f"✅ TF: {old} → {tf}")
     def set_mode(self, mode):
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
