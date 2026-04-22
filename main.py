@@ -21,10 +21,6 @@ import pandas as pd, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-from flask_extensions import register_dashboard_routes
-
-app = Flask(__name__)
-register_dashboard_routes(app, bot)  # ← ADICIONE ISTO
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES & HELPERS (100% PRESERVADOS)
@@ -2426,6 +2422,9 @@ def create_api(bot):
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
     app = create_api(bot)
+    from flask_extensions import register_dashboard_routes
+    register_dashboard_routes(app, bot)
+
     log(f"🌐 Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 # ═══════════════════════════════════════════════════════════════
