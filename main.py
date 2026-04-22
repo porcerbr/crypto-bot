@@ -989,8 +989,9 @@ class TradingBot:
         self.send(f"✅ TF: {old} → {tf}")
         
     def set_mode(self, mode):
-        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
-            self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: 
+            return
+        self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
     def set_balance(self, value):
         try:
             value = float(value)
