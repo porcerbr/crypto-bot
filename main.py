@@ -21,7 +21,6 @@ import pandas as pd, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES & HELPERS (100% PRESERVADOS)
 # ═══════════════════════════════════════════════════════════════
@@ -498,9 +497,7 @@ def load_state(bot):
         bot.account_type = data.get("account_type", Config.ACCOUNT_TYPE)
         bot.platform = data.get("platform", Config.BROKER_PLATFORM)
         for t in bot.active_trades: t["session_alerted"] = False
-        for t in bot.pending_trades:
-            t.setdefault("created_at", time.time())
-            t["session_alerted"] = False
+        for t in bot.pending_trades: t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
         if bot.active_trades:
             lines = ["♻️ BOT REINICIADO – TRADES ATIVOS\n"]
@@ -879,16 +876,14 @@ class TradingBot:
         ]]}
         self.send(text, markup=markup)
     def _open_trade_with_plan(self, pending_trade, plan, source="telegram"):
-        symbol = pending_trade.get("symbol")
-        if not symbol:
-            log("[TRADE] Pending trade sem símbolo; abertura cancelada.")
-            return False
-
+        
         # --- Filtros Institucionais v8.0 ---
         if check_news_block(self):
-            return False
-        if check_correlation(self, symbol):
-            return False
+            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
+            return None
+        if check_correlation(self, pending_trade["symbol"]):
+            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {pending_trade['symbol']}.")
+            return None
 
         trade = {k: v for k, v in pending_trade.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
         trade.update({
@@ -921,11 +916,12 @@ class TradingBot:
             if not plan.get("ok"):
                 self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\n{plan.get('error','Erro desconhecido')}")
                 return False
+            self.pending_trades.remove(t)
             opened = self._open_trade_with_plan(t, plan, source=source)
             if not opened:
-                self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\nOperação bloqueada pelos filtros institucionais.")
+                self.send(f"⚠️ <b>Operação bloqueada – {t['symbol']}</b>\nFiltro institucional ativo (correlação ou notícia).")
+                save_state(self)
                 return False
-            self.pending_trades.remove(t)
             dl = "BUY 🟢" if opened["dir"] == "BUY" else "SELL 🔴"
             warn = ""
             if plan.get("note"):
@@ -945,7 +941,6 @@ class TradingBot:
             return True
         return False
     def request_custom_amount(self, pending_id):
-
         self.awaiting_custom_amount = pending_id
         self.send(
             f"💬 <b>Valor custom solicitado</b>\n\nEnvie agora o valor que deseja negociar em dólares.\n"
@@ -1012,6 +1007,17 @@ class TradingBot:
         save_state(self)
         self.send(f"🏦 <b>Saldo atualizado</b>\nNovo saldo: <code>{fmt(self.balance)}</code>")
         return True
+    def set_leverage(self, value):
+        try:
+            value = int(value)
+        except Exception:
+            return False
+        if value < 1 or value > 500:
+            return False
+        self.leverage = value
+        save_state(self)
+        self.send(f"⚙️ <b>Alavancagem atualizada</b>\nNova alavancagem: <code>{self.leverage}x</code>")
+        return True
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
     def maybe_send_news(self):
         if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL: self.send_news()
@@ -1038,7 +1044,7 @@ class TradingBot:
                 f"{t['symbol']} {t['dir']} "
                 f"P&L: {pnl:+.2f}%{money_txt}"
             )
-        self.send("\n".join(lines))
+            self.send("\n".join(lines))
     def is_paused(self):
         return time.time() < self.paused_until
     def reset_pause(self):
@@ -1179,7 +1185,6 @@ class TradingBot:
                 "peak": price,
                 "atr": atr,
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
-                "created_at": time.time(),
                 "session_alerted": True,
                 "conf_txt": conf_txt,
                 "sc": sc,
@@ -1265,7 +1270,6 @@ class TradingBot:
                 "atr": atr,
                 "tipo": "CONTRA-TENDÊNCIA ⚡",
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
-                "created_at": time.time(),
                 "session_alerted": True,
                 "conf_txt": conf_txt,
                 "sc": sc,
@@ -1288,6 +1292,7 @@ class TradingBot:
                 self.pending_trades.remove(t)
                 self.send(f"⏳ <b>SINAL EXPIRADO – {t['symbol']}</b>\nO sinal não foi respondido em 15 minutos e foi removido automaticamente.")
                 changed = True
+        changed = False
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res:
@@ -1491,11 +1496,10 @@ body.focus .focus-banner{display:block}
 .tdist{display:flex;justify-content:space-between;font-size:10px;color:var(--muted2)}
 .tdist .near{color:var(--red);font-weight:700}.tdist .far{color:var(--green)}
 .tbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-.tb{padding:14px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;font-size:13px;font-weight:700;transition:all .15s;background:var(--bg3);color:var(--text)}
-.tb:hover{filter:brightness(1.04)}
-.tb:active{transform:scale(.98);filter:brightness(.98)}
-.tb.yes{background:rgba(0,230,118,.10);color:#8ff0c3;border-color:rgba(0,230,118,.18)}
-.tb.no{background:rgba(255,61,113,.10);color:#ffb1c3;border-color:rgba(255,61,113,.18)}
+.tb{padding:14px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;transition:all .15s}
+.tb:active{transform:scale(.97)}
+.tb.yes{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.tb.no{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
 .cpbtn{background:none;border:none;color:var(--blue);cursor:pointer;font-size:14px;padding:0 4px;transition:all .15s}
 .cpbtn:active{opacity:.6}
 /* ── HISTORY ── */
@@ -1586,14 +1590,21 @@ body.focus .focus-banner{display:block}
 .tcard.pending { border-left: 4px solid var(--gold) !important; position: relative; overflow: hidden; }
 .expire-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: linear-gradient(90deg, var(--gold), #ffecb3); width: 100%; transition: width 1s linear; }
 .tcard { 
-    background: rgba(13, 19, 32, 0.7) !important; 
-    backdrop-filter: blur(12px); 
-    border: 1px solid rgba(255,255,255,0.1) !important; 
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    background: rgba(10, 15, 26, 0.92) !important; 
+    backdrop-filter: blur(16px); 
+    border: 1px solid rgba(255,255,255,0.13) !important; 
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.06);
     border-radius: 16px !important;
 }
-.tb.yes { background: linear-gradient(135deg, #00c853, #00e676) !important; border: none !important; font-weight: 700 !important; }
-.tb.no { background: rgba(255, 61, 113, 0.1) !important; border: 1px solid var(--red) !important; color: var(--red) !important; }
+.tb.yes { background: linear-gradient(135deg, #00c853, #00e676) !important; border: none !important; font-weight: 700 !important; color: #002b0f !important; text-shadow: none !important; }
+.tb.no { background: rgba(255, 61, 113, 0.15) !important; border: 1px solid rgba(255,61,113,0.5) !important; color: var(--red) !important; font-weight: 700 !important; }
+.tb.yes:active { transform: scale(.96) !important; filter: brightness(0.92); }
+.tb.yes:hover { filter: brightness(1.08); }
+/* Botões de percentual com cores distintas */
+.tb-pct-25 { background: linear-gradient(135deg, #00796b, #26a69a) !important; color: #e0f7f4 !important; border: none !important; font-weight: 700 !important; }
+.tb-pct-50 { background: linear-gradient(135deg, #1565c0, #1e88e5) !important; color: #e3f2fd !important; border: none !important; font-weight: 700 !important; }
+.tb-pct-100 { background: linear-gradient(135deg, #e65100, #fb8c00) !important; color: #fff3e0 !important; border: none !important; font-weight: 700 !important; }
+.tb-custom { background: linear-gradient(135deg, #4a148c, #7b1fa2) !important; color: #f3e5f5 !important; border: none !important; font-weight: 700 !important; }
 .tsym { font-size: 20px !important; letter-spacing: 1px; }
 </style>
 
@@ -1601,6 +1612,32 @@ body.focus .focus-banner{display:block}
 .kelly-badge { background: var(--b3); color: var(--blue); border: 1px solid var(--blue2); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
 .news-alert { color: var(--red); font-size: 10px; animation: pulse 1s infinite; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+/* Hover states para todos botões de ação */
+.tb-pct-25:active,.tb-pct-50:active,.tb-pct-100:active,.tb-custom:active { transform: scale(.95) !important; filter: brightness(0.88); }
+/* Labels de percentual mais legíveis */
+.tb { font-size: 14px !important; letter-spacing: .3px; border-radius: 12px !important; }
+/* Input-like overlay para o modal de valor custom */
+.amt-label { font-size: 11px; color: var(--muted2); text-align:center; margin-bottom:4px; }
+/* Destaque do símbolo nos cards pendentes */
+.tcard.pending .tsym { color: var(--gold) !important; }
+.tcard.pending .tcard-head { border-bottom: 1px solid rgba(255,215,64,.12); padding-bottom: 10px; margin-bottom: 10px; }
+/* Melhorar contraste geral nos valores de risk panel */
+.risk-val { color: var(--text) !important; }
+.risk-item { background: rgba(255,255,255,0.03) !important; border: 1px solid rgba(255,255,255,0.07) !important; border-radius: 10px !important; }
+/* ── PAINEL DE ALAVANCAGEM ── */
+.lev-current-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:12px 14px}
+.lev-label{font-size:11px;color:var(--muted2);font-weight:600;text-transform:uppercase;letter-spacing:.8px}
+.lev-val{font-size:22px;font-weight:800;font-family:var(--mono);color:var(--gold)}
+.lev-max{font-size:10px;color:var(--muted2);margin-left:auto}
+.lev-presets{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px}
+.levb{background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:11px 4px;cursor:pointer;font-size:13px;font-family:var(--mono);color:var(--text2);font-weight:700;transition:all .15s;text-align:center}
+.levb:active{transform:scale(.94)}
+.levb.on{background:rgba(255,215,64,.15);border-color:rgba(255,215,64,.45);color:var(--gold)}
+.levb-ok{background:linear-gradient(135deg,#e65100,#fb8c00) !important;color:#fff3e0 !important;border:none !important;padding:11px 18px !important}
+.lev-custom-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.lev-input{flex:1;background:rgba(255,255,255,0.06);border:1px solid var(--border2);border-radius:10px;padding:12px;color:var(--text);font-size:14px;font-family:var(--mono);outline:none;transition:border-color .2s}
+.lev-input:focus{border-color:rgba(255,215,64,.5)}
+.lev-warn{font-size:10px;color:var(--muted2);line-height:1.5;padding:8px 10px;background:rgba(255,215,64,.05);border:1px solid rgba(255,215,64,.15);border-radius:8px}
 </style>
 </head>
 <body>
@@ -1713,6 +1750,27 @@ body.focus .focus-banner{display:block}
       <div class="pbox"><div class="plb">Saldo atual</div><div class="pvl" id="p-bal">--</div></div>
       <div class="pbox"><div class="plb">Editar saldo</div><button class="ab abn" onclick="setBalance()">Alterar</button></div>
     </div>
+  </div>
+  <div class="cfgsec">
+    <div class="cfgl">Alavancagem</div>
+    <div class="lev-current-row">
+      <span class="lev-label">Atual:</span>
+      <span class="lev-val" id="p-lev">--</span>
+      <span class="lev-max" id="p-lev-max"></span>
+    </div>
+    <div class="lev-presets" id="lev-presets">
+      <button class="levb" data-lev="50"   onclick="setLeverage(50)">50x</button>
+      <button class="levb" data-lev="100"  onclick="setLeverage(100)">100x</button>
+      <button class="levb" data-lev="200"  onclick="setLeverage(200)">200x</button>
+      <button class="levb" data-lev="300"  onclick="setLeverage(300)">300x</button>
+      <button class="levb" data-lev="500"  onclick="setLeverage(500)">500x</button>
+    </div>
+    <div class="lev-custom-row">
+      <input type="number" id="lev-input" min="1" max="500" placeholder="Valor manual (1–500)"
+        class="lev-input" onkeydown="if(event.key==='Enter')submitLeverage()">
+      <button class="levb levb-ok" onclick="submitLeverage()">✓ OK</button>
+    </div>
+    <div class="lev-warn">⚠ Alavancagem alta aumenta risco. Limite Tickmill por ativo pode ser menor.</div>
   </div>
   <div class="cfgsec"><div class="cfgl">Modo Focus (Execução)</div>
     <button class="ab abn" id="focus-cfg-btn" onclick="toggleFocus()">🎯 Ativar Modo Focus</button>
@@ -1940,7 +1998,7 @@ function renderPendingFromApi(list){
   const el=document.getElementById('pendingQueue');if(!el)return;
   el.innerHTML=list.length?list.map(p=>{
     const buy=p.dir==='BUY';const cls=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';
-    return`<div class="tcard ${cls} pending" data-pid="${p.pending_id}" data-created="${p.created_at || Math.floor(Date.now()/1000)}"><div class="expire-bar"></div>
+    return`<div class="tcard ${cls} pending" data-pid="${p.pending_id}" data-created="${p.created_at}"><div class="expire-bar"></div>
       <div class="tcard-head">
         <div><div class="tsym">${p.symbol}</div><div class="tname">${p.name||''}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
@@ -1964,13 +2022,13 @@ function renderPendingFromApi(list){
         <div class="tlv"><div class="tll">Margem min.</div><div class="tlvv">${fp(p.min_amount_required||0)}</div></div>
       </div>
       <div class="tbtns" style="grid-template-columns:repeat(2,1fr)">
-        <button class="tb yes" onclick="openPendingPct(${p.pending_id},25,this)">25%</button>
-        <button class="tb yes" onclick="openPendingPct(${p.pending_id},50,this)">50%</button>
-        <button class="tb yes" onclick="openPendingPct(${p.pending_id},100,this)">100%</button>
-        <button class="tb no" onclick="rejectPending(${p.pending_id},this)">Recusar</button>
+        <button class="tb tb-pct-25" onclick="openPendingPct(${p.pending_id},25,this)">⚡ 25%</button>
+        <button class="tb tb-pct-50" onclick="openPendingPct(${p.pending_id},50,this)">💎 50%</button>
+        <button class="tb tb-pct-100" onclick="openPendingPct(${p.pending_id},100,this)">🔥 100%</button>
+        <button class="tb no" onclick="rejectPending(${p.pending_id},this)">❌ Recusar</button>
       </div>
       <div class="tbtns" style="grid-template-columns:1fr">
-        <button class="tb yes" onclick="openPendingCustom(${p.pending_id},this)">Valor custom / manual</button>
+        <button class="tb tb-custom" onclick="openPendingCustom(${p.pending_id},this)">✏️ Valor customizado</button>
       </div>
     </div>`;
   }).join('')
@@ -1983,24 +2041,50 @@ async function confirmPending(id,btn){
   catch(e){btn.textContent='Erro';btn.disabled=false;}
 }
 async function openPendingPct(id,pct,btn){
+  const bal = _st && _st.balance ? _st.balance : 0;
+  const usd = (bal * pct / 100).toFixed(2);
   btn.textContent='…';btn.disabled=true;
   try{
     await apiFetch('/api/execute_pending_pct',{method:'POST',body:JSON.stringify({pending_id:id,pct:pct})});
-    toast('Operação aberta com '+pct+'% da base','success');
+    toast('✅ Operação aberta com '+pct+'% ($'+usd+')','success');
     loadPending();loadDash();
-  }catch(e){btn.textContent='Erro';btn.disabled=false;toast('Erro: '+e.message,'error');}
+  }catch(e){btn.textContent=pct+'%';btn.disabled=false;toast('Erro: '+e.message,'error');}
 }
 async function openPendingCustom(id,btn){
-  const raw=prompt('Digite o valor base da operação em dólares. Ex.: 500','500');
-  if(raw===null)return;
+  // Cria input inline no card, mais profissional que prompt()
+  const card = btn.closest('.tcard');
+  let inputWrap = card.querySelector('.custom-amt-wrap');
+  if(inputWrap){inputWrap.remove();return;}
+  inputWrap = document.createElement('div');
+  inputWrap.className='custom-amt-wrap';
+  inputWrap.style.cssText='margin-top:10px;display:flex;gap:8px;align-items:center';
+  inputWrap.innerHTML=`
+    <input type="number" min="1" step="1" placeholder="Valor em USD (ex: 500)"
+      style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,215,64,.4);
+      border-radius:10px;padding:12px;color:var(--text);font-size:14px;font-family:var(--mono);outline:none"
+      id="custom-amt-${id}">
+    <button onclick="submitCustomAmt(${id},this)"
+      style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#f3e5f5;border:none;
+      border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap">
+      ✓ OK
+    </button>`;
+  btn.parentElement.appendChild(inputWrap);
+  const inp = inputWrap.querySelector('input');
+  inp.focus();
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') submitCustomAmt(id, inp); });
+}
+async function submitCustomAmt(id, el){
+  const inp = document.getElementById('custom-amt-'+id);
+  if(!inp)return;
+  const raw = inp.value;
   const amount=parseFloat(String(raw).replace(',','.'));
-  if(!Number.isFinite(amount)||amount<=0){toast('Valor inválido','error');return;}
-  btn.textContent='…';btn.disabled=true;
+  if(!Number.isFinite(amount)||amount<=0){inp.style.borderColor='var(--red)';toast('Valor inválido. Ex: 500','error');return;}
+  inp.disabled=true;
   try{
     await apiFetch('/api/execute_pending',{method:'POST',body:JSON.stringify({pending_id:id,amount:amount})});
-    toast('Operação aberta','success');
+    toast('✅ Operação aberta com $'+amount.toFixed(2),'success');
     loadPending();loadDash();
-  }catch(e){btn.textContent='Erro';btn.disabled=false;toast('Erro: '+e.message,'error');}
+  }catch(e){inp.disabled=false;inp.style.borderColor='var(--red)';toast('Erro: '+e.message,'error');}
 }
 async function rejectPending(id,btn){
   btn.textContent='…';btn.disabled=true;
@@ -2119,8 +2203,41 @@ async function loadCfg(){
     const pbal=document.getElementById('p-bal'); if(pbal) pbal.textContent=fp(c.balance||0);
     const pcomm=document.getElementById('p-comm'); if(pcomm) pcomm.textContent='$'+c.commission_rt_forex+'/lote';
     const pml=document.getElementById('p-minlot'); if(pml) pml.textContent=c.min_lot||'0.01';
+    // Atualiza painel de alavancagem
+    const plev=document.getElementById('p-lev'); if(plev) plev.textContent=(c.leverage||0)+'x';
+    const plevmax=document.getElementById('p-lev-max'); if(plevmax) plevmax.textContent='máx Tickmill por ativo: varia';
+    updLevBtns(c.leverage||0);
   }catch(_){}
   updCfgBtns();
+}
+function updLevBtns(cur){
+  document.querySelectorAll('.levb[data-lev]').forEach(b=>{
+    b.classList.toggle('on', parseInt(b.dataset.lev)===parseInt(cur));
+  });
+  const inp=document.getElementById('lev-input');
+  if(inp) inp.value='';
+}
+async function setLeverage(val){
+  try{
+    await apiFetch('/api/leverage',{method:'POST',body:JSON.stringify({leverage:val})});
+    const plev=document.getElementById('p-lev'); if(plev) plev.textContent=val+'x';
+    updLevBtns(val);
+    if(_st) _st.leverage=val;
+    toast('Alavancagem: '+val+'x','success');
+    await loadDash();
+  }catch(e){toast('Erro: '+e.message,'error');}
+}
+async function submitLeverage(){
+  const inp=document.getElementById('lev-input');
+  if(!inp)return;
+  const val=parseInt(inp.value);
+  if(!Number.isFinite(val)||val<1||val>500){
+    inp.style.borderColor='var(--red)';
+    toast('Alavancagem deve ser entre 1 e 500','error');
+    setTimeout(()=>inp.style.borderColor='',1500);
+    return;
+  }
+  await setLeverage(val);
 }
 function updCfgBtns(){
   if(!_st)return;
@@ -2285,6 +2402,7 @@ def create_api(bot):
         "stop_out_level": Config.STOP_OUT_LEVEL,
         "commission_rt_forex": Config.COMMISSION_PER_LOT_RT["FOREX"],
         "min_lot": Config.MIN_LOT,
+        "max_leverage_by_cat": Config.MAX_LEVERAGE_BY_CAT,
     })
     @app.route("/api/history")
     def api_history(): return jsonify(list(reversed(bot.history[-50:])))
@@ -2353,12 +2471,24 @@ def create_api(bot):
         bot.set_balance(value)
         return jsonify({"ok": True, "balance": round(bot.balance, 2)})
 
+    @app.route("/api/leverage", methods=["POST", "OPTIONS"])
+    def api_leverage():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        try:
+            value = int(data.get("leverage"))
+        except Exception:
+            return jsonify({"error": "alavancagem inválida"}), 400
+        if value < 1 or value > 500:
+            return jsonify({"error": "alavancagem deve ser entre 1 e 500"}), 400
+        bot.set_leverage(value)
+        return jsonify({"ok": True, "leverage": bot.leverage})
+
     @app.route("/api/reject", methods=["POST", "OPTIONS"])
     def api_reject():
         if request.method == "OPTIONS": return jsonify({}), 200
         data = request.get_json(force=True) or {}; pid = data.get("pending_id")
         return jsonify({"ok": True}) if bot.reject_pending(pid) else (jsonify({"error": "not found"}), 404)
-    @app.route("/api/news")
     @app.route("/api/news")
     def api_news():
         now = time.time()
@@ -2391,7 +2521,7 @@ def create_api(bot):
         if request.method == "OPTIONS":
             return jsonify({}), 200
         data = request.get_json(force=True) or {}
-        mode = data.get("mode", " ")
+        mode = data.get("mode", "").strip()
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]:
             return jsonify({"error": "inválido"}), 400
         bot.set_mode(mode)
@@ -2401,7 +2531,7 @@ def create_api(bot):
         if request.method == "OPTIONS":
             return jsonify({}), 200
         data = request.get_json(force=True) or {}
-        tf = data.get("timeframe", " ")
+        tf = data.get("timeframe", "").strip()
         if tf not in Config.TIMEFRAMES:
             return jsonify({"error": "inválido"}), 400
         bot.set_timeframe(tf)
@@ -2419,17 +2549,11 @@ def create_api(bot):
         if sub and sub not in _push_subscriptions: _push_subscriptions.append(sub)
         return jsonify({"ok": True})
     return app
-    def run_api(bot):
-        port = int(os.getenv("PORT", 8080))
-        app = create_api(bot)
-    
-    # ADICIONE ESTAS 2 LINHAS:
-        from flask_extensions import register_dashboard_routes
-        register_dashboard_routes(app, bot)
-    
-        log(f"🌐 Flask rodando na porta {port}")
-        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
-
+def run_api(bot):
+    port = int(os.getenv("PORT", 8080))
+    app = create_api(bot)
+    log(f"🌐 Flask rodando na porta {port}")
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
 # ═══════════════════════════════════════════════════════════════
 # LOOP DO BOT & MAIN (100% PRESERVADO)
 # ═══════════════════════════════════════════════════════════════
@@ -2485,8 +2609,8 @@ def bot_loop(bot):
                     if "callback_query" in u:
                         cb = u["callback_query"]["data"]; cid = u["callback_query"]["id"]
                         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": cid}, timeout=5)
-                        if cb.startswith("set_tf"): bot.set_timeframe(cb.replace("set_tf", " "))
-                        elif cb.startswith("set"): bot.set_mode(cb.replace("set_", " "))
+                        if cb.startswith("set_tf"): bot.set_timeframe(cb.replace("set_tf_", ""))
+                        elif cb.startswith("set"): bot.set_mode(cb.replace("set_", ""))
                         elif cb == "tf_menu": bot.build_tf_menu()
                         elif cb == "main_menu": bot.build_menu()
                         elif cb == "news": bot.send_news()
