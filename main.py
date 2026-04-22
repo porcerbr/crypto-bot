@@ -906,7 +906,7 @@ class TradingBot:
         self.balance -= plan["margin_required"]
         self.balance = round(self.balance, 2)
         self.active_trades.append(trade)
-            save_state(self)
+            self.save_state()
         return trade
     def execute_pending_with_amount(self, pending_id, amount, source="telegram"):
         for t in self.pending_trades[:]:
