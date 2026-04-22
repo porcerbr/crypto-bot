@@ -497,7 +497,9 @@ def load_state(bot):
         bot.account_type = data.get("account_type", Config.ACCOUNT_TYPE)
         bot.platform = data.get("platform", Config.BROKER_PLATFORM)
         for t in bot.active_trades: t["session_alerted"] = False
-        for t in bot.pending_trades: t["session_alerted"] = False
+        for t in bot.pending_trades:
+            t.setdefault("created_at", time.time())
+            t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
         if bot.active_trades:
             lines = ["♻️ BOT REINICIADO – TRADES ATIVOS\n"]
@@ -876,14 +878,16 @@ class TradingBot:
         ]]}
         self.send(text, markup=markup)
     def _open_trade_with_plan(self, pending_trade, plan, source="telegram"):
-        
+        symbol = pending_trade.get("symbol")
+        if not symbol:
+            log("[TRADE] Pending trade sem símbolo; abertura cancelada.")
+            return False
+
         # --- Filtros Institucionais v8.0 ---
         if check_news_block(self):
-            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
-            return
+            return False
         if check_correlation(self, symbol):
-            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
-            return
+            return False
 
         trade = {k: v for k, v in pending_trade.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
         trade.update({
@@ -916,8 +920,11 @@ class TradingBot:
             if not plan.get("ok"):
                 self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\n{plan.get('error','Erro desconhecido')}")
                 return False
-            self.pending_trades.remove(t)
             opened = self._open_trade_with_plan(t, plan, source=source)
+            if not opened:
+                self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\nOperação bloqueada pelos filtros institucionais.")
+                return False
+            self.pending_trades.remove(t)
             dl = "BUY 🟢" if opened["dir"] == "BUY" else "SELL 🔴"
             warn = ""
             if plan.get("note"):
@@ -937,6 +944,7 @@ class TradingBot:
             return True
         return False
     def request_custom_amount(self, pending_id):
+
         self.awaiting_custom_amount = pending_id
         self.send(
             f"💬 <b>Valor custom solicitado</b>\n\nEnvie agora o valor que deseja negociar em dólares.\n"
@@ -1029,7 +1037,7 @@ class TradingBot:
                 f"{t['symbol']} {t['dir']} "
                 f"P&L: {pnl:+.2f}%{money_txt}"
             )
-            self.send("\n".join(lines))
+        self.send("\n".join(lines))
     def is_paused(self):
         return time.time() < self.paused_until
     def reset_pause(self):
@@ -1170,6 +1178,7 @@ class TradingBot:
                 "peak": price,
                 "atr": atr,
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "created_at": time.time(),
                 "session_alerted": True,
                 "conf_txt": conf_txt,
                 "sc": sc,
@@ -1255,6 +1264,7 @@ class TradingBot:
                 "atr": atr,
                 "tipo": "CONTRA-TENDÊNCIA ⚡",
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+                "created_at": time.time(),
                 "session_alerted": True,
                 "conf_txt": conf_txt,
                 "sc": sc,
@@ -1277,7 +1287,6 @@ class TradingBot:
                 self.pending_trades.remove(t)
                 self.send(f"⏳ <b>SINAL EXPIRADO – {t['symbol']}</b>\nO sinal não foi respondido em 15 minutos e foi removido automaticamente.")
                 changed = True
-        changed = False
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res:
@@ -1481,10 +1490,11 @@ body.focus .focus-banner{display:block}
 .tdist{display:flex;justify-content:space-between;font-size:10px;color:var(--muted2)}
 .tdist .near{color:var(--red);font-weight:700}.tdist .far{color:var(--green)}
 .tbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-.tb{padding:14px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:700;transition:all .15s}
-.tb:active{transform:scale(.97)}
-.tb.yes{background:var(--g3);color:var(--green);border:1px solid rgba(0,230,118,.2)}
-.tb.no{background:var(--r3);color:var(--red);border:1px solid rgba(255,61,113,.2)}
+.tb{padding:14px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;font-size:13px;font-weight:700;transition:all .15s;background:var(--bg3);color:var(--text)}
+.tb:hover{filter:brightness(1.04)}
+.tb:active{transform:scale(.98);filter:brightness(.98)}
+.tb.yes{background:rgba(0,230,118,.10);color:#8ff0c3;border-color:rgba(0,230,118,.18)}
+.tb.no{background:rgba(255,61,113,.10);color:#ffb1c3;border-color:rgba(255,61,113,.18)}
 .cpbtn{background:none;border:none;color:var(--blue);cursor:pointer;font-size:14px;padding:0 4px;transition:all .15s}
 .cpbtn:active{opacity:.6}
 /* ── HISTORY ── */
@@ -1929,7 +1939,7 @@ function renderPendingFromApi(list){
   const el=document.getElementById('pendingQueue');if(!el)return;
   el.innerHTML=list.length?list.map(p=>{
     const buy=p.dir==='BUY';const cls=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';
-    return`<div class="tcard ${cls} pending" data-pid="${p.pending_id}" data-created="${p.created_at}"><div class="expire-bar"></div>
+    return`<div class="tcard ${cls} pending" data-pid="${p.pending_id}" data-created="${p.created_at || Math.floor(Date.now()/1000)}"><div class="expire-bar"></div>
       <div class="tcard-head">
         <div><div class="tsym">${p.symbol}</div><div class="tname">${p.name||''}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
