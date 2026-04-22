@@ -306,6 +306,11 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     if sl_distance <= 0:
         return {"ok": False, "error": "Distância do stop inválida."}
 
+    # MELHORIA 1 — Validação Stop Level mínimo Tickmill
+    sl_tp_ok, sl_tp_err = validate_sl_tp(symbol, entry, sl, tp, "BUY" if tp > entry else "SELL")
+    if not sl_tp_ok:
+        return {"ok": False, "error": f"[Tickmill Stop Level] {sl_tp_err}"}
+
     # Tickmill/MT5: margem calculada pelo MT5 com base no contrato e na alavancagem.
     quote_to_usd = currency_to_usd(quote_ccy)
     base_to_usd = currency_to_usd(base_ccy)
@@ -386,6 +391,10 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         "commission": round(commission, 2),
         "net_tp_gain": net_tp_gain,
         "potential_pnl_ratio": round(potential_pnl_ratio, 2),
+        "pip_value": round(pip_value_usd(symbol, lot, entry), 4),
+        "spread": get_spread(symbol),
+        "pip_size": pip_size(symbol),
+        "stop_level_pips": get_stop_level(symbol),
         "note": note,
     }
 
@@ -394,13 +403,151 @@ def all_syms():
     out = []
     for c in Config.MARKET_CATEGORIES.values(): out.extend(c["assets"].keys())
     return out
+# ═══════════════════════════════════════════════════════════════
+# MELHORIA 1 — SPREAD TÍPICO TICKMILL (pip/ponto por símbolo)
+# ═══════════════════════════════════════════════════════════════
+TICKMILL_SPREAD = {
+    "EURUSD": 0.1, "GBPUSD": 0.2, "USDJPY": 0.2, "AUDUSD": 0.2,
+    "USDCAD": 0.3, "USDCHF": 0.3, "NZDUSD": 0.4, "EURGBP": 0.4,
+    "EURJPY": 0.4, "GBPJPY": 0.5,
+    "XAUUSD": 0.10, "XAGUSD": 0.015,
+    "USOIL":  0.03, "UKOIL":  0.03,
+    "NATGAS": 0.003,"COPPER": 0.0015,
+    "US500": 0.4, "US100": 0.6, "US30": 1.5,
+    "DE40":  1.0, "UK100": 1.0, "JP225": 5.0,
+    "AUS200":0.8, "EU50":  1.0,
+    "BTCUSD": 25.0, "ETHUSD": 1.5,  "SOLUSD": 0.05,
+    "BNBUSD": 0.20, "XRPUSD": 0.001,"ADAUSD": 0.0003,
+    "DOGEUSD":0.0002,"LTCUSD":0.10,
+}
+
+# MELHORIA 1 — STOP LEVEL MÍNIMO TICKMILL
+TICKMILL_STOP_LEVEL = {
+    "EURUSD": 0.0, "GBPUSD": 0.0, "USDJPY": 0.0, "AUDUSD": 0.0,
+    "USDCAD": 0.0, "USDCHF": 0.0, "NZDUSD": 0.0, "EURGBP": 0.0,
+    "EURJPY": 0.0, "GBPJPY": 0.0,
+    "XAUUSD": 0.30, "XAGUSD": 0.05,
+    "USOIL":  0.10, "UKOIL":  0.10, "NATGAS": 0.005, "COPPER": 0.005,
+    "US500": 1.0, "US100": 2.0, "US30": 5.0,
+    "DE40":  2.0, "UK100": 2.0, "JP225": 10.0, "AUS200": 2.0, "EU50": 2.0,
+    "BTCUSD": 50.0, "ETHUSD": 5.0, "SOLUSD": 0.10, "BNBUSD": 0.5,
+    "XRPUSD": 0.002,"ADAUSD": 0.001,"DOGEUSD":0.001,"LTCUSD": 0.20,
+}
+
+# MELHORIA 1 — PIP SIZE por símbolo
+TICKMILL_PIP_SIZE = {
+    "EURUSD": 0.0001, "GBPUSD": 0.0001, "AUDUSD": 0.0001,
+    "USDCAD": 0.0001, "USDCHF": 0.0001, "NZDUSD": 0.0001, "EURGBP": 0.0001,
+    "USDJPY": 0.01,   "EURJPY": 0.01,   "GBPJPY": 0.01,
+    "XAUUSD": 0.01,   "XAGUSD": 0.001,
+    "USOIL":  0.01,   "UKOIL":  0.01,   "NATGAS": 0.001, "COPPER": 0.0001,
+    "US500": 0.1, "US100": 0.1, "US30": 1.0,
+    "DE40":  1.0, "UK100": 1.0, "JP225": 1.0, "AUS200": 1.0, "EU50": 1.0,
+    "BTCUSD": 1.0, "ETHUSD": 0.1, "SOLUSD": 0.001, "BNBUSD": 0.01,
+    "XRPUSD": 0.0001,"ADAUSD": 0.0001,"DOGEUSD":0.0001,"LTCUSD":0.01,
+}
+
+def get_spread(symbol):
+    return TICKMILL_SPREAD.get(symbol, 0.0)
+
+def get_stop_level(symbol):
+    return TICKMILL_STOP_LEVEL.get(symbol, 0.0)
+
+def pip_size(symbol):
+    return TICKMILL_PIP_SIZE.get(symbol, 0.0001)
+
+def pip_value_usd(symbol, lot, entry=1.0):
+    ps = pip_size(symbol)
+    cs = contract_size_for(symbol)
+    profile = symbol_profile(symbol)
+    if profile["kind"] == "FX":
+        quote = symbol[3:]
+        q2usd = currency_to_usd(quote)
+        return round(ps * cs * lot * q2usd, 4)
+    return round(ps * cs * lot, 4)
+
+def validate_sl_tp(symbol, entry, sl, tp, dir_s):
+    min_dist = get_stop_level(symbol)
+    ps = pip_size(symbol)
+    if ps <= 0 or min_dist <= 0: return True, None
+    min_price_dist = min_dist * ps
+    sl_dist = abs(entry - sl)
+    tp_dist = abs(tp - entry)
+    if sl_dist < min_price_dist:
+        return False, (f"SL muito proximo da entrada ({sl_dist/ps:.1f} pips). "
+                       f"Stop Level minimo Tickmill: {min_dist:.1f} pips.")
+    if tp_dist < min_price_dist:
+        return False, (f"TP muito proximo da entrada ({tp_dist/ps:.1f} pips). "
+                       f"Stop Level minimo Tickmill: {min_dist:.1f} pips.")
+    return True, None
+
+# ═══════════════════════════════════════════════════════════════
+# MELHORIA 3 — HORÁRIOS GRANULARES POR SÍMBOLO (Tickmill)
+# ═══════════════════════════════════════════════════════════════
+TICKMILL_MARKET_HOURS = {
+    "EURUSD": (0, 24), "GBPUSD": (0, 24), "USDJPY": (0, 24),
+    "AUDUSD": (0, 24), "USDCAD": (0, 24), "USDCHF": (0, 24),
+    "NZDUSD": (0, 24), "EURGBP": (0, 24), "EURJPY": (0, 24), "GBPJPY": (0, 24),
+    "XAUUSD": (0, 23), "XAGUSD": (0, 23),
+    "USOIL": (1, 24), "UKOIL": (1, 24), "NATGAS": (1, 24), "COPPER": (1, 24),
+    "US500": (22, 21), "US100": (22, 21), "US30": (22, 21),
+    "DE40": (7, 22), "UK100": (8, 18), "JP225": (0, 6),
+    "AUS200": (23, 6), "EU50": (7, 22),
+    "BTCUSD": (0, 24), "ETHUSD": (0, 24), "SOLUSD": (0, 24),
+    "BNBUSD": (0, 24), "XRPUSD": (0, 24), "ADAUSD": (0, 24),
+    "DOGEUSD":(0, 24), "LTCUSD": (0, 24),
+}
+
+# MELHORIA 4 — Janelas de ALTA LIQUIDEZ por símbolo (UTC)
+TICKMILL_HIGH_LIQ_HOURS = {
+    "EURUSD": (7, 17),  "GBPUSD": (7, 17), "EURJPY": (7, 17),
+    "GBPJPY": (7, 17),  "USDJPY": (0, 9),  "AUDUSD": (22, 9),
+    "USDCAD": (13, 20), "USDCHF": (7, 17), "NZDUSD": (21, 8), "EURGBP": (7, 17),
+    "XAUUSD": (7, 20),  "XAGUSD": (13, 20),
+    "USOIL":  (13, 20), "UKOIL":  (7, 17), "NATGAS": (13, 20), "COPPER": (13, 20),
+    "US500":  (13, 21), "US100":  (13, 21), "US30":  (13, 21),
+    "DE40":   (7, 15),  "UK100":  (8, 16),  "JP225": (0, 6),
+    "AUS200": (23, 6),  "EU50":   (7, 15),
+    "BTCUSD": (9, 23),  "ETHUSD": (9, 23),  "SOLUSD": (9, 23),
+    "BNBUSD": (9, 23),  "XRPUSD": (9, 23),  "ADAUSD": (9, 23),
+    "DOGEUSD":(9, 23),  "LTCUSD": (9, 23),
+}
+
+def _in_hours(h, open_h, close_h):
+    if close_h == 24: return True
+    if open_h == close_h: return False
+    if open_h < close_h: return open_h <= h < close_h
+    return h >= open_h or h < close_h
+
+def sym_mkt_open(symbol):
+    now = datetime.now(timezone.utc)
+    h = now.hour; wd = now.weekday()
+    cat = asset_cat(symbol)
+    if cat == "CRYPTO":
+        liq_h = TICKMILL_HIGH_LIQ_HOURS.get(symbol, (0, 24))
+        high_liq = _in_hours(h, liq_h[0], liq_h[1])
+        return True, high_liq, ("Alta liquidez" if high_liq else "Baixa liquidez")
+    if wd >= 5:
+        return False, False, "Mercado fechado (fim de semana)"
+    hours = TICKMILL_MARKET_HOURS.get(symbol)
+    if hours is None:
+        if cat == "FOREX": hours = (0, 24)
+        elif cat == "COMMODITIES": hours = (1, 24)
+        else: hours = (7, 22)
+    is_open = _in_hours(h, hours[0], hours[1])
+    if not is_open:
+        return False, False, f"Fora do horario Tickmill ({hours[0]:02d}h-{hours[1]:02d}h UTC)"
+    liq_h = TICKMILL_HIGH_LIQ_HOURS.get(symbol, hours)
+    high_liq = _in_hours(h, liq_h[0], liq_h[1])
+    return is_open, high_liq, ("Alta liquidez" if high_liq else "Liquidez moderada")
+
 def mkt_open(cat):
     now = datetime.now(timezone.utc); h = now.hour; wd = now.weekday()
     if cat == "CRYPTO": return True
     if wd >= 5: return False
-    if cat == "FOREX":       return Config.FOREX_OPEN_UTC <= h < Config.FOREX_CLOSE_UTC
-    if cat == "COMMODITIES": return Config.COMM_OPEN_UTC  <= h < Config.COMM_CLOSE_UTC
-    if cat == "INDICES":     return Config.IDX_OPEN_UTC   <= h < Config.IDX_CLOSE_UTC
+    if cat == "FOREX": return True
+    if cat == "COMMODITIES": return _in_hours(h, 1, 24)
+    if cat == "INDICES": return _in_hours(h, 7, 22)
     return True
 # ═══════════════════════════════════════════════════════════════# PERSISTÊNCIA, NOTÍCIAS, ANÁLISE, CONFLUÊNCIA, CT, PUSH
 # ═══════════════════════════════════════════════════════════════
@@ -424,6 +571,7 @@ def save_state(bot):
         "account_currency": bot.account_currency,
         "account_type": bot.account_type,
         "platform": bot.platform,
+        "equity_curve": bot.equity_curve,
     }
     try:
         with open(Config.STATE_FILE, "w") as f: json.dump(data, f, indent=2)
@@ -450,6 +598,7 @@ def load_state(bot):
         bot.account_currency = data.get("account_currency", Config.BASE_CURRENCY)
         bot.account_type = data.get("account_type", Config.ACCOUNT_TYPE)
         bot.platform = data.get("platform", Config.BROKER_PLATFORM)
+        bot.equity_curve = data.get("equity_curve", [])
         for t in bot.active_trades: t["session_alerted"] = False
         for t in bot.pending_trades: t["session_alerted"] = False
         log(f"[STATE] {bot.wins}W/{bot.losses}L | {len(bot.active_trades)} trade(s) | {len(bot.pending_trades)} pendente(s) | {len(bot.signals_feed)} sinal(is)")
@@ -754,6 +903,7 @@ class TradingBot:
         self.last_id = 0; self.last_news_ts = 0; self._restore_msg = None
         self.trend_cache = {}; self.last_trends_update = 0
         self.signals_feed = []; self.news_cache = []; self.news_cache_ts = 0
+        self.equity_curve = []  # MELHORIA 7 — histórico equity para gráfico
         self.balance = Config.INITIAL_BALANCE
         self.leverage = Config.DEFAULT_LEVERAGE
         self.risk_pct = Config.RISK_PERCENT_PER_TRADE
@@ -804,6 +954,7 @@ class TradingBot:
             f"Alavancagem efetiva: <code>{eff_lev}x</code> (máx. Tickmill: <code>{max_lev}x</code>)",
             f"Lote mínimo: <code>{float(t.get('min_lot', Config.MIN_LOT)):.2f}</code> | Valor mínimo aprox.: <code>{fmt(float(t.get('min_amount_required', 0)))}</code>",
             f"Aguardando sua escolha de valor…{comm_info}",
+            f"📐 Pip value (0.01 lote): <code>${float(t.get('pip_value_min_lot', 0)):.4f}</code> | Spread típico: <code>{float(t.get('spread', 0)):.5g}</code>",
             "",
             f"▶️ <b>{dl}</b>",
             "",
@@ -1000,8 +1151,12 @@ class TradingBot:
             return
         universe = all_syms() if self.mode == "TUDO" else list(Config.MARKET_CATEGORIES[self.mode]["assets"].keys())
         for s in universe:
-            cat = asset_cat(s)
-            if not mkt_open(cat):
+            # MELHORIA 3/4 — verifica horario Tickmill e liquidez por simbolo
+            is_open, high_liq, liq_reason = sym_mkt_open(s)
+            if not is_open:
+                continue
+            if not high_liq:
+                # Baixa liquidez: pula silenciosamente (evita sinais ruins)
                 continue
             if any(t["symbol"] == s for t in self.active_trades):
                 continue
@@ -1091,10 +1246,18 @@ class TradingBot:
             else:
                 sl = price + Config.ATR_MULT_SL * atr
                 tp = price - Config.ATR_MULT_TP * atr
+            # MELHORIA 1 — validação Stop Level mínimo Tickmill
+            sl_tp_ok, sl_tp_err = validate_sl_tp(s, price, sl, tp, dir_s)
+            if not sl_tp_ok:
+                log(f"[STOP LEVEL] {s}: {sl_tp_err}")
+                continue
             sl_pct = abs(price - sl) / price * 100
             tp_pct = abs(tp - price) / price * 100
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"] > 0 else "N/A"
+            # MELHORIA 1 — pip value e spread para o sinal
+            pv = pip_value_usd(s, Config.MIN_LOT, price)
+            spd = get_spread(s)
             self.pending_counter += 1
             pending_trade = {
                 "pending_id": self.pending_counter,
@@ -1116,6 +1279,8 @@ class TradingBot:
                 "bar": bar,
                 "ratio": ratio,
                 "vol_txt": vol_txt,
+                "pip_value_min_lot": pv,
+                "spread": spd,
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
@@ -1124,11 +1289,13 @@ class TradingBot:
     def scan_reversal_forex(self):
         if self.is_paused():
             return
-        if not mkt_open("FOREX"):
-            return
         if len(self.active_trades) >= Config.MAX_TRADES:
             return
         for s in Config.MARKET_CATEGORIES["FOREX"]["assets"].keys():
+            # MELHORIA 3/4 — horario e liquidez Tickmill por simbolo
+            is_open, high_liq, _ = sym_mkt_open(s)
+            if not is_open or not high_liq:
+                continue
             if any(t["symbol"] == s for t in self.active_trades):
                 continue
             if any(t["symbol"] == s for t in self.pending_trades):
@@ -1208,6 +1375,28 @@ class TradingBot:
             save_state(self)
     def monitor_trades(self):
         changed = False
+        # MELHORIA 5 — Alerta proativo de margem Tickmill
+        if self.active_trades:
+            snap = account_snapshot(self)
+            ml = snap["margin_level"]
+            if ml > 0:
+                alert_key = "_margin_warned_120"
+                alert_key_mc = "_margin_warned_mc"
+                if ml <= Config.STOP_OUT_LEVEL + 5 and not getattr(self, alert_key_mc, False):
+                    self.send("\U0001f6a8 <b>PERIGO \u2014 STOP OUT IMINENTE!</b>\n"
+                              f"Margin Level: <code>{ml:.1f}%</code> (limite Tickmill: <code>{Config.STOP_OUT_LEVEL:.0f}%</code>)\n"
+                              f"Free Margin: <code>{fmt(snap['free_margin'])}</code>\n"
+                              "\u26d4 MT5 pode fechar posi\u00e7\u00f5es automaticamente!")
+                    setattr(self, alert_key_mc, True)
+                elif ml <= Config.MARGIN_CALL_LEVEL + 20 and not getattr(self, alert_key, False):
+                    self.send("\u26a0\ufe0f <b>ALERTA DE MARGEM \u2014 Tickmill</b>\n"
+                              f"Margin Level: <code>{ml:.1f}%</code> (Margin Call: <code>{Config.MARGIN_CALL_LEVEL:.0f}%</code>)\n"
+                              f"Free Margin: <code>{fmt(snap['free_margin'])}</code> | Equity: <code>{fmt(snap['equity'])}</code>\n"
+                              "Considere reduzir exposi\u00e7\u00e3o ou adicionar fundos.")
+                    setattr(self, alert_key, True)
+                    # Reset alertas quando margem se recupera
+                    setattr(self, alert_key, False)
+                    setattr(self, alert_key_mc, False)
         for t in self.active_trades[:]:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res:
@@ -1291,6 +1480,15 @@ class TradingBot:
 
         if changed:
             save_state(self)
+        # MELHORIA 7 — registra ponto na equity curve a cada ciclo com trades ativos
+        if self.active_trades:
+            snap = account_snapshot(self)
+            self.equity_curve.append({
+                "ts": datetime.now(Config.BR_TZ).strftime("%H:%M"),
+                "equity": snap["equity"],
+                "balance": snap["balance"],
+            })
+            self.equity_curve = self.equity_curve[-288:]  # máx 24h a cada 5min
 # ═══════════════════════════════════════════════════════════════
 # SERVICE WORKER
 # ═══════════════════════════════════════════════════════════════
@@ -1476,6 +1674,19 @@ body.focus .focus-banner{display:block}
 .toast.t-warning{border-color:rgba(255,215,64,.3);background:rgba(255,215,64,.07)}
 .toast.t-info{border-color:rgba(68,138,255,.3);background:rgba(68,138,255,.09)}
 .ticon{font-size:18px;flex-shrink:0}.ttxt{font-size:12px;font-weight:600}
+/* ── MELHORIA 7 — EQUITY CURVE ── */
+.eq-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px;position:relative}
+.eq-wrap canvas{width:100%!important;display:block}
+/* ── MELHORIA 8 — SPREAD BADGE no Scanner ── */
+.spd-badge{font-size:9px;background:var(--bg4);color:var(--muted2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-family:var(--mono)}
+.liq-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.liq-dot.hi{background:var(--green)}.liq-dot.lo{background:var(--gold)}
+/* ── MELHORIA 9 — LEVERAGE TABLE ── */
+.lev-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.lev-table th{font-size:9px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted2);padding:6px 4px;text-align:left;border-bottom:1px solid var(--border);font-weight:700}
+.lev-table td{padding:7px 4px;border-bottom:1px solid var(--border);font-family:var(--mono);color:var(--text2)}
+.lev-table tr:last-child td{border-bottom:none}
+.lev-cat{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted2);font-weight:700;padding:10px 0 4px;display:block}
 /* ── ERROR BANNER ── */
 .eb{background:var(--r3);border:1px solid rgba(255,61,113,.2);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:12px;color:var(--red);display:none;text-align:center}
 /* ── CONFIG ── */
@@ -1554,6 +1765,9 @@ body.focus .focus-banner{display:block}
   </div>
   <div class="chd">💼 Trades Ativos <span class="ts">Auto: 5s</span></div>
   <div id="d-trades"><div class="skel skel-card"></div></div>
+  <!-- MELHORIA 7 — Mini Equity Curve Chart -->
+  <div class="chd">📈 Equity Curve <span class="ts" id="eq-ts"></span></div>
+  <div class="eq-wrap"><canvas id="eq-chart" height="80"></canvas></div>
   <div class="chd">📜 Histórico Hoje</div>
   <div id="d-closed-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div></div>
 </div>
@@ -1614,6 +1828,11 @@ body.focus .focus-banner{display:block}
   <div class="cfgsec"><div class="cfgl">Modo Focus (Execução)</div>
     <button class="ab abn" id="focus-cfg-btn" onclick="toggleFocus()">🎯 Ativar Modo Focus</button>
   </div>
+  <!-- MELHORIA 9 — Tabela de alavancagem Tickmill -->
+  <div class="cfgsec">
+    <div class="cfgl">Alavancagem & Specs Tickmill</div>
+    <div id="lev-table"><div class="empty"><span class="empi">⚙</span><div class="empt">Carregando...</div></div></div>
+  </div>
   <button class="ab abd" onclick="resetPausa()">⛔ Resetar Circuit Breaker</button>
   <button class="ab abn" onclick="requestNotif()">🔔 Ativar Notificações Push</button>
   <button class="ab abp" onclick="refreshAll()">↻ Atualizar App</button>
@@ -1632,6 +1851,7 @@ body.focus .focus-banner{display:block}
 <div class="toast" id="toast"><span class="ticon">🔔</span><span class="ttxt"></span></div>
 <script>
 let _st=null,_sigs=[],_unread=0,_lastSigLen=0,_pending=[],_focusMode=false;
+let _mktInfo={},_eqChart=null,_eqData=[];
 function fp(p){
   if(p==null)return'--';
   if(p>=10000)return p.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1783,8 +2003,61 @@ async function loadDash(){
       ?renderClosedToday(_st.history_today)
       :'<div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div>';
     updCfgBtns();
+    loadEquityCurve();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
+
+// ── MELHORIA 7 — Mini Equity Curve Chart ─────────────────────────────────
+async function loadEquityCurve(){
+  try{
+    const d=await apiFetch('/api/equity_curve');
+    if(!d||!d.length){
+      const wrap=document.getElementById('eq-chart');
+      if(wrap&&wrap.parentElement)wrap.parentElement.style.display='none';
+      return;
+    }
+    document.querySelector('.eq-wrap').style.display='block';
+    const tsEl=document.getElementById('eq-ts');
+    if(tsEl)tsEl.textContent=d[0].ts+'→'+d[d.length-1].ts;
+    const labels=d.map(p=>p.ts);
+    const eq=d.map(p=>p.equity);
+    const bal=d.map(p=>p.balance);
+    const minV=Math.min(...eq,...bal)*0.999;
+    const maxV=Math.max(...eq,...bal)*1.001;
+    const canvas=document.getElementById('eq-chart');
+    if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    const W=canvas.offsetWidth||320;canvas.width=W;canvas.height=80;
+    ctx.clearRect(0,0,W,80);
+    const toY=v=>80-((v-minV)/(maxV-minV||1))*72-4;
+    const toX=(i,len)=>(i/(len-1||1))*(W-8)+4;
+    // Balance line
+    ctx.strokeStyle='rgba(68,138,255,0.4)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    bal.forEach((v,i)=>{i===0?ctx.moveTo(toX(i,bal.length),toY(v)):ctx.lineTo(toX(i,bal.length),toY(v));});
+    ctx.stroke();ctx.setLineDash([]);
+    // Equity fill
+    const eqColor=eq[eq.length-1]>=eq[0]?'rgba(0,230,118,':'rgba(255,61,113,';
+    const grad=ctx.createLinearGradient(0,0,0,80);
+    grad.addColorStop(0,eqColor+'0.25)');grad.addColorStop(1,eqColor+'0.02)');
+    ctx.fillStyle=grad;
+    ctx.beginPath();
+    ctx.moveTo(toX(0,eq.length),80);
+    eq.forEach((v,i)=>ctx.lineTo(toX(i,eq.length),toY(v)));
+    ctx.lineTo(toX(eq.length-1,eq.length),80);ctx.closePath();ctx.fill();
+    // Equity line
+    ctx.strokeStyle=eqColor+'0.9)';ctx.lineWidth=1.5;
+    ctx.beginPath();
+    eq.forEach((v,i)=>{i===0?ctx.moveTo(toX(i,eq.length),toY(v)):ctx.lineTo(toX(i,eq.length),toY(v));});
+    ctx.stroke();
+    // Last value label
+    const lastEq=eq[eq.length-1];
+    ctx.fillStyle=eqColor+'1)';ctx.font='bold 10px monospace';
+    ctx.textAlign='right';
+    ctx.fillText('$'+lastEq.toFixed(2),W-4,toY(lastEq)-4);
+  }catch(e){}
+}
+
 function renderOpenTrade(t){
   const buy=t.dir==='BUY',pos=t.pnl>=0;
   const cls=buy?'buy':'sell';
@@ -1907,7 +2180,9 @@ async function rejectPending(id,btn){
 function copyText(txt){navigator.clipboard.writeText(String(txt));toast('Copiado: '+txt,'info');}
 async function loadScanner(){
   try{
-    const d=await apiFetch('/api/trends');
+    // MELHORIA 8 — carrega market_info junto para spread e liquidez ao vivo
+    const [d, mi]=await Promise.all([apiFetch('/api/trends'), apiFetch('/api/market_info').catch(()=>({}))]);
+    _mktInfo=mi||{};
     const g={};
     d.forEach(x=>{const c=x.category||'OUTROS';(g[c]=g[c]||[]).push(x);});
     let h='';
@@ -1922,8 +2197,12 @@ async function loadScanner(){
         const cls=x.cenario==='ALTA'?'up':x.cenario==='BAIXA'?'dn':'neut';
         const tag=x.cenario==='ALTA'?'▲ ALTA':x.cenario==='BAIXA'?'▼ BAIXA':'NEUTRO';
         const chgCls=x.change_pct>=0?'g':'r';
+        // MELHORIA 8 — spread ao vivo + indicador de liquidez
+        const info=_mktInfo[x.symbol]||{};
+        const spdTxt=info.spread>0?`<span class="spd-badge">spd ${info.spread}</span>`:'';
+        const liqDot=info.open?(info.high_liq?'<span class="liq-dot hi" title="Alta liquidez"></span>':'<span class="liq-dot lo" title="Liquidez moderada"></span>'):'<span class="liq-dot" style="background:var(--muted)" title="Fechado"></span>';
         return`<div class="titem ${cls}">
-          <div><div class="tsym-scan">${x.symbol}</div><div class="tname-scan">${x.name}</div></div>
+          <div><div class="tsym-scan">${liqDot}${x.symbol}</div><div class="tname-scan">${x.name} ${spdTxt}</div></div>
           <div class="tmeta">
             <span class="ttag ${cls}">${tag}</span>
             <div class="tscan-r">
@@ -2018,6 +2297,36 @@ async function loadCfg(){
     const pml=document.getElementById('p-minlot'); if(pml) pml.textContent=c.min_lot||'0.01';
   }catch(_){}
   updCfgBtns();
+  loadLeverageTable();
+}
+
+// ── MELHORIA 9 — Tabela de Alavancagem & Specs Tickmill ──────────────────
+async function loadLeverageTable(){
+  try{
+    const rows=await apiFetch('/api/leverage_table');
+    const cats=['FOREX','COMMODITIES','INDICES','CRYPTO'];
+    const catLb={FOREX:'FOREX',COMMODITIES:'COMMODITIES',INDICES:'ÍNDICES',CRYPTO:'CRIPTO'};
+    let h='<table class="lev-table"><thead><tr><th>Símbolo</th><th>Alav. Máx</th><th>Spread</th><th>Comissão RT</th></tr></thead><tbody>';
+    for(const cat of cats){
+      const items=rows.filter(r=>r.category===cat);
+      if(!items.length)continue;
+      h+=`<tr><td colspan="4"><span class="lev-cat">${catLb[cat]||cat}</span></td></tr>`;
+      items.forEach(r=>{
+        const lev=r.max_leverage;
+        const levColor=lev>=300?'var(--green)':lev>=100?'var(--gold)':'var(--text2)';
+        const comm=r.commission_rt>0?`$${r.commission_rt.toFixed(2)}`:'spread only';
+        h+=`<tr>
+          <td style="color:var(--text)">${r.symbol}</td>
+          <td style="color:${levColor};font-weight:700">1:${lev}</td>
+          <td>${r.spread}</td>
+          <td style="color:var(--muted2)">${comm}</td>
+        </tr>`;
+      });
+    }
+    h+='</tbody></table>';
+    const el=document.getElementById('lev-table');
+    if(el)el.innerHTML=h;
+  }catch(e){}
 }
 function updCfgBtns(){
   if(!_st)return;
@@ -2247,11 +2556,19 @@ def create_api(bot):
         return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
     @app.route("/api/trends")
     def api_trends():
-        bot.update_trends_cache()        
+        bot.update_trends_cache()
         out = []
         for sym, entry in bot.trend_cache.items():
             d = entry["data"]
-            out.append({"symbol": sym, "name": d["name"], "category": asset_cat(sym), "price": d["price"], "cenario": d["cenario"], "rsi": round(d["rsi"],1), "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2)})
+            is_open, high_liq, liq_reason = sym_mkt_open(sym)
+            out.append({
+                "symbol": sym, "name": d["name"], "category": asset_cat(sym),
+                "price": d["price"], "cenario": d["cenario"],
+                "rsi": round(d["rsi"],1), "adx": round(d["adx"],1),
+                "change_pct": round(d["change_pct"],2),
+                "spread": get_spread(sym),
+                "is_open": is_open, "high_liq": high_liq, "liq_reason": liq_reason,
+            })
         out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))
         return jsonify(out)
     @app.route("/api/reversals")
@@ -2297,6 +2614,44 @@ def create_api(bot):
         sub = request.get_json(force=True)
         if sub and sub not in _push_subscriptions: _push_subscriptions.append(sub)
         return jsonify({"ok": True})
+    # MELHORIA 7 — Equity Curve
+    @app.route("/api/equity_curve")
+    def api_equity_curve():
+        return jsonify(bot.equity_curve[-96:])  # últimas 8h
+
+    # MELHORIA 9 — Tabela de alavancagem Tickmill por categoria/símbolo
+    @app.route("/api/leverage_table")
+    def api_leverage_table():
+        table = []
+        for cat, info in Config.MARKET_CATEGORIES.items():
+            for sym, name in info["assets"].items():
+                table.append({
+                    "symbol": sym, "name": name, "category": cat,
+                    "max_leverage": max_leverage_for(sym),
+                    "spread": get_spread(sym),
+                    "pip_size": pip_size(sym),
+                    "stop_level": get_stop_level(sym),
+                    "contract_size": contract_size_for(sym),
+                    "commission_rt": commission_for(sym, 1.0),
+                })
+        return jsonify(table)
+
+    # MELHORIA 8 — Spread ao vivo estimado no Scanner
+    @app.route("/api/market_info")
+    def api_market_info():
+        out = {}
+        for sym in all_syms():
+            is_open, high_liq, liq_reason = sym_mkt_open(sym)
+            out[sym] = {
+                "open": is_open,
+                "high_liq": high_liq,
+                "liq_reason": liq_reason,
+                "spread": get_spread(sym),
+                "stop_level": get_stop_level(sym),
+                "max_leverage": max_leverage_for(sym),
+            }
+        return jsonify(out)
+
     return app
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
