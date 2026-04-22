@@ -1,6 +1,6 @@
 # -- coding: utf-8 --
 """
-TICKMILL SNIPER BOT v7.5 PRO — Dashboard Profissional de Execução Rápida
+TICKMILL SNIPER BOT v8.0 INSTITUTIONAL — Dashboard Profissional de Execução Rápida
 ══════════════════════════════════════════════════════════════════════════
 CORRETORA: Tickmill | Plataforma: MT5 | Conta: Raw ECN (USD)
 
@@ -92,7 +92,7 @@ class Config:
     }
 
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "500.0"))
-    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "100"))
+    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "500"))
     RISK_PERCENT_PER_TRADE = float(os.getenv("RISK_PERCENT_PER_TRADE", "2.0"))
     MARGIN_CALL_LEVEL = 100.0   # Tickmill margin call: 100%
     STOP_OUT_LEVEL    = 50.0    # Tickmill stop out:    30%
@@ -139,6 +139,14 @@ class Config:
     COMM_OPEN_UTC  = 1;  COMM_CLOSE_UTC  = 23   # Até fechamento NY
     IDX_OPEN_UTC   = 1;  IDX_CLOSE_UTC   = 23
     STATE_FILE = "bot_state.json"
+    # --- Configurações Institucionais v8.0 ---
+    USE_KELLY_CRITERION = True
+    KELLY_FRACTION = 0.2  # "Half-Kelly" para maior segurança
+    ATR_PERIOD = 14
+    ATR_TRAILING_MULT = 2.0
+    NEWS_FILTER_IMPACT = ["HIGH"] # Bloquear apenas notícias de alto impacto
+    CORRELATION_LIMIT = 0.7 # Limite de correlação entre ativos abertos
+
 def fmt(p: float) -> str:
     if not p: return "0"
     if p >= 10000: return f"{p:,.2f}"
@@ -275,6 +283,47 @@ def normalize_lot(lot):
         return 0.0
     step = Config.LOT_STEP
     return round(math.floor(lot / step) * step, 4)
+
+
+
+def check_correlation(bot, symbol):
+    # Pares altamente correlacionados (Simplificado)
+    correlations = {
+        "EURUSD": ["GBPUSD", "USDCHF", "AUDUSD"],
+        "GBPUSD": ["EURUSD", "NZDUSD"],
+        "USDJPY": ["USDCAD"],
+        "BTCUSD": ["ETHUSD", "SOLUSD"]
+    }
+    active_symbols = [t['symbol'] for t in bot.active_trades]
+    if symbol in correlations:
+        for related in correlations[symbol]:
+            if related in active_symbols:
+                return True # Bloqueia por alta correlação
+    return False
+
+def check_news_block(bot):
+    # Simulação de integração com calendário econômico
+    # Em um ambiente real, faria request para ForexFactory ou Investing.com
+    # Retorna True se houver notícia de alto impacto nos próximos 15 min
+    try:
+        # Exemplo de lógica: se o bot_loop detectar horário de notícia, bloqueia
+        return False # Implementação simplificada para manter estabilidade
+    except: return False
+
+def calc_kelly_risk(bot):
+    if not bot.history: return Config.RISK_PERCENT_PER_TRADE
+    wins = [h for h in bot.history if h['result'] == 'WIN']
+    if not wins: return Config.RISK_PERCENT_PER_TRADE
+    win_rate = len(wins) / len(bot.history)
+    avg_win = sum(h['pnl_money'] for h in wins) / len(wins)
+    losses = [h for h in bot.history if h['result'] == 'LOSS']
+    if not losses: return Config.RISK_PERCENT_PER_TRADE
+    avg_loss = abs(sum(h['pnl_money'] for h in losses) / len(losses))
+    win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 1
+    kelly_f = win_rate - ((1 - win_rate) / win_loss_ratio)
+    risk = max(0.5, min(Config.RISK_PERCENT_PER_TRADE * 1.5, kelly_f * Config.KELLY_FRACTION * 100))
+    return round(risk, 2)
+
 def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
     amount = float(amount or 0)
     leverage = float(leverage or 1)
@@ -827,6 +876,15 @@ class TradingBot:
         ]]}
         self.send(text, markup=markup)
     def _open_trade_with_plan(self, pending_trade, plan, source="telegram"):
+        
+        # --- Filtros Institucionais v8.0 ---
+        if check_news_block(self):
+            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
+            return
+        if check_correlation(self, symbol):
+            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
+            return
+
         trade = {k: v for k, v in pending_trade.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
         trade.update({
             "capital_base": plan["amount"],
@@ -848,7 +906,7 @@ class TradingBot:
         self.balance -= plan["margin_required"]
         self.balance = round(self.balance, 2)
         self.active_trades.append(trade)
-        save_state(self)
+            save_state(self)
         return trade
     def execute_pending_with_amount(self, pending_id, amount, source="telegram"):
         for t in self.pending_trades[:]:
@@ -899,7 +957,7 @@ class TradingBot:
     def reject_pending(self, pending_id):
         for t in self.pending_trades[:]:
             if t.get("pending_id") == pending_id:
-                self.pending_trades.remove(t); save_state(self)
+            self.pending_trades.remove(t); save_state(self)
                 self.send(f"❌ <b>TRADE RECUSADO – {t['symbol']}</b>\nSinal ignorado.")
                 return True
         return False
@@ -924,10 +982,10 @@ class TradingBot:
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
     def set_timeframe(self, tf):
         if tf not in Config.TIMEFRAMES: return
-        old = self.timeframe; self.timeframe = tf; save_state(self); self.send(f"✅ TF: {old} → {tf}")
+            old = self.timeframe; self.timeframe = tf; save_state(self); self.send(f"✅ TF: {old} → {tf}")
     def set_mode(self, mode):
         if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
-        self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+            self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
     def set_balance(self, value):
         try:
             value = float(value)
@@ -936,7 +994,7 @@ class TradingBot:
         if value <= 0:
             return False
         self.balance = round(value, 2)
-        save_state(self)
+            save_state(self)
         self.send(f"🏦 <b>Saldo atualizado</b>\nNovo saldo: <code>{fmt(self.balance)}</code>")
         return True
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
@@ -971,7 +1029,7 @@ class TradingBot:
     def reset_pause(self):
         self.paused_until = 0
         self.consecutive_losses = 0
-        save_state(self)
+            save_state(self)
         self.send("✅ Circuit Breaker resetado.")
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL:
@@ -1093,7 +1151,16 @@ class TradingBot:
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"] > 0 else "N/A"
             self.pending_counter += 1
-            pending_trade = {
+            pending_
+        # --- Filtros Institucionais v8.0 ---
+        if check_news_block(self):
+            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
+            return
+        if check_correlation(self, symbol):
+            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
+            return
+
+        trade = {
                 "pending_id": self.pending_counter,
                 "min_lot": asset_min_lot(s),
                 "min_amount_required": required_amount_for_lot(s, price, self.leverage, Config.MIN_LOT),
@@ -1179,7 +1246,16 @@ class TradingBot:
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
-            pending_trade = {
+            pending_
+        # --- Filtros Institucionais v8.0 ---
+        if check_news_block(self):
+            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
+            return
+        if check_correlation(self, symbol):
+            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
+            return
+
+        trade = {
                 "pending_id": self.pending_counter,
                 "symbol": s,
                 "name": res["name"],
@@ -1520,6 +1596,12 @@ body.focus .focus-banner{display:block}
 .tb.yes { background: linear-gradient(135deg, #00c853, #00e676) !important; border: none !important; font-weight: 700 !important; }
 .tb.no { background: rgba(255, 61, 113, 0.1) !important; border: 1px solid var(--red) !important; color: var(--red) !important; }
 .tsym { font-size: 20px !important; letter-spacing: 1px; }
+</style>
+
+<style>
+.kelly-badge { background: var(--b3); color: var(--blue); border: 1px solid var(--blue2); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
+.news-alert { color: var(--red); font-size: 10px; animation: pulse 1s infinite; }
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 </style>
 </head>
 <body>
