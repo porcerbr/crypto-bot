@@ -21,6 +21,11 @@ import pandas as pd, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+from flask_extensions import register_dashboard_routes
+
+app = Flask(__name__)
+register_dashboard_routes(app, bot)  # ← ADICIONE ISTO
+
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURAÇÕES & HELPERS (100% PRESERVADOS)
 # ═══════════════════════════════════════════════════════════════
