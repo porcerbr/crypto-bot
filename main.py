@@ -957,7 +957,7 @@ class TradingBot:
     def reject_pending(self, pending_id):
         for t in self.pending_trades[:]:
             if t.get("pending_id") == pending_id:
-            self.pending_trades.remove(t); save_state(self)
+                self.pending_trades.remove(t); save_state(self)
                 self.send(f"❌ <b>TRADE RECUSADO – {t['symbol']}</b>\nSinal ignorado.")
                 return True
         return False
