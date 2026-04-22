@@ -1000,7 +1000,7 @@ class TradingBot:
         if value <= 0:
             return False
         self.balance = round(value, 2)
-            save_state(self)
+        save_state(self)
         self.send(f"🏦 <b>Saldo atualizado</b>\nNovo saldo: <code>{fmt(self.balance)}</code>")
         return True
     def send_news(self): self.send(build_news_msg(), disable_preview=True); self.last_news_ts = time.time()
@@ -1035,7 +1035,7 @@ class TradingBot:
     def reset_pause(self):
         self.paused_until = 0
         self.consecutive_losses = 0
-            save_state(self)
+        save_state(self)
         self.send("✅ Circuit Breaker resetado.")
     def update_trends_cache(self):
         if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL:
@@ -1157,16 +1157,7 @@ class TradingBot:
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             vol_txt = f"{res['vol_ratio']:.1f}x média" if res["vol_ratio"] > 0 else "N/A"
             self.pending_counter += 1
-            pending_
-        # --- Filtros Institucionais v8.0 ---
-        if check_news_block(self):
-            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
-            return
-        if check_correlation(self, symbol):
-            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
-            return
-
-        trade = {
+            pending_trade = {
                 "pending_id": self.pending_counter,
                 "min_lot": asset_min_lot(s),
                 "min_amount_required": required_amount_for_lot(s, price, self.leverage, Config.MIN_LOT),
@@ -1252,16 +1243,7 @@ class TradingBot:
             dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
             sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
             self.pending_counter += 1
-            pending_
-        # --- Filtros Institucionais v8.0 ---
-        if check_news_block(self):
-            # self.send("⚠️ Operação bloqueada: Notícia de alto impacto próxima.")
-            return
-        if check_correlation(self, symbol):
-            # self.send(f"⚠️ Operação bloqueada: Alta correlação detectada para {symbol}.")
-            return
-
-        trade = {
+            pending_trade = {
                 "pending_id": self.pending_counter,
                 "symbol": s,
                 "name": res["name"],
