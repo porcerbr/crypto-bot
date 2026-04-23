@@ -1634,6 +1634,13 @@ body.focus .focus-banner{display:block}
 .perf-wl{font-size:9px;color:var(--muted);font-weight:500;margin-top:2px}
 .perf-pct.pos{color:var(--green)}.perf-pct.neg{color:var(--red)}.perf-pct.zero{color:var(--muted2)}
 .perf-usd.pos{color:var(--green)}.perf-usd.neg{color:var(--red)}
+/* ── TRADINGVIEW LINK ── */
+.tv-link{display:flex;align-items:center;gap:5px;transition:color .15s}
+.tv-link:hover{color:var(--blue)}
+.tv-icon{font-size:11px;color:var(--blue);opacity:.7;font-weight:400}
+.tv-btn{width:100%;margin-top:12px;padding:11px;background:rgba(41,121,255,.1);border:1px solid rgba(41,121,255,.25);border-radius:10px;color:var(--blue);font-size:12px;font-weight:700;font-family:var(--sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:.3px;transition:all .18s}
+.tv-btn:active{background:rgba(41,121,255,.22);transform:scale(.97)}
+.tv-btn-logo{font-size:13px;color:#2962ff}
 /* ── HISTÓRICO com USD ── */
 .hist-usd{font-size:11px;font-family:var(--mono);font-weight:600;margin-top:2px}
 .hist-usd.pos{color:var(--green)}.hist-usd.neg{color:var(--red)}
@@ -2006,6 +2013,30 @@ async function loadDash(){
     updCfgBtns();
   }catch(e){document.getElementById('eb').style.display='block';}
 }
+function tvSymbol(sym){
+  const map={
+    // FOREX
+    'EURUSD':'FX:EURUSD','GBPUSD':'FX:GBPUSD','USDJPY':'FX:USDJPY','AUDUSD':'FX:AUDUSD',
+    'USDCAD':'FX:USDCAD','USDCHF':'FX:USDCHF','NZDUSD':'FX:NZDUSD','EURGBP':'FX:EURGBP',
+    'EURJPY':'FX:EURJPY','GBPJPY':'FX:GBPJPY',
+    // CRYPTO
+    'BTCUSD':'BITSTAMP:BTCUSD','ETHUSD':'BITSTAMP:ETHUSD','SOLUSD':'COINBASE:SOLUSD',
+    'BNBUSD':'BINANCE:BNBUSDT','XRPUSD':'BITSTAMP:XRPUSD','ADAUSD':'COINBASE:ADAUSD',
+    'DOGEUSD':'BITSTAMP:DOGEUSD','LTCUSD':'BITSTAMP:LTCUSD',
+    // COMMODITIES
+    'XAUUSD':'TVC:GOLD','XAGUSD':'TVC:SILVER','XTIUSD':'TVC:USOIL',
+    'BRENT':'TVC:UKOIL','NATGAS':'TVC:NATURALGAS','COPPER':'COMEX:HG1!',
+    // ÍNDICES
+    'US500':'SP:SPX','USTEC':'NASDAQ:NDX','US30':'DJ:DJI',
+    'DE40':'XETR:DAX','UK100':'LSE:UKX','JP225':'TVC:NI225',
+    'AUS200':'ASX:XJO','STOXX50':'TVC:SX5E',
+  };
+  return map[sym]||('FX:'+sym);
+}
+function openChart(sym){
+  const tv=tvSymbol(sym);
+  window.open('https://www.tradingview.com/chart/?symbol='+encodeURIComponent(tv),'_blank');
+}
 function renderOpenTrade(t){
   const buy=t.dir==='BUY',pos=t.pnl>=0;
   const cls=buy?'buy':'sell';
@@ -2014,7 +2045,10 @@ function renderOpenTrade(t){
   const maxLevTxt=t.max_leverage?` | máx ${t.max_leverage}x`:'';
   return`<div class="tcard ${cls}">
     <div class="tcard-head">
-      <div><div class="tsym">${t.symbol}</div><div class="tname">${t.name||''} <span style="font-size:9px;color:var(--muted2)">[MT5]</span></div></div>
+      <div style="cursor:pointer" onclick="openChart('${t.symbol}')" title="Abrir gráfico no TradingView">
+        <div class="tsym tv-link">${t.symbol} <span class="tv-icon">↗</span></div>
+        <div class="tname">${t.name||''} <span style="font-size:9px;color:var(--muted2)">[MT5]</span></div>
+      </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         <div class="tdir ${buy?'':'sell'}">${buy?'▲ BUY':'▼ SELL'}</div>
         <span class="ttype-badge">${t.tipo||'TREND'}</span>
@@ -2035,6 +2069,9 @@ function renderOpenTrade(t){
       <span>🛡 SL: <span class="${distSlClass}">${t.dist_sl.toFixed(1)}%</span></span>
       <span>🎯 TP: <span class="${distTpClass}">${t.dist_tp.toFixed(1)}%</span></span>
     </div>
+    <button class="tv-btn" onclick="openChart('${t.symbol}')">
+      <span class="tv-btn-logo">▲</span> Ver no TradingView
+    </button>
   </div>`;
 }
 function renderClosedToday(list){
