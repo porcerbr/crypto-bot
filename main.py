@@ -1467,7 +1467,7 @@ else clients.openWindow('/');
 # ═══════════════════════════════════════════════════════════════
 # DASHBOARD v9.0 — INTERFACE SIMPLIFICADA TICKMILL
 # ═══════════════════════════════════════════════════════════════
-DASHBOARD_HTML = r"""
+DASHBOARD_HTML = r'''"
 <!DOCTYPE html>
 <html lang="pt-BR"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
@@ -1828,7 +1828,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 </div>
 <div class="toast" id="toast"><span class="ticon">🔔</span><span class="ttxt"></span></div>
-"""
+
 
 <script>
 let _st=null,_sigs=[],_unread=0,_lastSigLen=0,_pending=[];
@@ -2357,7 +2357,8 @@ window.addEventListener('load',()=>{
 </script>
 </body>
 </html>
-"""
+'''
+
 
 # ═══════════════════════════════════════════════════════════════
 # FLASK API v9.0 (COMPATÍVEL COM FRONTEND NOVO)
