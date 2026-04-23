@@ -56,6 +56,17 @@ class Config:
     SL_MIN_PCT = 0.2
     TP_SL_RATIO = 2.5
 
+    # ── RR Dinâmico — condições premium para ampliar o ratio ──────
+    # O bot avalia até 8 condições técnicas de "alinhamento perfeito".
+    # Quando suficientes se confirmam, o TP é estendido automaticamente.
+    DYNAMIC_RR_ENABLED = True
+    # (mínimo de condições, ratio, label)
+    DYNAMIC_RR_TIERS = [
+        (3, 3.0, "⚡ Forte"),        # 3-4 condições → 1:3.0
+        (5, 3.5, "🔥 Muito Forte"),  # 5-6 condições → 1:3.5
+        (7, 4.5, "💎 Perfeito"),     # 7+ condições → 1:4.5
+    ]
+
     ATR_MULT_SL = 1.5; ATR_MULT_TP = 3.75; ATR_MULT_TRAIL = 1.2
     MAX_CONSECUTIVE_LOSSES = 2; PAUSE_DURATION = 3600
     ADX_MIN = 22; MAX_TRADES = 3; ASSET_COOLDOWN = 3600; MIN_CONFLUENCE = 5
@@ -296,16 +307,17 @@ def commission_for(symbol, lot):
     return round(rate * float(lot) * 2, 2)  # ×2 porque é open + close
 
 # ── SL/TP % AUTOMÁTICO BASEADO NA ALAVANCAGEM ─────────────────
-def get_sl_tp_pct(leverage):
+def get_sl_tp_pct(leverage, rr_ratio=None):
     """
     Quanto maior a alavancagem, menor a % de SL/TP.
     Fórmula: SL% = 250 / leverage, capped entre 0.2% e 3.0%
-    TP% = SL% × 2.5
+    TP% = SL% x rr_ratio (padrao 2.5, pode ser elevado pelo RR dinamico)
     """
     leverage = max(1, int(leverage))
     sl = Config.SL_TP_BASE_MULTIPLIER / leverage
     sl = min(Config.SL_MAX_PCT, max(Config.SL_MIN_PCT, sl))
-    tp = sl * Config.TP_SL_RATIO
+    rr = rr_ratio if rr_ratio is not None else Config.TP_SL_RATIO
+    tp = sl * rr
     return round(sl, 2), round(tp, 2)
 
 # ── CÁLCULO DE LOTE BASEADO EM VALOR USD ───────────────────────
@@ -886,6 +898,94 @@ def send_push(title, body, icon="/icon-192.png"):
     except Exception as e: log(f"[PUSH] {e}")
 
 # ═══════════════════════════════════════════════════════════════
+# RR DINAMICO — AVALIACAO DE CONDICOES PREMIUM
+# ═══════════════════════════════════════════════════════════════
+def calc_premium_rr(res, dir_s, sc, tot_c):
+    """
+    Avalia até 8 condições técnicas de 'alinhamento perfeito'.
+    Retorna (rr_ratio, rr_label, premium_score, premium_reasons).
+
+    Tiers (definidos em Config.DYNAMIC_RR_TIERS):
+      3 condicoes -> 1:3.0  (Forte)
+      5 condicoes -> 1:3.5  (Muito Forte)
+      7 condicoes -> 1:4.5  (Perfeito)
+    """
+    if not Config.DYNAMIC_RR_ENABLED:
+        return Config.TP_SL_RATIO, f"Padrao 1:{Config.TP_SL_RATIO}", 0, []
+
+    premium = []
+    price  = res.get("price", 1)
+    rsi    = res.get("rsi", 50)
+    adx    = res.get("adx", 0)
+    upper  = res.get("upper", price)
+    lower  = res.get("lower", price)
+    ema9   = res.get("ema9", price)
+    ema21  = res.get("ema21", price)
+
+    # 1. ADX muito forte — tendencia madura e poderosa
+    if adx > 35:
+        premium.append(f"ADX {adx:.0f} (tendencia forte)")
+
+    # 2. Confluencia maxima ou quase (todos os filtros passaram)
+    if sc >= tot_c:
+        premium.append(f"Confluencia maxima ({sc}/{tot_c})")
+    elif sc >= tot_c - 1 and tot_c >= 6:
+        premium.append(f"Confluencia quase perfeita ({sc}/{tot_c})")
+
+    # 3. Volume muito acima da media (convicção do mercado)
+    vol_ratio = res.get("vol_ratio", 0)
+    if vol_ratio > 1.8:
+        premium.append(f"Volume {vol_ratio:.1f}x acima da media")
+
+    # 4. MACD forte E acelerado na direcao correta
+    macd_hist = res.get("macd_hist", 0)
+    if dir_s == "BUY"  and res.get("macd_bull") and macd_hist > 0:
+        premium.append("MACD forte e acelerado (alta)")
+    elif dir_s == "SELL" and res.get("macd_bear") and macd_hist < 0:
+        premium.append("MACD forte e acelerado (baixa)")
+
+    # 5. Alinhamento multi-timeframe (TF superior confirma)
+    if (dir_s == "BUY"  and res.get("h1_bull")) or \
+       (dir_s == "SELL" and res.get("h1_bear")):
+        premium.append("TF superior alinhado")
+
+    # 6. RSI em zona ideal — espaco para o preco correr
+    #    BUY:  RSI entre 40-60 (nao sobrecomprado, ainda tem forca)
+    #    SELL: RSI entre 40-60 (nao sobrevendido, ainda tem espaco)
+    if dir_s == "BUY"  and 40 <= rsi <= 60:
+        premium.append(f"RSI {rsi:.0f} — zona ideal de alta")
+    elif dir_s == "SELL" and 40 <= rsi <= 60:
+        premium.append(f"RSI {rsi:.0f} — zona ideal de baixa")
+
+    # 7. Preco longe das Bandas de Bollinger (nao esta em extremo)
+    #    Se o preco esta perto da banda oposta, o espaco de movimento e grande.
+    band_range = max(upper - lower, 1e-10)
+    pct_pos = (price - lower) / band_range  # 0 = na banda inf, 1 = na banda sup
+    if dir_s == "BUY"  and 0.25 <= pct_pos <= 0.65:
+        premium.append("Espaco nas bandas para alta")
+    elif dir_s == "SELL" and 0.35 <= pct_pos <= 0.75:
+        premium.append("Espaco nas bandas para baixa")
+
+    # 8. EMAs bem espaçadas — momentum direcional claro
+    ema_spread_pct = abs(ema9 - ema21) / max(price, 1e-10) * 100
+    if ema_spread_pct > 0.08:
+        premium.append(f"EMAs espaçadas {ema_spread_pct:.2f}% (momentum claro)")
+
+    # Determinar tier de RR (do mais alto para o mais baixo)
+    n = len(premium)
+    rr_ratio = Config.TP_SL_RATIO
+    rr_label = f"Padrao 1:{Config.TP_SL_RATIO}"
+
+    for min_cond, rr, label in sorted(Config.DYNAMIC_RR_TIERS, key=lambda x: x[0], reverse=True):
+        if n >= min_cond:
+            rr_ratio = rr
+            rr_label = f"{label} 1:{rr}"
+            break
+
+    return rr_ratio, rr_label, n, premium
+
+
+# ═══════════════════════════════════════════════════════════════
 # BOT PRINCIPAL (MODIFICADO PARA TICKMILL v9)
 # ═══════════════════════════════════════════════════════════════
 class TradingBot:
@@ -937,17 +1037,33 @@ class TradingBot:
         snap = account_snapshot(self)
         max_lev = max_leverage_for(t["symbol"])
         eff_lev = min(self.leverage, max_lev)
-        sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
+        # Usar sl_pct/tp_pct ja calculados no sinal (incluem RR dinamico)
+        sl_pct = t.get("sl_pct", get_sl_tp_pct(eff_lev)[0])
+        tp_pct = t.get("tp_pct", get_sl_tp_pct(eff_lev)[1])
+        rr_ratio = t.get("rr_ratio", Config.TP_SL_RATIO)
+        rr_label = t.get("rr_label", f"Padrao 1:{Config.TP_SL_RATIO}")
+        premium_reasons = t.get("premium_reasons", [])
+        premium_score   = t.get("premium_score", 0)
+
+        # Bloco de RR — destaca se foi ampliado
+        if rr_ratio > Config.TP_SL_RATIO:
+            rr_line = (
+                f"RR AMPLIADO: <b>{rr_label}</b> ({premium_score} cond. premium)\n"
+                + "\n".join(f"   ✨ {r}" for r in premium_reasons)
+            )
+        else:
+            rr_line = f"RR padrao 1:{Config.TP_SL_RATIO} (mercado nao atingiu condicoes premium)"
 
         comm_info = ""
         if asset_cat(t["symbol"]) in ("FOREX", "COMMODITIES"):
-            comm_info = f"\n💳 Comissão RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
+            comm_info = f"\n💳 Comissao RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
 
         text = "\n".join([
             f"🎯 <b>SINAL PENDENTE – {t['symbol']}</b> ({t['name']}) [Tickmill MT5]",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
-            f"Alavancagem efetiva: <code>{eff_lev}x</code> (máx. Tickmill: <code>{max_lev}x</code>)",
-            f"SL/TP automático: <code>-{sl_pct}%</code> / <code>+{tp_pct}%</code> (ratio 1:{Config.TP_SL_RATIO})",
+            f"Alavancagem efetiva: <code>{eff_lev}x</code> (max. Tickmill: <code>{max_lev}x</code>)",
+            f"SL/TP: <code>-{sl_pct}%</code> / <code>+{tp_pct}%</code>",
+            rr_line,
             f"Escolha quanto deseja investir (margem em USD):{comm_info}",
             "",
             f"▶️ <b>{dl}</b>",
@@ -962,7 +1078,7 @@ class TradingBot:
             "",
         ])
         if t.get("conf_txt"):
-            text += f"\n<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
+            text += f"\n<b>Confluencia: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
 
         markup = {"inline_keyboard": [
             [{"text": "$50", "callback_data": f"amt_50_{t['pending_id']}"},
@@ -1232,6 +1348,17 @@ class TradingBot:
                 )
                 continue
 
+            # ── RR Dinamico ─────────────────────────────────────────────
+            rr_ratio, rr_label, premium_score, premium_reasons = calc_premium_rr(res, dir_s, sc, tot_c)
+            sl_pct, tp_pct = get_sl_tp_pct(eff_lev, rr_ratio=rr_ratio)
+            # Recalcular SL/TP com o novo ratio
+            if dir_s == "BUY":
+                sl_est = round(price * (1 - sl_pct/100), 5)
+                tp_est = round(price * (1 + tp_pct/100), 5)
+            else:
+                sl_est = round(price * (1 + sl_pct/100), 5)
+                tp_est = round(price * (1 - tp_pct/100), 5)
+
             self.pending_counter += 1
             pending_trade = {
                 "pending_id": self.pending_counter,
@@ -1242,6 +1369,8 @@ class TradingBot:
                 "session_alerted": True,
                 "conf_txt": conf_txt, "sc": sc, "tot_c": tot_c, "bar": bar,
                 "sl_pct": sl_pct, "tp_pct": tp_pct,
+                "rr_ratio": rr_ratio, "rr_label": rr_label,
+                "premium_score": premium_score, "premium_reasons": premium_reasons,
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
@@ -1290,6 +1419,11 @@ class TradingBot:
             sc, tc, ch, dir_s, sinais = cands[0]
             bar = cbar(sc, tc)
             conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in ch)
+
+            # ── RR Dinamico (contra-tendencia) ───────────────────────────
+            rr_ratio, rr_label, premium_score, premium_reasons = calc_premium_rr(res, dir_s, sc, tc)
+            sl_pct, tp_pct = get_sl_tp_pct(eff_lev, rr_ratio=rr_ratio)
+
             if dir_s == "BUY":
                 sl = round(price * (1 - sl_pct/100), 5)
                 tp = round(price * (1 + tp_pct/100), 5)
@@ -1306,6 +1440,8 @@ class TradingBot:
                 "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
                 "session_alerted": True, "conf_txt": conf_txt, "sc": sc, "tc": tc,
                 "bar": bar, "sl_pct": sl_pct, "tp_pct": tp_pct, "sinais": sinais,
+                "rr_ratio": rr_ratio, "rr_label": rr_label,
+                "premium_score": premium_score, "premium_reasons": premium_reasons,
             }
             self.pending_trades.append(pending_trade)
             self.send_pending_notification(pending_trade)
