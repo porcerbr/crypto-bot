@@ -372,7 +372,9 @@ def calc_trade_plan(symbol, entry, sl, tp, amount, leverage, risk_pct):
         margin_per_lot = (entry * contract_size) / leverage
 
     max_lot_by_margin = amount / margin_per_lot if margin_per_lot > 0 else 0.0
-    raw_lot = min(max_lot_by_margin, lot_by_risk)
+    # O 'amount' é tratado como MARGEM a ser deployada integralmente.
+    # lot_by_risk é mantido apenas como informação; não limita o lote final.
+    raw_lot = max_lot_by_margin
     lot = normalize_lot(raw_lot)
     note = []
 
@@ -1624,6 +1626,19 @@ body.focus .focus-banner{display:block}
 /* Melhorar contraste geral nos valores de risk panel */
 .risk-val { color: var(--text) !important; }
 .risk-item { background: rgba(255,255,255,0.03) !important; border: 1px solid rgba(255,255,255,0.07) !important; border-radius: 10px !important; }
+/* ── P&L em USD em destaque no card ── */
+.pnl-usd-row{display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.25);border-radius:10px;padding:10px 14px;margin:8px 0;border:1px solid rgba(255,255,255,.06)}
+.pnl-usd-label{font-size:10px;color:var(--muted2);font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+.pnl-usd-val{font-size:20px;font-weight:800;font-family:var(--mono);line-height:1}
+.pnl-usd-val.g{color:var(--green);text-shadow:0 0 12px rgba(0,230,118,.35)}
+.pnl-usd-val.r{color:var(--red);text-shadow:0 0 12px rgba(255,61,113,.35)}
+.pnl-sub{font-size:11px;font-family:var(--mono);font-weight:600;margin-top:2px;color:var(--muted2)}
+.pnl-sub.g{color:var(--green)}.pnl-sub.r{color:var(--red)}
+/* Linha de detalhes SL/TP% da entrada */
+.sltp-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+.sltp-box{background:rgba(0,0,0,.2);border-radius:8px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between}
+.sltp-lbl{font-size:10px;color:var(--muted2);font-weight:600}
+.sltp-val{font-size:12px;font-weight:700;font-family:var(--mono)}
 /* ── PAINEL DE PERFORMANCE DIA/SEMANA/MÊS ── */
 .perf-panel{display:flex;align-items:stretch;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
 .perf-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:14px 6px;gap:4px}
@@ -2043,6 +2058,13 @@ function renderOpenTrade(t){
   const distSlClass=t.dist_sl<30?'near':'far';
   const distTpClass=t.dist_tp<30?'near':'far';
   const maxLevTxt=t.max_leverage?` | máx ${t.max_leverage}x`:'';
+  const pnlUsd=t.pnl_money||0;
+  const pnlUsdPos=pnlUsd>=0;
+  const pnlUsdStr=(pnlUsdPos?'+$':'−$')+Math.abs(pnlUsd).toFixed(2);
+  const capitalStr=t.capital_base>0?'$'+fp(t.capital_base):'--';
+  const slPctStr=t.sl_pct_entry!=null?t.sl_pct_entry.toFixed(2)+'%':'--';
+  const tpPctStr=t.tp_pct_entry!=null?t.tp_pct_entry.toFixed(2)+'%':'--';
+  const openTime=t.opened_at||'';
   return`<div class="tcard ${cls}">
     <div class="tcard-head">
       <div style="cursor:pointer" onclick="openChart('${t.symbol}')" title="Abrir gráfico no TradingView">
@@ -2051,13 +2073,30 @@ function renderOpenTrade(t){
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         <div class="tdir ${buy?'':'sell'}">${buy?'▲ BUY':'▼ SELL'}</div>
-        <span class="ttype-badge">${t.tipo||'TREND'}</span>
+        <span class="ttype-badge">${t.tipo||'TREND'}${openTime?' · '+openTime:''}</span>
       </div>
+    </div>
+    <div class="pnl-usd-row">
+      <div>
+        <div class="pnl-usd-label">P&amp;L em tempo real</div>
+        <div class="pnl-sub ${pnlUsdPos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(3)}%</div>
+      </div>
+      <div class="pnl-usd-val ${pnlUsdPos?'g':'r'}">${pnlUsdStr}</div>
     </div>
     <div class="tlvs">
       <div class="tlv"><div class="tll">Entrada</div><div class="tlvv">${fp(t.entry)}</div></div>
       <div class="tlv"><div class="tll">Atual</div><div class="tlvv ${pos?'g':'r'}">${fp(t.current)}</div></div>
-      <div class="tlv"><div class="tll">P&L</div><div class="tlvv ${pos?'g':'r'}">${t.pnl>=0?'+':''}${t.pnl.toFixed(2)}%${t.pnl_money!==undefined?' | '+fp(t.pnl_money):''}</div></div>
+      <div class="tlv"><div class="tll">Capital</div><div class="tlvv go">${capitalStr}</div></div>
+    </div>
+    <div class="sltp-row">
+      <div class="sltp-box">
+        <span class="sltp-lbl">🛡 SL da entrada</span>
+        <span class="sltp-val r">-${slPctStr}</span>
+      </div>
+      <div class="sltp-box">
+        <span class="sltp-lbl">🎯 TP da entrada</span>
+        <span class="sltp-val g">+${tpPctStr}</span>
+      </div>
     </div>
     <div class="tlvs">
       <div class="tlv"><div class="tll">Lote</div><div class="tlvv bl">${(t.lot||0).toFixed(2)}</div></div>
@@ -2066,8 +2105,8 @@ function renderOpenTrade(t){
     </div>
     <div class="tprog"><div class="tfill" style="width:${t.progress}%;background:${pos?'var(--green)':'var(--red)'}"></div></div>
     <div class="tdist">
-      <span>🛡 SL: <span class="${distSlClass}">${t.dist_sl.toFixed(1)}%</span></span>
-      <span>🎯 TP: <span class="${distTpClass}">${t.dist_tp.toFixed(1)}%</span></span>
+      <span>🛡 Dist. SL: <span class="${distSlClass}">${t.dist_sl.toFixed(1)}%</span></span>
+      <span>🎯 Dist. TP: <span class="${distTpClass}">${t.dist_tp.toFixed(1)}%</span></span>
     </div>
     <button class="tv-btn" onclick="openChart('${t.symbol}')">
       <span class="tv-btn-logo">▲</span> Ver no TradingView
@@ -2503,13 +2542,22 @@ def create_api(bot):
             dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100 if t["entry"] != t["sl"] else 0
             dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100 if t["tp"] != t["entry"] else 0
             progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
+            # P&L em dinheiro calculado em tempo real (não usa valor armazenado)
+            lot_rt = float(t.get("lot", Config.MIN_LOT))
+            cs_rt  = float(t.get("contract_size", contract_size_for(t["symbol"])))
+            move_rt = (cur - t["entry"]) if t["dir"] == "BUY" else (t["entry"] - cur)
+            pnl_money_rt = round(move_rt * cs_rt * lot_rt - commission_for(t["symbol"], lot_rt), 2)
+            # % de SL e TP em relação à entrada (fixos, do plano original)
+            sl_pct_entry = round(abs(t["entry"] - t["sl"]) / t["entry"] * 100, 2) if t["entry"] else 0
+            tp_pct_entry = round(abs(t["tp"] - t["entry"]) / t["entry"] * 100, 2) if t["entry"] else 0
             trades_out.append({
                 "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
                 "tipo": t.get("tipo", " "), "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
-                "current": cur, "pnl": round(pnl, 2), "pnl_money": round(t.get("pnl_money", 0), 2),
+                "current": cur, "pnl": round(pnl, 2), "pnl_money": pnl_money_rt,
                 "opened_at": t.get("opened_at", " "),
                 "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1),
-                "lot": round(float(t.get("lot", 0)), 2), "margin_required": round(float(t.get("margin_required", 0)), 2),
+                "sl_pct_entry": sl_pct_entry, "tp_pct_entry": tp_pct_entry,
+                "lot": round(lot_rt, 2), "margin_required": round(float(t.get("margin_required", 0)), 2),
                 "capital_base": round(float(t.get("capital_base", 0)), 2),
                 "commission": round(float(t.get("commission", 0)), 2),
                 "max_leverage": max_leverage_for(t["symbol"]),
