@@ -1624,7 +1624,20 @@ body.focus .focus-banner{display:block}
 /* Melhorar contraste geral nos valores de risk panel */
 .risk-val { color: var(--text) !important; }
 .risk-item { background: rgba(255,255,255,0.03) !important; border: 1px solid rgba(255,255,255,0.07) !important; border-radius: 10px !important; }
-/* ── PAINEL DE ALAVANCAGEM ── */
+/* ── PAINEL DE PERFORMANCE DIA/SEMANA/MÊS ── */
+.perf-panel{display:flex;align-items:stretch;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
+.perf-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:14px 6px;gap:4px}
+.perf-div{width:1px;background:var(--border);flex-shrink:0}
+.perf-period{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted2);font-weight:700}
+.perf-pct{font-size:18px;font-weight:800;font-family:var(--mono);line-height:1}
+.perf-usd{font-size:12px;font-weight:700;font-family:var(--mono);color:var(--muted2)}
+.perf-wl{font-size:9px;color:var(--muted);font-weight:500;margin-top:2px}
+.perf-pct.pos{color:var(--green)}.perf-pct.neg{color:var(--red)}.perf-pct.zero{color:var(--muted2)}
+.perf-usd.pos{color:var(--green)}.perf-usd.neg{color:var(--red)}
+/* ── HISTÓRICO com USD ── */
+.hist-usd{font-size:11px;font-family:var(--mono);font-weight:600;margin-top:2px}
+.hist-usd.pos{color:var(--green)}.hist-usd.neg{color:var(--red)}
+.hist-right{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
 .lev-current-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:12px 14px}
 .lev-label{font-size:11px;color:var(--muted2);font-weight:600;text-transform:uppercase;letter-spacing:.8px}
 .lev-val{font-size:22px;font-weight:800;font-family:var(--mono);color:var(--gold)}
@@ -1696,6 +1709,29 @@ body.focus .focus-banner{display:block}
   <div id="d-trades"><div class="skel skel-card"></div></div>
   <div class="chd">📜 Histórico Hoje</div>
   <div id="d-closed-list"><div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div></div>
+  <div class="chd" style="margin-top:4px">📊 Performance</div>
+  <div class="perf-panel">
+    <div class="perf-col">
+      <div class="perf-period">Hoje</div>
+      <div class="perf-pct" id="perf-d-pct">--%</div>
+      <div class="perf-usd" id="perf-d-usd">$--</div>
+      <div class="perf-wl"  id="perf-d-wl">--W / --L</div>
+    </div>
+    <div class="perf-div"></div>
+    <div class="perf-col">
+      <div class="perf-period">Semana</div>
+      <div class="perf-pct" id="perf-w-pct">--%</div>
+      <div class="perf-usd" id="perf-w-usd">$--</div>
+      <div class="perf-wl"  id="perf-w-wl">--W / --L</div>
+    </div>
+    <div class="perf-div"></div>
+    <div class="perf-col">
+      <div class="perf-period">Mês</div>
+      <div class="perf-pct" id="perf-m-pct">--%</div>
+      <div class="perf-usd" id="perf-m-usd">$--</div>
+      <div class="perf-wl"  id="perf-m-wl">--W / --L</div>
+    </div>
+  </div>
 </div>
 <!-- PENDENTES -->
 <div class="pg" id="pg-pend">
@@ -1922,11 +1958,35 @@ function updRiskPanel(st){
   const mcsoEl=document.getElementById('r-mcso');
   if(mcsoEl){mcsoEl.textContent=(st.margin_call_level||100)+'% / '+(st.stop_out_level||30)+'%';}
 }
+function updPerfPanel(st){
+  if(!st)return;
+  function fillCol(pctId,usdId,wlId,pct,usd,wins,losses){
+    const pctEl=document.getElementById(pctId);
+    const usdEl=document.getElementById(usdId);
+    const wlEl=document.getElementById(wlId);
+    if(!pctEl)return;
+    const pos=pct>0,neg=pct<0;
+    pctEl.textContent=(pos?'+':'')+pct.toFixed(2)+'%';
+    pctEl.className='perf-pct '+(pos?'pos':neg?'neg':'zero');
+    if(usdEl){
+      const usdPos=usd>0,usdNeg=usd<0;
+      usdEl.textContent=(usdPos?'+$':usdNeg?'−$':'$')+Math.abs(usd).toFixed(2);
+      usdEl.className='perf-usd '+(usdPos?'pos':usdNeg?'neg':'');
+    }
+    if(wlEl) wlEl.textContent=wins+'W / '+losses+'L';
+  }
+  fillCol('perf-d-pct','perf-d-usd','perf-d-wl',
+    st.daily_pnl||0, st.daily_pnl_usd||0, st.daily_wins||0, st.daily_losses||0);
+  fillCol('perf-w-pct','perf-w-usd','perf-w-wl',
+    st.weekly_pnl||0, st.weekly_pnl_usd||0, st.weekly_wins||0, st.weekly_losses||0);
+  fillCol('perf-m-pct','perf-m-usd','perf-m-wl',
+    st.monthly_pnl||0, st.monthly_pnl_usd||0, st.monthly_wins||0, st.monthly_losses||0);
+}
 async function loadDash(){
   try{
     _st=await apiFetch('/api/status');
     document.getElementById('eb').style.display='none';
-    updSubHeader(_st);updRiskPanel(_st);
+    updSubHeader(_st);updRiskPanel(_st);updPerfPanel(_st);
     const dpnl=document.getElementById('d-dpnl');
     dpnl.textContent=(_st.daily_pnl>=0?'+':'')+_st.daily_pnl+'%';
     dpnl.className='sv '+(_st.daily_pnl>=0?'g':'r');
@@ -1981,12 +2041,22 @@ function renderClosedToday(list){
   if(!list||!list.length)return'<div class="empty"><span class="empi">📂</span><div class="empt">Nenhuma operação finalizada.</div></div>';
   return list.map(h=>{
     const win=h.result==='WIN';
+    const hasMoney=h.pnl_money!==undefined&&h.pnl_money!==null;
+    const moneyVal=hasMoney?parseFloat(h.pnl_money):null;
+    const moneyCls=moneyVal!==null?(moneyVal>=0?'pos':'neg'):'';
+    const moneyStr=moneyVal!==null?((moneyVal>=0?'+$':'−$')+Math.abs(moneyVal).toFixed(2)):'';
     return`<div class="hist-item">
       <div style="display:flex;align-items:center;gap:10px">
         <div class="hist-icon" style="background:${win?'var(--g3)':'var(--r3)'};color:${win?'var(--green)':'var(--red)'}">${win?'✅':'❌'}</div>
-        <div><div class="hist-sym">${h.symbol} ${h.dir}</div><div class="hist-time">${h.closed_at}</div></div>
+        <div>
+          <div class="hist-sym">${h.symbol} <span style="font-size:10px;color:var(--muted2)">${h.dir||''}</span></div>
+          <div class="hist-time">${h.closed_at}${h.lot?` · ${parseFloat(h.lot).toFixed(2)} lotes`:''}</div>
+        </div>
       </div>
-      <div class="hist-pnl ${win?'g':'r'}">${win?'+':''}${h.pnl.toFixed(2)}%</div>
+      <div class="hist-right">
+        <div class="hist-pnl ${win?'g':'r'}">${win?'+':''}${h.pnl.toFixed(2)}%</div>
+        ${moneyStr?`<div class="hist-usd ${moneyCls}">${moneyStr}</div>`:''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -2348,11 +2418,44 @@ def create_api(bot):
     def api_status():
         total = bot.wins + bot.losses
         wr = round(bot.wins/total*100, 1) if total > 0 else 0
-        today = datetime.now(Config.BR_TZ).strftime("%d/%m")
-        today_trades = [h for h in bot.history if h.get("closed_at", " ").startswith(today)]
-        daily_pnl = sum(h.get("pnl", 0) for h in today_trades)
-        daily_wins = sum(1 for h in today_trades if h.get("result") == "WIN")
-        daily_losses = sum(1 for h in today_trades if h.get("result") == "LOSS")
+        now_br = datetime.now(Config.BR_TZ)
+        today = now_br.strftime("%d/%m")
+        current_month = now_br.strftime("%m")
+        balance = float(bot.balance) or 1.0
+
+        def parse_closed_at(s):
+            try:
+                parts = s.strip().split(" ")
+                d, m = parts[0].split("/")
+                return int(m), int(d)
+            except Exception:
+                return None, None
+
+        today_trades, week_trades, month_trades = [], [], []
+        for h in bot.history:
+            ca = h.get("closed_at", "")
+            if ca.startswith(today):
+                today_trades.append(h)
+            m, d = parse_closed_at(ca)
+            if m is not None:
+                if m == int(now_br.strftime("%m")):
+                    month_trades.append(h)
+                    # semana: últimos 7 dias dentro do mês corrente
+                    week_day_limit = now_br.day - 7
+                    if d > week_day_limit:
+                        week_trades.append(h)
+
+        def period_stats(trades):
+            usd = round(sum(h.get("pnl_money", 0) for h in trades), 2)
+            pct = round(usd / balance * 100, 2) if balance else 0
+            wins = sum(1 for h in trades if h.get("result") == "WIN")
+            losses = sum(1 for h in trades if h.get("result") == "LOSS")
+            return {"usd": usd, "pct": pct, "wins": wins, "losses": losses, "count": len(trades)}
+
+        daily   = period_stats(today_trades)
+        weekly  = period_stats(week_trades)
+        monthly = period_stats(month_trades)
+
         snap = account_snapshot(bot)
         trades_out = []
         for t in bot.active_trades:           
@@ -2379,8 +2482,13 @@ def create_api(bot):
             "consecutive_losses": bot.consecutive_losses, "mode": bot.mode, "timeframe": bot.timeframe,
             "paused": bot.is_paused(), "cb_mins": max(0, int((bot.paused_until - time.time()) / 60)) if bot.is_paused() else 0,
             "active_trades": trades_out, "pending_count": len(bot.pending_trades),
-            "daily_pnl": round(daily_pnl, 2), "daily_wins": daily_wins, "daily_losses": daily_losses,
-            "today_closed": len(today_trades), "history_today": today_trades,
+            "daily_pnl": daily["pct"], "daily_pnl_usd": daily["usd"],
+            "daily_wins": daily["wins"], "daily_losses": daily["losses"],
+            "today_closed": daily["count"], "history_today": today_trades,
+            "weekly_pnl": weekly["pct"], "weekly_pnl_usd": weekly["usd"],
+            "weekly_wins": weekly["wins"], "weekly_losses": weekly["losses"],
+            "monthly_pnl": monthly["pct"], "monthly_pnl_usd": monthly["usd"],
+            "monthly_wins": monthly["wins"], "monthly_losses": monthly["losses"],
             "balance": snap["balance"], "equity": snap["equity"],
             "used_margin": snap["used_margin"], "free_margin": snap["free_margin"],
             "margin_level": snap["margin_level"],
