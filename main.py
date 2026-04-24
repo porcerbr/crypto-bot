@@ -2576,11 +2576,11 @@ def create_api(bot):
 
     @app.route("/api/status")
     def api_status():
-    total = bot.wins + bot.losses
-    wr = round(bot.wins/total*100, 1) if total > 0 else 0
-    now_br = datetime.now(Config.BR_TZ)
-    today = now_br.strftime("%d/%m")
-    balance = float(bot.balance) or 1.0
+        total = bot.wins + bot.losses
+        wr = round(bot.wins/total*100, 1) if total > 0 else 0
+        now_br = datetime.now(Config.BR_TZ)
+        today = now_br.strftime("%d/%m")
+        balance = float(bot.balance) or 1.0
 
     def parse_closed_at(s):
         try:
