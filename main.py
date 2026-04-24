@@ -2575,12 +2575,14 @@ def create_api(bot):
     def api_health(): return jsonify({"status": "ok", "version": "10.0 PRO", "broker": Config.BROKER_NAME, "platform": Config.BROKER_PLATFORM, "account_type": Config.ACCOUNT_TYPE})
 
     @app.route("/api/status")
-    def api_status():
-        total = bot.wins + bot.losses
-        wr = round(bot.wins/total*100, 1) if total > 0 else 0
-        now_br = datetime.now(Config.BR_TZ)
-        today = now_br.strftime("%d/%m")
-        balance = float(bot.balance) or 1.0
+def api_status():
+    total = bot.wins + bot.losses
+    wr = round(bot.wins/total*100, 1) if total > 0 else 0
+    now_br = datetime.now(Config.BR_TZ)
+    today = now_br.strftime("%d/%m")
+
+    # ⚠️ ESTA LINHA É OBRIGATÓRIA e deve vir antes de period_stats
+    balance = float(bot.balance) or 1.0
 
     def parse_closed_at(s):
         try:
@@ -2605,6 +2607,7 @@ def create_api(bot):
 
     def period_stats(trades):
         usd = round(sum(h.get("pnl_money", 0) for h in trades), 2)
+        # balance é capturado do escopo externo (closure)
         pct = round(usd / balance * 100, 2) if balance else 0
         wins = sum(1 for h in trades if h.get("result") == "WIN")
         losses = sum(1 for h in trades if h.get("result") == "LOSS")
@@ -2668,6 +2671,7 @@ def create_api(bot):
         "platform": bot.platform,
         "sl_auto": sl_pct, "tp_auto": tp_pct,
     })
+    
     @app.route("/api/trade_plan", methods=["POST"])
     def api_trade_plan():
         data = request.get_json(force=True) or {}
