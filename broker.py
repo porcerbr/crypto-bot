@@ -1,4 +1,5 @@
 # broker.py
+# broker.py – início
 import pandas as pd
 import time
 from datetime import datetime
@@ -10,25 +11,8 @@ except:
     MT5_AVAILABLE = False
 
 from config import Config
-from utils import log, fmt
+from utils import log, fmt, to_yf, asset_cat, asset_name
 
-TICKMILL_TO_YF = {
-    "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "SOLUSD": "SOL-USD",
-    "BNBUSD": "BNB-USD", "XRPUSD": "XRP-USD", "ADAUSD": "ADA-USD",
-    "DOGEUSD": "DOGE-USD", "LTCUSD": "LTC-USD",
-    "XAUUSD": "GC=F", "XAGUSD": "SI=F",
-    "XTIUSD": "CL=F", "BRENT": "BZ=F",
-    "NATGAS": "NG=F", "COPPER": "HG=F",
-    "US500": "ES=F", "USTEC": "NQ=F", "US30": "YM=F",
-    "DE40": "^GDAXI", "UK100": "^FTSE", "JP225": "^N225",
-    "AUS200": "^AXJO", "STOXX50": "^STOXX50E",
-}
-
-def to_yf(s):
-    if s in TICKMILL_TO_YF: return TICKMILL_TO_YF[s]
-    if len(s) == 6 and s.isalpha(): return f"{s}=X"
-    if "-" in s or s.startswith("^") or s.endswith("=F"): return s
-    return f"{s}=X"
 
 def get_mt5_analysis(symbol, timeframe=None):
     if not MT5_AVAILABLE:
