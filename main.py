@@ -2755,9 +2755,151 @@ def create_api(bot):
         plan = calc_trade_plan(symbol, entry, bot.leverage, bot.balance, bot.risk_pct, amount)
         return jsonify(plan)
 
-    # ... demais endpoints originais (pending, execute, reject, trends, etc.)
+    @app.route("/api/pending")
+    def api_pending():
+        snap = account_snapshot(bot)
+        pending = []
+        for p in bot.pending_trades:
+            item = dict(p)
+            item["balance"] = snap["balance"]
+            item["equity"] = snap["equity"]
+            item["used_margin"] = snap["used_margin"]
+            item["free_margin"] = snap["free_margin"]
+            item["margin_level"] = snap["margin_level"]
+            pending.append(item)
+        return jsonify(pending)
+
+    @app.route("/api/execute_pending", methods=["POST", "OPTIONS"])
+    def api_execute_pending():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        pid = data.get("pending_id")
+        amount = data.get("amount")
+        try:
+            amount = float(amount)
+        except Exception:
+            return jsonify({"error": "amount inválido"}), 400
+        return jsonify({"ok": True}) if bot.execute_pending_with_amount(pid, amount, source="dashboard") else (jsonify({"error": "not found"}), 404)
+
+    @app.route("/api/reject", methods=["POST", "OPTIONS"])
+    def api_reject():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}; pid = data.get("pending_id")
+        return jsonify({"ok": True}) if bot.reject_pending(pid) else (jsonify({"error": "not found"}), 404)
+
+    @app.route("/api/news")
+    def api_news():
+        now = time.time()
+        if now - bot.news_cache_ts > 600 or not bot.news_cache:
+            try: bot.news_cache = {"fg": get_fear_greed(), "articles": get_news(15)}; bot.news_cache_ts = now
+            except Exception as e: log(f"[NEWS] {e}")
+        return jsonify(bot.news_cache if bot.news_cache else {"fg": {}, "articles": []})
+
+    @app.route("/api/trends")
+    def api_trends():
+        bot.update_trends_cache()
+        out = []
+        for sym, entry in bot.trend_cache.items():
+            d = entry["data"]
+            out.append({"symbol": sym, "name": d["name"], "category": asset_cat(sym), "price": d["price"], "cenario": d["cenario"], "rsi": round(d["rsi"],1), "adx": round(d["adx"],1), "change_pct": round(d["change_pct"],2)})
+        out.sort(key=lambda x: ({"ALTA":0,"BAIXA":1,"NEUTRO":2}.get(x["cenario"],9), -abs(x["change_pct"])))
+        return jsonify(out)
+
+    @app.route("/api/reversals")
+    def api_reversals():
+        bot.update_trends_cache()
+        out = []
+        for sym, entry in bot.trend_cache.items():
+            rev = entry.get("reversal", {})
+            if rev.get("has"):
+                d = entry["data"]
+                out.append({"symbol": sym, "name": d["name"], "price": d["price"], "rsi": round(d["rsi"],1), "adx": round(d["adx"],1), "direction": rev["dir"], "strength": rev["strength"], "reasons": rev["reasons"]})
+        out.sort(key=lambda x: -x["strength"])
+        return jsonify(out)
+
+    @app.route("/api/signals")
+    def api_signals(): return jsonify(list(reversed(bot.signals_feed)))
+
+    @app.route("/api/config")
+    def api_config():
+        sl_pct, tp_pct = get_sl_tp_pct(bot.leverage)
+        return jsonify({
+            "sl_auto": sl_pct, "tp_auto": tp_pct,
+            "max_trades": Config.MAX_TRADES, "min_conf": Config.MIN_CONFLUENCE,
+            "balance": bot.balance, "leverage": bot.leverage, "risk_pct": bot.risk_pct,
+            "broker": Config.BROKER_NAME, "platform": Config.BROKER_PLATFORM,
+            "account_type": bot.account_type,
+            "margin_call_level": Config.MARGIN_CALL_LEVEL,
+            "stop_out_level": Config.STOP_OUT_LEVEL,
+            "commission_rt_forex": Config.COMMISSION_PER_LOT_SIDE["FOREX"] * 2,
+            "min_lot": Config.MIN_LOT,
+            "max_leverage_by_cat": Config.MAX_LEVERAGE_BY_CAT,
+            "core_forex_pairs": CORE_FOREX_PAIRS,
+        })
+
+    @app.route("/api/mode", methods=["POST", "OPTIONS"])
+    def api_mode():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        mode = data.get("mode", "").strip()
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]:
+            return jsonify({"error": "inválido"}), 400
+        bot.set_mode(mode)
+        return jsonify({"ok": True})
+
+    @app.route("/api/timeframe", methods=["POST", "OPTIONS"])
+    def api_timeframe():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        tf = data.get("timeframe", "").strip()
+        if tf not in Config.TIMEFRAMES:
+            return jsonify({"error": "inválido"}), 400
+        bot.set_timeframe(tf)
+        return jsonify({"ok": True})
+
+    @app.route("/api/balance", methods=["POST", "OPTIONS"])
+    def api_balance():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        try:
+            value = float(data.get("balance"))
+        except Exception:
+            return jsonify({"error": "balance inválido"}), 400
+        if value <= 0:
+            return jsonify({"error": "saldo precisa ser maior que zero"}), 400
+        bot.set_balance(value)
+        return jsonify({"ok": True, "balance": round(bot.balance, 2)})
+
+    @app.route("/api/leverage", methods=["POST", "OPTIONS"])
+    def api_leverage():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        data = request.get_json(force=True) or {}
+        try:
+            value = int(data.get("leverage"))
+        except Exception:
+            return jsonify({"error": "alavancagem inválida"}), 400
+        if value < 1 or value > 1000:
+            return jsonify({"error": "alavancagem deve ser entre 1 e 1000"}), 400
+        bot.set_leverage(value)
+        return jsonify({"ok": True, "leverage": bot.leverage})
+
+    @app.route("/api/resetpausa", methods=["POST", "OPTIONS"])
+    def api_reset():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        bot.reset_pause(); return jsonify({"ok": True})
+
+    @app.route("/api/vapid-public-key")
+    def api_vapid_key(): return jsonify({"key": os.getenv("VAPID_PUBLIC_KEY", "")})
+
+    @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
+    def api_subscribe():
+        if request.method == "OPTIONS": return jsonify({}), 200
+        sub = request.get_json(force=True)
+        if sub and sub not in _push_subscriptions: _push_subscriptions.append(sub)
+        return jsonify({"ok": True})
 
     return app
+
 
 def run_api(bot):
     port = int(os.getenv("PORT", 8080))
