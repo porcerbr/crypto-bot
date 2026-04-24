@@ -5,4 +5,4 @@ pandas
 flask
 flask-cors
 pywebpush
-MetaTrader5
+metatrader5
