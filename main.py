@@ -869,7 +869,7 @@ def send_push(title, body, icon="/icon-192.png"):
 # ═══════════════════════════════════════════════════════════════
 def calc_premium_rr(res, dir_s, sc, tot_c):
     if not Config.DYNAMIC_RR_ENABLED:
-        return Config.TP_SL_RATIO, f"Padrão 1:{Config.TP_SL_RATIO}", 0, []
+        return Config.TP_SL_RATIO, f"Padrao 1:{Config.TP_SL_RATIO}", 0, []
     premium = []
     price  = res.get("price", 1)
     rsi    = res.get("rsi", 50)
@@ -878,11 +878,11 @@ def calc_premium_rr(res, dir_s, sc, tot_c):
     lower  = res.get("lower", price)
     ema9   = res.get("ema9", price)
     ema21  = res.get("ema21", price)
-    if adx > 35: premium.append(f"ADX {adx:.0f} (tendência forte)")
-    if sc >= tot_c: premium.append(f"Confluência máxima ({sc}/{tot_c})")
-    elif sc >= tot_c - 1 and tot_c >= 6: premium.append(f"Confluência quase perfeita ({sc}/{tot_c})")
+    if adx > 35: premium.append(f"ADX {adx:.0f} (tendencia forte)")
+    if sc >= tot_c: premium.append(f"Confluencia maxima ({sc}/{tot_c})")
+    elif sc >= tot_c - 1 and tot_c >= 6: premium.append(f"Confluencia quase perfeita ({sc}/{tot_c})")
     vol_ratio = res.get("vol_ratio", 0)
-    if vol_ratio > 1.8: premium.append(f"Volume {vol_ratio:.1f}x acima da média")
+    if vol_ratio > 1.8: premium.append(f"Volume {vol_ratio:.1f}x acima da media")
     macd_hist = res.get("macd_hist", 0)
     if dir_s == "BUY"  and res.get("macd_bull") and macd_hist > 0: premium.append("MACD forte e acelerado (alta)")
     elif dir_s == "SELL" and res.get("macd_bear") and macd_hist < 0: premium.append("MACD forte e acelerado (baixa)")
@@ -894,7 +894,7 @@ def calc_premium_rr(res, dir_s, sc, tot_c):
     elif dir_s == "SELL" and 0.35 <= pct_pos <= 0.75: premium.append("Espaco nas bandas para baixa")
     ema_spread_pct = abs(ema9 - ema21) / max(price, 1e-10) * 100
     if ema_spread_pct > 0.08: premium.append(f"EMAs espaçadas {ema_spread_pct:.2f}% (momentum claro)")
-    n = len(premium); rr_ratio = Config.TP_SL_RATIO; rr_label = f"Padrão 1:{Config.TP_SL_RATIO}"
+    n = len(premium); rr_ratio = Config.TP_SL_RATIO; rr_label = f"Padrao 1:{Config.TP_SL_RATIO}"
     for min_cond, rr, label in sorted(Config.DYNAMIC_RR_TIERS, key=lambda x: x[0], reverse=True):
         if n >= min_cond: rr_ratio = rr; rr_label = f"{label} 1:{rr}"; break
     return rr_ratio, rr_label, n, premium
@@ -964,7 +964,7 @@ def build_news_msg():
     lines = ["📰 NOTÍCIAS\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "  ")
-        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})</a>")
+        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})")
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
@@ -1095,19 +1095,19 @@ class TradingBot:
         sl_pct = t.get("sl_pct", get_sl_tp_pct(eff_lev)[0])
         tp_pct = t.get("tp_pct", get_sl_tp_pct(eff_lev)[1])
         rr_ratio = t.get("rr_ratio", Config.TP_SL_RATIO)
-        rr_label = t.get("rr_label", f"Padrão 1:{Config.TP_SL_RATIO}")
+        rr_label = t.get("rr_label", f"Padrao 1:{Config.TP_SL_RATIO}")
         premium_reasons = t.get("premium_reasons", [])
         premium_score   = t.get("premium_score", 0)
         if rr_ratio > Config.TP_SL_RATIO:
             rr_line = (
-                f"RR AMPLIADO: <b>{rr_label}</b> ({premium_score} condições premium)\n"
+                f"RR AMPLIADO: <b>{rr_label}</b> ({premium_score} cond. premium)\n"
                 + "\n".join(f"   ✨ {r}" for r in premium_reasons)
             )
         else:
-            rr_line = f"RR padrão 1:{Config.TP_SL_RATIO} (mercado não atingiu condições premium)"
+            rr_line = f"RR padrao 1:{Config.TP_SL_RATIO} (mercado nao atingiu condicoes premium)"
         comm_info = ""
         if asset_cat(t["symbol"]) in ("FOREX", "COMMODITIES"):
-            comm_info = f"\n💳 Comissão RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
+            comm_info = f"\n💳 Comissao RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
         text = "\n".join([
             f"🎯 <b>SINAL PENDENTE – {t['symbol']}</b> ({t['name']}) [Tickmill MT5]",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
@@ -1128,7 +1128,7 @@ class TradingBot:
             "",
         ])
         if t.get("conf_txt"):
-            text += f"\n<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
+            text += f"\n<b>Confluencia: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
         markup = {"inline_keyboard": [
             [{"text": "$50", "callback_data": f"amt_50_{t['pending_id']}"},
              {"text": "$100", "callback_data": f"amt_100_{t['pending_id']}"},
@@ -1240,7 +1240,7 @@ class TradingBot:
             [{"text": "TUDO", "callback_data": "set_TUDO"}],
             [{"text": f"TF: {self.timeframe} {tfl}", "callback_data": "tf_menu"}],
             [{"text": "Status", "callback_data": "status"}, {"text": "Placar", "callback_data": "placar"}],
-            [{"text": "Notícias", "callback_data": "news"}],
+            [{"text": "Noticias", "callback_data": "news"}],
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min  " if self.is_paused() else "  "
@@ -1407,7 +1407,7 @@ class TradingBot:
                 falhou = [nm for nm, ok in checks if not ok]
                 self.send(
                     f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\n"
-                    f"Gatilho atingido, mas o bot não entrou.\n"
+                    f"Gatilho atingido mas bot NÃO entrou.\n"
                     f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
                     f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)
                 )
@@ -2241,7 +2241,7 @@ function renderPendingFromApi(list){
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
           <div class="pdir ${cls}">${dirLabel}</div>
-          <span style="font-size:9px;color:var(--muted2)">${slPct>0?('R: 1:'+ (tpPct/slPct).toFixed(1)):'R: --'}</span>
+          <span style="font-size:9px;color:var(--muted2)">R: 1:${(tpPct/slPct).toFixed(1)}</span>
         </div>
       </div>
       <div class="pmeta">
@@ -2405,7 +2405,7 @@ async function loadCT(){
           <div class="ctbox"><div class="ctl">RSI</div><div class="ctv ${rsiCls}">${x.rsi}</div></div>
         </div>
         <div class="ctbar"><div class="ctfill" style="width:${pct}%"></div></div>
-        <div class="ctrs">${(Array.isArray(x.reasons)?x.reasons:[]).map(r=>`<span class="cttag">${r}</span>`).join('')}</div>
+        <div class="ctrs">${x.reasons.map(r=>`<span class="cttag">${r}</span>`).join('')}</div>
       </div>`;
     }).join('')
     :'<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma CT detectada.</div></div>';
@@ -2574,285 +2574,173 @@ def create_api(bot):
     @app.route("/api/health")
     def api_health(): return jsonify({"status": "ok", "version": "10.0 PRO", "broker": Config.BROKER_NAME, "platform": Config.BROKER_PLATFORM, "account_type": Config.ACCOUNT_TYPE})
 		
-@app.route("/api/status")
-def api_status():
-    total = bot.wins + bot.losses
-    wr = round(bot.wins / total * 100, 1) if total > 0 else 0
+    @app.route("/api/status")
+    def api_status():
+        total = bot.wins + bot.losses
+        wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-    now_br = datetime.now(Config.BR_TZ)
-    today = now_br.strftime("%d/%m")
+        now_br = datetime.now(Config.BR_TZ)
+        today = now_br.strftime("%d/%m")
 
-    # ⚠️ Balance seguro
-    try:
-        balance = float(bot.balance)
-        if balance <= 0:
-            balance = 1.0
-    except Exception:
-        balance = 1.0
-
-    def parse_closed_at(s):
+        # ⚠️ Balance seguro
         try:
-            parts = s.strip().split(" ")
-            d, m = parts[0].split("/")
-            return int(m), int(d)
+            balance = float(bot.balance)
+            if balance <= 0:
+                balance = 1.0
         except Exception:
-            return None, None
+            balance = 1.0
 
-    today_trades = []
-    week_trades = []
-    month_trades = []
+        def parse_closed_at(s):
+            try:
+                parts = s.strip().split(" ")
+                d, m = parts[0].split("/")
+                return int(m), int(d)
+            except Exception:
+                return None, None
 
-    for h in bot.history:
-        ca = h.get("closed_at", "")
+        today_trades = []
+        week_trades = []
+        month_trades = []
 
-        if ca.startswith(today):
-            today_trades.append(h)
+        for h in bot.history:
+            ca = h.get("closed_at", "")
 
-        m, d = parse_closed_at(ca)
+            if ca.startswith(today):
+                today_trades.append(h)
 
-        if m is not None:
-            if m == now_br.month:
+            m, d = parse_closed_at(ca)
 
+            if m is not None and m == now_br.month:
                 month_trades.append(h)
 
                 week_day_limit = max(1, now_br.day - 7)
-
                 if d >= week_day_limit:
                     week_trades.append(h)
 
-    def period_stats(trades):
-        usd = round(sum(h.get("pnl_money", 0) for h in trades), 2)
+        def period_stats(trades):
+            usd = round(sum(h.get("pnl_money", 0) for h in trades), 2)
+            pct = round((usd / balance) * 100, 2) if balance else 0
+            wins = sum(1 for h in trades if h.get("result") == "WIN")
+            losses = sum(1 for h in trades if h.get("result") == "LOSS")
+            return {
+                "usd": usd,
+                "pct": pct,
+                "wins": wins,
+                "losses": losses,
+                "count": len(trades),
+            }
 
-        pct = round((usd / balance) * 100, 2) if balance else 0
+        daily = period_stats(today_trades)
+        weekly = period_stats(week_trades)
+        monthly = period_stats(month_trades)
 
-        wins = sum(
-            1 for h in trades
-            if h.get("result") == "WIN"
-        )
+        snap = account_snapshot(bot)
+        trades_out = []
 
-        losses = sum(
-            1 for h in trades
-            if h.get("result") == "LOSS"
-        )
+        for t in bot.active_trades:
+            try:
+                res = get_analysis(t["symbol"], bot.timeframe)
+                cur = res["price"] if res else t["entry"]
+            except Exception:
+                cur = t["entry"]
 
-        return {
-            "usd": usd,
-            "pct": pct,
-            "wins": wins,
-            "losses": losses,
-            "count": len(trades)
-        }
+            pnl = (cur - t["entry"]) / t["entry"] * 100
+            if t["dir"] == "SELL":
+                pnl = -pnl
 
-    daily = period_stats(today_trades)
-    weekly = period_stats(week_trades)
-    monthly = period_stats(month_trades)
+            # Proteção contra divisão por zero
+            if t["entry"] != t["sl"]:
+                dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100
+            else:
+                dist_sl = 0
 
-    snap = account_snapshot(bot)
+            if t["tp"] != t["entry"]:
+                dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100
+            else:
+                dist_tp = 0
 
-    trades_out = []
+            progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
 
-    for t in bot.active_trades:
+            lot_rt = float(t.get("lot", Config.MIN_LOT))
+            cs_rt = float(t.get("contract_size", contract_size_for(t["symbol"])))
 
-        try:
-            res = get_analysis(
-                t["symbol"],
-                bot.timeframe
-            )
-
-            cur = res["price"] if res else t["entry"]
-
-        except Exception:
-            cur = t["entry"]
-
-        pnl = (cur - t["entry"]) / t["entry"] * 100
-
-        if t["dir"] == "SELL":
-            pnl = -pnl
-
-        # Proteção contra divisão por zero
-        if t["entry"] != t["sl"]:
-            dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100
-        else:
-            dist_sl = 0
-
-        if t["tp"] != t["entry"]:
-            dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100
-        else:
-            dist_tp = 0
-
-        progress = min(
-            max(100 - dist_tp, 0),
-            100
-        ) if t["tp"] != t["entry"] else 0
-
-        lot_rt = float(
-            t.get("lot", Config.MIN_LOT)
-        )
-
-        cs_rt = float(
-            t.get(
-                "contract_size",
-                contract_size_for(t["symbol"])
-            )
-        )
-
-        if t["dir"] == "BUY":
-
-            pnl_money_rt = (
-                (cur - t["entry"])
-                * cs_rt
-                * lot_rt
-                - t.get(
-                    "commission",
-                    commission_for(
-                        t["symbol"],
-                        lot_rt
-                    )
+            if t["dir"] == "BUY":
+                pnl_money_rt = (
+                    (cur - t["entry"]) * cs_rt * lot_rt
+                    - t.get("commission", commission_for(t["symbol"], lot_rt))
                 )
-            )
-
-        else:
-
-            pnl_money_rt = (
-                (t["entry"] - cur)
-                * cs_rt
-                * lot_rt
-                - t.get(
-                    "commission",
-                    commission_for(
-                        t["symbol"],
-                        lot_rt
-                    )
+            else:
+                pnl_money_rt = (
+                    (t["entry"] - cur) * cs_rt * lot_rt
+                    - t.get("commission", commission_for(t["symbol"], lot_rt))
                 )
-            )
 
-        trades_out.append({
-            "symbol": t["symbol"],
-            "name": t.get("name", " "),
-            "dir": t["dir"],
+            trades_out.append({
+                "symbol": t["symbol"],
+                "name": t.get("name", " "),
+                "dir": t["dir"],
+                "entry": t["entry"],
+                "sl": t["sl"],
+                "tp": t["tp"],
+                "current": cur,
+                "pnl": round(pnl, 2),
+                "pnl_money": round(pnl_money_rt, 2),
+                "opened_at": t.get("opened_at", " "),
+                "dist_sl": round(dist_sl, 1),
+                "dist_tp": round(dist_tp, 1),
+                "progress": round(progress, 1),
+                "lot": round(lot_rt, 2),
+                "margin_required": round(float(t.get("margin_required", 0)), 2),
+                "capital_base": round(float(t.get("capital_base", 0)), 2),
+                "commission": round(float(t.get("commission", 0)), 2),
+                "sl_pct": t.get("sl_pct", 0),
+                "tp_pct": t.get("tp_pct", 0),
+                "max_leverage": max_leverage_for(t["symbol"]),
+            })
 
-            "entry": t["entry"],
-            "sl": t["sl"],
-            "tp": t["tp"],
+        sl_pct, tp_pct = get_sl_tp_pct(bot.leverage)
 
-            "current": cur,
-
-            "pnl": round(pnl, 2),
-            "pnl_money": round(pnl_money_rt, 2),
-
-            "opened_at": t.get("opened_at", " "),
-
-            "dist_sl": round(dist_sl, 1),
-            "dist_tp": round(dist_tp, 1),
-            "progress": round(progress, 1),
-
-            "lot": round(lot_rt, 2),
-
-            "margin_required": round(
-                float(
-                    t.get("margin_required", 0)
-                ),
-                2
-            ),
-
-            "capital_base": round(
-                float(
-                    t.get("capital_base", 0)
-                ),
-                2
-            ),
-
-            "commission": round(
-                float(
-                    t.get("commission", 0)
-                ),
-                2
-            ),
-
-            "sl_pct": t.get("sl_pct", 0),
-            "tp_pct": t.get("tp_pct", 0),
-
-            "max_leverage": max_leverage_for(
-                t["symbol"]
-            ),
+        return jsonify({
+            "wins": bot.wins,
+            "losses": bot.losses,
+            "winrate": wr,
+            "consecutive_losses": bot.consecutive_losses,
+            "mode": bot.mode,
+            "timeframe": bot.timeframe,
+            "paused": bot.is_paused(),
+            "cb_mins": max(0, int((bot.paused_until - time.time()) / 60)) if bot.is_paused() else 0,
+            "active_trades": trades_out,
+            "pending_count": len(bot.pending_trades),
+            "daily_pnl": daily["pct"],
+            "daily_pnl_usd": daily["usd"],
+            "daily_wins": daily["wins"],
+            "daily_losses": daily["losses"],
+            "today_closed": daily["count"],
+            "history_today": today_trades,
+            "weekly_pnl": weekly["pct"],
+            "weekly_pnl_usd": weekly["usd"],
+            "weekly_wins": weekly["wins"],
+            "weekly_losses": weekly["losses"],
+            "monthly_pnl": monthly["pct"],
+            "monthly_pnl_usd": monthly["usd"],
+            "monthly_wins": monthly["wins"],
+            "monthly_losses": monthly["losses"],
+            "balance": snap["balance"],
+            "equity": snap["equity"],
+            "used_margin": snap["used_margin"],
+            "free_margin": snap["free_margin"],
+            "margin_level": snap["margin_level"],
+            "leverage": bot.leverage,
+            "risk_pct": bot.risk_pct,
+            "margin_call_level": Config.MARGIN_CALL_LEVEL,
+            "stop_out_level": Config.STOP_OUT_LEVEL,
+            "broker": Config.BROKER_NAME,
+            "account_type": bot.account_type,
+            "platform": bot.platform,
+            "sl_auto": sl_pct,
+            "tp_auto": tp_pct,
         })
 
-    sl_pct, tp_pct = get_sl_tp_pct(
-        bot.leverage
-    )
-
-    return jsonify({
-
-        "wins": bot.wins,
-        "losses": bot.losses,
-        "winrate": wr,
-
-        "consecutive_losses": bot.consecutive_losses,
-
-        "mode": bot.mode,
-        "timeframe": bot.timeframe,
-
-        "paused": bot.is_paused(),
-
-        "cb_mins": max(
-            0,
-            int(
-                (bot.paused_until - time.time())
-                / 60
-            )
-        ) if bot.is_paused() else 0,
-
-        "active_trades": trades_out,
-
-        "pending_count": len(
-            bot.pending_trades
-        ),
-
-        "daily_pnl": daily["pct"],
-        "daily_pnl_usd": daily["usd"],
-
-        "daily_wins": daily["wins"],
-        "daily_losses": daily["losses"],
-
-        "today_closed": daily["count"],
-        "history_today": today_trades,
-
-        "weekly_pnl": weekly["pct"],
-        "weekly_pnl_usd": weekly["usd"],
-
-        "weekly_wins": weekly["wins"],
-        "weekly_losses": weekly["losses"],
-
-        "monthly_pnl": monthly["pct"],
-        "monthly_pnl_usd": monthly["usd"],
-
-        "monthly_wins": monthly["wins"],
-        "monthly_losses": monthly["losses"],
-
-        "balance": snap["balance"],
-        "equity": snap["equity"],
-
-        "used_margin": snap["used_margin"],
-        "free_margin": snap["free_margin"],
-
-        "margin_level": snap["margin_level"],
-
-        "leverage": bot.leverage,
-        "risk_pct": bot.risk_pct,
-
-        "margin_call_level": Config.MARGIN_CALL_LEVEL,
-        "stop_out_level": Config.STOP_OUT_LEVEL,
-
-        "broker": Config.BROKER_NAME,
-
-        "account_type": bot.account_type,
-        "platform": bot.platform,
-
-        "sl_auto": sl_pct,
-        "tp_auto": tp_pct,
-    })
-    
-    
     @app.route("/api/trade_plan", methods=["POST"])
     def api_trade_plan():
         data = request.get_json(force=True) or {}
