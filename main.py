@@ -1590,19 +1590,22 @@ def calc_kelly_risk(bot):
 
 
 def mt5_connect():
-     try:
+    try:
         import MetaTrader5 as mt5
+        if not mt5.initialize():
+            log(f"[MT5] Falha ao conectar: {mt5.last_error()}")
+            return False
+        log(f"[MT5] Conectado — {mt5.account_info().login}")
+        return True
     except ImportError:
-        log(f"[MT5] Falha ao conectar: {mt5.last_error()}")
+        log("[MT5] Lib não disponível neste ambiente")
         return False
-    log(f"[MT5] Conectado — {mt5.account_info().login}")
-    return True
 
 def mt5_send_order(symbol, direction, lot, sl_price, tp_price):
-     try:
+    try:
         import MetaTrader5 as mt5
     except ImportError:
-        return False, "MT5 não conectado"
+        return False, "Lib MT5 não disponível"
 
     tick = mt5.symbol_info_tick(symbol)
     if not tick:
@@ -1612,17 +1615,17 @@ def mt5_send_order(symbol, direction, lot, sl_price, tp_price):
     price = tick.ask if direction == "BUY" else tick.bid
 
     request = {
-        "action":   mt5.TRADE_ACTION_DEAL,
-        "symbol":   symbol,
-        "volume":   float(lot),
-        "type":     order_type,
-        "price":    price,
-        "sl":       float(sl_price),
-        "tp":       float(tp_price),
+        "action":    mt5.TRADE_ACTION_DEAL,
+        "symbol":    symbol,
+        "volume":    float(lot),
+        "type":      order_type,
+        "price":     price,
+        "sl":        float(sl_price),
+        "tp":        float(tp_price),
         "deviation": 20,
-        "magic":    234000,
-        "comment":  "Sniper Bot v9",
-        "type_time": mt5.ORDER_TIME_GTC,
+        "magic":     234000,
+        "comment":   "Sniper Bot v9",
+        "type_time":    mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
