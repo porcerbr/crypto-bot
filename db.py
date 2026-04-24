@@ -100,3 +100,44 @@ def load_state(bot):
                 lines.append(f"📌 {t['symbol']} {dl} | Entrada: `{fmt(t['entry'])}` | TP: `{fmt(t['tp'])}` | SL: `{fmt(t['sl'])}`")
             bot._restore_msg = "\n".join(lines)
         else: bot._restore_msg = None
+# db.py (acrescente no final do arquivo)
+
+from config import Config
+from utils import log
+from analysis import get_analysis
+from risk import commission_for, contract_size_for
+
+def account_snapshot(bot):
+    """Calcula equity, margem e P&L atual."""
+    open_pnl_money = 0.0
+    used_margin = 0.0
+    total_commission = 0.0
+    for t in bot.active_trades:
+        try:
+            res = get_analysis(t["symbol"], bot.timeframe)
+            cur = res["price"] if res else t["entry"]
+        except Exception:
+            cur = t["entry"]
+        lot = float(t.get("lot", Config.MIN_LOT))
+        cs = float(t.get("contract_size", contract_size_for(t["symbol"])))
+        if t["dir"] == "BUY":
+            raw_pnl = (cur - t["entry"]) * cs * lot
+        else:
+            raw_pnl = (t["entry"] - cur) * cs * lot
+        comm = commission_for(t["symbol"], lot)
+        open_pnl_money += raw_pnl - comm
+        total_commission += comm
+        used_margin += float(t.get("margin_required", 0))
+    balance = float(bot.balance)
+    equity = round(balance + open_pnl_money, 2)
+    free_margin = round(equity - used_margin, 2)
+    margin_level = round((equity / used_margin) * 100, 1) if used_margin > 0 else 0
+    return {
+        "balance": round(balance, 2),
+        "equity": equity,
+        "used_margin": round(used_margin, 2),
+        "free_margin": free_margin,
+        "margin_level": margin_level,
+        "open_pnl_money": round(open_pnl_money, 2),
+        "total_commission": round(total_commission, 2),
+    }
