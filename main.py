@@ -1587,17 +1587,21 @@ def calc_kelly_risk(bot):
     risk = max(0.5, min(Config.RISK_PERCENT_PER_TRADE * 1.5, kelly_f * Config.KELLY_FRACTION * 100))
     return round(risk, 2)
     
-import MetaTrader5 as mt5
+
 
 def mt5_connect():
-    if not mt5.initialize():
+     try:
+        import MetaTrader5 as mt5
+    except ImportError:
         log(f"[MT5] Falha ao conectar: {mt5.last_error()}")
         return False
     log(f"[MT5] Conectado — {mt5.account_info().login}")
     return True
 
 def mt5_send_order(symbol, direction, lot, sl_price, tp_price):
-    if not mt5.initialize():
+     try:
+        import MetaTrader5 as mt5
+    except ImportError:
         return False, "MT5 não conectado"
 
     tick = mt5.symbol_info_tick(symbol)
