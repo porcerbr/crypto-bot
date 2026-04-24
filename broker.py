@@ -1,26 +1,27 @@
 # broker.py
-# broker.py – início
 import pandas as pd
 import time
-from datetime import datetime
-import MetaTrader5 as mt5
-
-try:
-    MT5_AVAILABLE = mt5.initialize()
-except:
-    MT5_AVAILABLE = False
-
 from config import Config
 from utils import log, fmt, to_yf, asset_cat, asset_name
 
+# --- MetaTrader5 opcional (só Windows) ---
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = mt5.initialize()
+except (ImportError, Exception):
+    MT5_AVAILABLE = False
 
+# ---------- análise via MT5 (retorna None se não disponível) ----------
 def get_mt5_analysis(symbol, timeframe=None):
     if not MT5_AVAILABLE:
         return None
     if timeframe is None:
         timeframe = Config.TIMEFRAME
-    tf_map = {"1m": mt5.TIMEFRAME_M1, "5m": mt5.TIMEFRAME_M5, "15m": mt5.TIMEFRAME_M15,
-              "30m": mt5.TIMEFRAME_M30, "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4}
+    tf_map = {
+        "1m": mt5.TIMEFRAME_M1, "5m": mt5.TIMEFRAME_M5,
+        "15m": mt5.TIMEFRAME_M15, "30m": mt5.TIMEFRAME_M30,
+        "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4
+    }
     mt5_tf = tf_map.get(timeframe, mt5.TIMEFRAME_M15)
     rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, 200)
     if rates is None or len(rates) < 50:
@@ -75,15 +76,31 @@ def get_mt5_analysis(symbol, timeframe=None):
             h1r = bool(ph < e21h and e21h < e200h)
     except: pass
     return {
-        "symbol": symbol, "name": Config.MARKET_CATEGORIES.get(asset_cat(symbol), {}).get("assets", {}).get(symbol, ""),
-        "price": price, "cenario": cen,
-        "rsi": float(rsi), "atr": atr, "adx": adx, "ema9": float(ema9), "ema21": float(ema21),
-        "ema200": float(ema200), "upper": float(upper), "lower": float(lower),
-        "macd_bull": macd_bull, "macd_bear": macd_bear, "macd_hist": float(mh.iloc[-1]),
-        "vol_ok": True, "vol_ratio": 0, "t_buy": float(highs.tail(5).max()),
-        "t_sell": float(lows.tail(5).min()), "h1_bull": h1b, "h1_bear": h1r, "change_pct": chg,
+        "symbol": symbol,
+        "name": asset_name(symbol),
+        "price": price,
+        "cenario": cen,
+        "rsi": float(rsi),
+        "atr": atr,
+        "adx": adx,
+        "ema9": float(ema9),
+        "ema21": float(ema21),
+        "ema200": float(ema200),
+        "upper": float(upper),
+        "lower": float(lower),
+        "macd_bull": macd_bull,
+        "macd_bear": macd_bear,
+        "macd_hist": float(mh.iloc[-1]),
+        "vol_ok": True,
+        "vol_ratio": 0,
+        "t_buy": float(highs.tail(5).max()),
+        "t_sell": float(lows.tail(5).min()),
+        "h1_bull": h1b,
+        "h1_bear": h1r,
+        "change_pct": chg,
     }
 
+# ---------- envio de ordens (retorna erro se MT5 indisponível) ----------
 def mt5_send_order(symbol, direction, lot, sl_price, tp_price):
     if not MT5_AVAILABLE:
         return False, "MT5 não disponível"
