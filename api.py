@@ -7,7 +7,6 @@ from config import Config
 from utils import log, fmt, all_syms, mkt_open, asset_cat, asset_name, contract_size_for, max_leverage_for
 from analysis import get_analysis, detect_reversal
 from risk import calc_trade_plan, commission_for, get_sl_tp_pct
-from broker import MT5_AVAILABLE, get_mt5_analysis
 from news import get_news, get_fear_greed
 from dashboard import dashboard_html, sw_js
 from db import account_snapshot
