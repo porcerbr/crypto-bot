@@ -2576,9 +2576,98 @@ def create_api(bot):
 
     @app.route("/api/status")
     def api_status():
-        # igual ao original, apenas chama get_analysis atualizado
-        ...
+    total = bot.wins + bot.losses
+    wr = round(bot.wins/total*100, 1) if total > 0 else 0
+    now_br = datetime.now(Config.BR_TZ)
+    today = now_br.strftime("%d/%m")
+    balance = float(bot.balance) or 1.0
 
+    def parse_closed_at(s):
+        try:
+            parts = s.strip().split(" ")
+            d, m = parts[0].split("/")
+            return int(m), int(d)
+        except Exception:
+            return None, None
+
+    today_trades, week_trades, month_trades = [], [], []
+    for h in bot.history:
+        ca = h.get("closed_at", "")
+        if ca.startswith(today):
+            today_trades.append(h)
+        m, d = parse_closed_at(ca)
+        if m is not None:
+            if m == int(now_br.strftime("%m")):
+                month_trades.append(h)
+                week_day_limit = now_br.day - 7
+                if d > week_day_limit:
+                    week_trades.append(h)
+
+    def period_stats(trades):
+        usd = round(sum(h.get("pnl_money", 0) for h in trades), 2)
+        pct = round(usd / balance * 100, 2) if balance else 0
+        wins = sum(1 for h in trades if h.get("result") == "WIN")
+        losses = sum(1 for h in trades if h.get("result") == "LOSS")
+        return {"usd": usd, "pct": pct, "wins": wins, "losses": losses, "count": len(trades)}
+
+    daily   = period_stats(today_trades)
+    weekly  = period_stats(week_trades)
+    monthly = period_stats(month_trades)
+
+    snap = account_snapshot(bot)
+    trades_out = []
+    for t in bot.active_trades:
+        try: res = get_analysis(t["symbol"], bot.timeframe); cur = res["price"] if res else t["entry"]
+        except: cur = t["entry"]
+        pnl = (cur - t["entry"]) / t["entry"] * 100
+        if t["dir"] == "SELL": pnl = -pnl
+        dist_sl = abs(cur - t["sl"]) / abs(t["entry"] - t["sl"]) * 100 if t["entry"] != t["sl"] else 0
+        dist_tp = abs(cur - t["tp"]) / abs(t["tp"] - t["entry"]) * 100 if t["tp"] != t["entry"] else 0
+        progress = min(max(100 - dist_tp, 0), 100) if t["tp"] != t["entry"] else 0
+        lot_rt = float(t.get("lot", Config.MIN_LOT))
+        cs_rt  = float(t.get("contract_size", contract_size_for(t["symbol"])))
+        if t["dir"] == "BUY":
+            pnl_money_rt = (cur - t["entry"]) * cs_rt * lot_rt - t.get("commission", commission_for(t["symbol"], lot_rt))
+        else:
+            pnl_money_rt = (t["entry"] - cur) * cs_rt * lot_rt - t.get("commission", commission_for(t["symbol"], lot_rt))
+        trades_out.append({
+            "symbol": t["symbol"], "name": t.get("name", " "), "dir": t["dir"],
+            "entry": t["entry"], "sl": t["sl"], "tp": t["tp"],
+            "current": cur, "pnl": round(pnl, 2), "pnl_money": round(pnl_money_rt, 2),
+            "opened_at": t.get("opened_at", " "),
+            "dist_sl": round(dist_sl, 1), "dist_tp": round(dist_tp, 1), "progress": round(progress, 1),
+            "lot": round(lot_rt, 2), "margin_required": round(float(t.get("margin_required", 0)), 2),
+            "capital_base": round(float(t.get("capital_base", 0)), 2),
+            "commission": round(float(t.get("commission", 0)), 2),
+            "sl_pct": t.get("sl_pct", 0), "tp_pct": t.get("tp_pct", 0),
+            "max_leverage": max_leverage_for(t["symbol"]),
+        })
+
+    sl_pct, tp_pct = get_sl_tp_pct(bot.leverage)
+
+    return jsonify({
+        "wins": bot.wins, "losses": bot.losses, "winrate": wr,
+        "consecutive_losses": bot.consecutive_losses, "mode": bot.mode, "timeframe": bot.timeframe,
+        "paused": bot.is_paused(), "cb_mins": max(0, int((bot.paused_until - time.time()) / 60)) if bot.is_paused() else 0,
+        "active_trades": trades_out, "pending_count": len(bot.pending_trades),
+        "daily_pnl": daily["pct"], "daily_pnl_usd": daily["usd"],
+        "daily_wins": daily["wins"], "daily_losses": daily["losses"],
+        "today_closed": daily["count"], "history_today": today_trades,
+        "weekly_pnl": weekly["pct"], "weekly_pnl_usd": weekly["usd"],
+        "weekly_wins": weekly["wins"], "weekly_losses": weekly["losses"],
+        "monthly_pnl": monthly["pct"], "monthly_pnl_usd": monthly["usd"],
+        "monthly_wins": monthly["wins"], "monthly_losses": monthly["losses"],
+        "balance": snap["balance"], "equity": snap["equity"],
+        "used_margin": snap["used_margin"], "free_margin": snap["free_margin"],
+        "margin_level": snap["margin_level"],
+        "leverage": bot.leverage, "risk_pct": bot.risk_pct,
+        "margin_call_level": Config.MARGIN_CALL_LEVEL,
+        "stop_out_level": Config.STOP_OUT_LEVEL,
+        "broker": Config.BROKER_NAME,
+        "account_type": bot.account_type,
+        "platform": bot.platform,
+        "sl_auto": sl_pct, "tp_auto": tp_pct,
+    })
     @app.route("/api/trade_plan", methods=["POST"])
     def api_trade_plan():
         data = request.get_json(force=True) or {}
