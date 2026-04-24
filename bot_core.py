@@ -4,7 +4,7 @@ from datetime import datetime
 from config import Config
 from utils import fmt, log
 from db import save_state, load_state, account_snapshot
-from analysis import get_analysis
+from analysis import get_analysis, detect_reversal
 from risk import calc_trade_plan, commission_for, get_sl_tp_pct
 from broker import mt5_send_order
 from signals import scan, scan_reversal_forex, check_correlation
