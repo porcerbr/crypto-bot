@@ -1139,6 +1139,17 @@ class TradingBot:
                 f"📈 Potencial: <code>${plan['potential_profit']:.2f}</code>\n"
                 f"🏦 Saldo após reservar margem: <code>{fmt(self.balance)}</code>"
             )
+            ok, msg = mt5_send_order(
+                opened["symbol"],
+                opened["dir"],
+                plan["lot"],
+                opened["sl"],
+                opened["tp"]
+            )
+            if ok:
+                self.send(f"✅ <b>ORDEM ENVIADA AO MT5</b>\n{msg}")
+            else:
+                self.send(f"⚠️ <b>Trade registrado mas MT5 rejeitou:</b>\n{msg}")
             return True
         return False
 
@@ -1575,6 +1586,16 @@ def calc_kelly_risk(bot):
     kelly_f = win_rate - ((1 - win_rate) / win_loss_ratio)
     risk = max(0.5, min(Config.RISK_PERCENT_PER_TRADE * 1.5, kelly_f * Config.KELLY_FRACTION * 100))
     return round(risk, 2)
+    
+import MetaTrader5 as mt5
+
+def mt5_connect():
+    ...
+
+def mt5_send_order(...):
+    ...
+
+
 
 # ═══════════════════════════════════════════════════════════════
 # SERVICE WORKER
@@ -2856,6 +2877,7 @@ def bot_loop(bot):
 
 def main():
     log("🔌 Tickmill Sniper Bot v9.0 PRO — MT5 | Raw ECN | Dashboard de Execução")
+    mt5_connect()
     try: requests.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteWebhook", timeout=8)
     except: pass
     bot = TradingBot()
