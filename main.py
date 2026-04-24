@@ -869,7 +869,7 @@ def send_push(title, body, icon="/icon-192.png"):
 # ═══════════════════════════════════════════════════════════════
 def calc_premium_rr(res, dir_s, sc, tot_c):
     if not Config.DYNAMIC_RR_ENABLED:
-        return Config.TP_SL_RATIO, f"Padrao 1:{Config.TP_SL_RATIO}", 0, []
+        return Config.TP_SL_RATIO, f"Padrão 1:{Config.TP_SL_RATIO}", 0, []
     premium = []
     price  = res.get("price", 1)
     rsi    = res.get("rsi", 50)
@@ -878,11 +878,11 @@ def calc_premium_rr(res, dir_s, sc, tot_c):
     lower  = res.get("lower", price)
     ema9   = res.get("ema9", price)
     ema21  = res.get("ema21", price)
-    if adx > 35: premium.append(f"ADX {adx:.0f} (tendencia forte)")
-    if sc >= tot_c: premium.append(f"Confluencia maxima ({sc}/{tot_c})")
-    elif sc >= tot_c - 1 and tot_c >= 6: premium.append(f"Confluencia quase perfeita ({sc}/{tot_c})")
+    if adx > 35: premium.append(f"ADX {adx:.0f} (tendência forte)")
+    if sc >= tot_c: premium.append(f"Confluência máxima ({sc}/{tot_c})")
+    elif sc >= tot_c - 1 and tot_c >= 6: premium.append(f"Confluência quase perfeita ({sc}/{tot_c})")
     vol_ratio = res.get("vol_ratio", 0)
-    if vol_ratio > 1.8: premium.append(f"Volume {vol_ratio:.1f}x acima da media")
+    if vol_ratio > 1.8: premium.append(f"Volume {vol_ratio:.1f}x acima da média")
     macd_hist = res.get("macd_hist", 0)
     if dir_s == "BUY"  and res.get("macd_bull") and macd_hist > 0: premium.append("MACD forte e acelerado (alta)")
     elif dir_s == "SELL" and res.get("macd_bear") and macd_hist < 0: premium.append("MACD forte e acelerado (baixa)")
@@ -894,7 +894,7 @@ def calc_premium_rr(res, dir_s, sc, tot_c):
     elif dir_s == "SELL" and 0.35 <= pct_pos <= 0.75: premium.append("Espaco nas bandas para baixa")
     ema_spread_pct = abs(ema9 - ema21) / max(price, 1e-10) * 100
     if ema_spread_pct > 0.08: premium.append(f"EMAs espaçadas {ema_spread_pct:.2f}% (momentum claro)")
-    n = len(premium); rr_ratio = Config.TP_SL_RATIO; rr_label = f"Padrao 1:{Config.TP_SL_RATIO}"
+    n = len(premium); rr_ratio = Config.TP_SL_RATIO; rr_label = f"Padrão 1:{Config.TP_SL_RATIO}"
     for min_cond, rr, label in sorted(Config.DYNAMIC_RR_TIERS, key=lambda x: x[0], reverse=True):
         if n >= min_cond: rr_ratio = rr; rr_label = f"{label} 1:{rr}"; break
     return rr_ratio, rr_label, n, premium
@@ -964,7 +964,7 @@ def build_news_msg():
     lines = ["📰 NOTÍCIAS\n"]
     for i, a in enumerate(arts, 1):
         t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "  ")
-        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})")
+        lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})</a>")
     lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
     return "\n".join(lines)
 
@@ -1095,19 +1095,19 @@ class TradingBot:
         sl_pct = t.get("sl_pct", get_sl_tp_pct(eff_lev)[0])
         tp_pct = t.get("tp_pct", get_sl_tp_pct(eff_lev)[1])
         rr_ratio = t.get("rr_ratio", Config.TP_SL_RATIO)
-        rr_label = t.get("rr_label", f"Padrao 1:{Config.TP_SL_RATIO}")
+        rr_label = t.get("rr_label", f"Padrão 1:{Config.TP_SL_RATIO}")
         premium_reasons = t.get("premium_reasons", [])
         premium_score   = t.get("premium_score", 0)
         if rr_ratio > Config.TP_SL_RATIO:
             rr_line = (
-                f"RR AMPLIADO: <b>{rr_label}</b> ({premium_score} cond. premium)\n"
+                f"RR AMPLIADO: <b>{rr_label}</b> ({premium_score} condições premium)\n"
                 + "\n".join(f"   ✨ {r}" for r in premium_reasons)
             )
         else:
-            rr_line = f"RR padrao 1:{Config.TP_SL_RATIO} (mercado nao atingiu condicoes premium)"
+            rr_line = f"RR padrão 1:{Config.TP_SL_RATIO} (mercado não atingiu condições premium)"
         comm_info = ""
         if asset_cat(t["symbol"]) in ("FOREX", "COMMODITIES"):
-            comm_info = f"\n💳 Comissao RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
+            comm_info = f"\n💳 Comissão RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
         text = "\n".join([
             f"🎯 <b>SINAL PENDENTE – {t['symbol']}</b> ({t['name']}) [Tickmill MT5]",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
@@ -1128,7 +1128,7 @@ class TradingBot:
             "",
         ])
         if t.get("conf_txt"):
-            text += f"\n<b>Confluencia: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
+            text += f"\n<b>Confluência: {t.get('sc','')}/{t.get('tot_c',t.get('tc',''))} [{t['bar']}]</b>\n{t['conf_txt']}"
         markup = {"inline_keyboard": [
             [{"text": "$50", "callback_data": f"amt_50_{t['pending_id']}"},
              {"text": "$100", "callback_data": f"amt_100_{t['pending_id']}"},
@@ -1240,7 +1240,7 @@ class TradingBot:
             [{"text": "TUDO", "callback_data": "set_TUDO"}],
             [{"text": f"TF: {self.timeframe} {tfl}", "callback_data": "tf_menu"}],
             [{"text": "Status", "callback_data": "status"}, {"text": "Placar", "callback_data": "placar"}],
-            [{"text": "Noticias", "callback_data": "news"}],
+            [{"text": "Notícias", "callback_data": "news"}],
         ]}
         tot = self.wins + self.losses; wr = (self.wins/tot*100) if tot > 0 else 0
         cb = f"\n⛔ CB – retoma em {int((self.paused_until-time.time())/60)}min  " if self.is_paused() else "  "
@@ -1407,7 +1407,7 @@ class TradingBot:
                 falhou = [nm for nm, ok in checks if not ok]
                 self.send(
                     f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\n"
-                    f"Gatilho atingido mas bot NÃO entrou.\n"
+                    f"Gatilho atingido, mas o bot não entrou.\n"
                     f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
                     f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)
                 )
@@ -2241,7 +2241,7 @@ function renderPendingFromApi(list){
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
           <div class="pdir ${cls}">${dirLabel}</div>
-          <span style="font-size:9px;color:var(--muted2)">R: 1:${(tpPct/slPct).toFixed(1)}</span>
+          <span style="font-size:9px;color:var(--muted2)">${slPct>0?('R: 1:'+ (tpPct/slPct).toFixed(1)):'R: --'}</span>
         </div>
       </div>
       <div class="pmeta">
@@ -2405,7 +2405,7 @@ async function loadCT(){
           <div class="ctbox"><div class="ctl">RSI</div><div class="ctv ${rsiCls}">${x.rsi}</div></div>
         </div>
         <div class="ctbar"><div class="ctfill" style="width:${pct}%"></div></div>
-        <div class="ctrs">${x.reasons.map(r=>`<span class="cttag">${r}</span>`).join('')}</div>
+        <div class="ctrs">${(Array.isArray(x.reasons)?x.reasons:[]).map(r=>`<span class="cttag">${r}</span>`).join('')}</div>
       </div>`;
     }).join('')
     :'<div class="empty"><span class="empi">⚡</span><div class="empt">Nenhuma CT detectada.</div></div>';
