@@ -1,4 +1,5 @@
 # bot_core.py
+import os
 import time, threading, requests, json, re
 from datetime import datetime
 from config import Config
