@@ -2,10 +2,9 @@
 import time
 from datetime import datetime
 from config import Config
-from utils import log, fmt, all_syms, mkt_open, asset_cat, asset_name
+from utils import log, fmt, all_syms, mkt_open, asset_cat, asset_name, max_leverage_for
 from analysis import get_analysis, calc_confluence, cbar, calc_premium_rr, detect_reversal, get_reversal_analysis, calc_reversal_conf
 from risk import get_sl_tp_pct, commission_for
-from broker import max_leverage_for
 from db import save_state
 
 def scan(bot):
@@ -169,7 +168,6 @@ def scan_reversal_forex(bot):
             sl = round(price * (1 + sl_pct/100), 5)
             tp = round(price * (1 - tp_pct/100), 5)
         dl = "COMPRAR (BUY) 🟢" if dir_s == "BUY" else "VENDER (SELL) 🔴"
-        sinais_txt = "\n".join(f"   ⚡ {sg}" for sg in sinais)
         bot.pending_counter += 1
         bot.last_pending_id = bot.pending_counter
         pending_trade = {
