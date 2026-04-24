@@ -1590,10 +1590,44 @@ def calc_kelly_risk(bot):
 import MetaTrader5 as mt5
 
 def mt5_connect():
-    ...
+    if not mt5.initialize():
+        log(f"[MT5] Falha ao conectar: {mt5.last_error()}")
+        return False
+    log(f"[MT5] Conectado — {mt5.account_info().login}")
+    return True
 
-def mt5_send_order(...):
-    ...
+def mt5_send_order(symbol, direction, lot, sl_price, tp_price):
+    if not mt5.initialize():
+        return False, "MT5 não conectado"
+
+    tick = mt5.symbol_info_tick(symbol)
+    if not tick:
+        return False, f"Símbolo {symbol} não encontrado no MT5"
+
+    order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+    price = tick.ask if direction == "BUY" else tick.bid
+
+    request = {
+        "action":   mt5.TRADE_ACTION_DEAL,
+        "symbol":   symbol,
+        "volume":   float(lot),
+        "type":     order_type,
+        "price":    price,
+        "sl":       float(sl_price),
+        "tp":       float(tp_price),
+        "deviation": 20,
+        "magic":    234000,
+        "comment":  "Sniper Bot v9",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    result = mt5.order_send(request)
+
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        return False, f"Erro MT5: {result.retcode} — {result.comment}"
+
+    return True, f"Ordem #{result.order} executada | Preço: {result.price}"
 
 
 
