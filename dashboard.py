@@ -1,10 +1,11 @@
-'''
-<!DOCTYPE html>
+
+# Gerar o HTML corrigido (sem caracteres problemáticos para Python)
+html_content = '''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BOT SNIPER v11.0 PRO — Tickmill Dashboard</title>
+<title>BOT SNIPER v11.0 PRO - Tickmill Dashboard</title>
 <style>
   :root {
     --bg: #06090f;
@@ -42,7 +43,6 @@
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
-  /* Header */
   .header {
     position: sticky; top: 0; z-index: 100;
     background: rgba(6,9,15,0.92);
@@ -77,7 +77,6 @@
   .header-stat .value.neg { color: var(--danger); }
   .header-stat .value.warn { color: var(--warning); }
 
-  /* Grid Layout */
   .grid {
     display: grid;
     grid-template-columns: 320px 1fr 360px;
@@ -95,7 +94,6 @@
     .grid { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
   }
 
-  /* Cards */
   .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -115,7 +113,6 @@
   .card-body { padding: 10px 14px; overflow-y: auto; flex: 1; }
   .card-body.compact { padding: 6px 10px; }
 
-  /* Account Panel (Left) */
   .account-panel { grid-row: span 2; }
   .metric-row {
     display: flex; justify-content: space-between; align-items: center;
@@ -155,7 +152,6 @@
 
   .btn-group { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 
-  /* Trades Table */
   .trade-item {
     background: rgba(255,255,255,0.02);
     border: 1px solid var(--border);
@@ -195,7 +191,6 @@
   .trade-progress .bar { flex: 1; height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
   .trade-progress .fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s; }
 
-  /* Pending Signals */
   .pending-item {
     background: linear-gradient(90deg, rgba(0,230,118,0.04), transparent);
     border-left: 3px solid var(--accent);
@@ -211,7 +206,6 @@
   .pending-actions { display: flex; gap: 6px; margin-top: 8px; }
   .pending-actions .btn { flex: 1; }
 
-  /* Trends / Reversals */
   .trend-row, .signal-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px;
@@ -228,7 +222,6 @@
   .trend-scenario.neutro { background: rgba(88,166,255,0.1); color: var(--info); }
   .trend-rsi { font-variant-numeric: tabular-nums; width: 50px; text-align: right; color: var(--text-dim); }
 
-  /* Signals Feed */
   .signal-row .time { color: var(--text-dim); font-size: 11px; width: 70px; }
   .signal-row .type { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 8px; }
   .signal-row .type.radar { background: rgba(240,136,62,0.12); color: var(--warning); }
@@ -237,7 +230,6 @@
   .signal-row .type.cb { background: rgba(248,81,73,0.12); color: var(--danger); }
   .signal-row .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* News */
   .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
   .news-item:last-child { border-bottom: none; }
   .news-item a { color: var(--text); text-decoration: none; font-size: 12px; font-weight: 500; }
@@ -254,11 +246,9 @@
   .fg-bar { flex: 1; height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
   .fg-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
 
-  /* Scroll areas */
   .scroll { overflow-y: auto; max-height: 100%; }
   .scroll-thin { max-height: 280px; }
 
-  /* Modal */
   .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200;
     display: none; align-items: center; justify-content: center; padding: 20px;
@@ -282,7 +272,6 @@
   .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
   .modal-footer { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
 
-  /* Toast */
   .toast-container {
     position: fixed; top: 70px; right: 16px; z-index: 300;
     display: flex; flex-direction: column; gap: 8px;
@@ -297,7 +286,6 @@
   .toast.warn { border-left-color: var(--warning); }
   @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
 
-  /* Pulse for live */
   .pulse {
     width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
     animation: pulse 2s infinite; display: inline-block; margin-right: 6px;
@@ -308,7 +296,6 @@
     100% { box-shadow: 0 0 0 0 rgba(0,230,118,0); }
   }
 
-  /* Keyboard hint */
   .kbd {
     display: inline-block; padding: 1px 5px; background: var(--bg);
     border: 1px solid var(--border); border-radius: 4px; font-size: 10px;
@@ -369,7 +356,6 @@
 </div>
 
 <div class="grid">
-  <!-- LEFT: Account & Controls -->
   <div class="card account-panel">
     <div class="card-header">Conta Tickmill</div>
     <div class="card-body">
@@ -441,7 +427,7 @@
 
       <div class="separator"></div>
 
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Controles Rápidos</div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Controles Rapidos</div>
       <div class="btn-group">
         <button class="btn btn-sm" onclick="openModal('modal-mode')">Modo</button>
         <button class="btn btn-sm" onclick="openModal('modal-tf')">Timeframe</button>
@@ -456,7 +442,6 @@
     </div>
   </div>
 
-  <!-- CENTER: Active Trades & Pending -->
   <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
     <div class="card" style="flex:1.2;min-height:0">
       <div class="card-header">
@@ -479,17 +464,16 @@
     </div>
   </div>
 
-  <!-- RIGHT: Trends, Reversals, Signals, News -->
   <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
     <div class="card" style="flex:1.2;min-height:0">
-      <div class="card-header">Tendências de Mercado</div>
+      <div class="card-header">Tendencias de Mercado</div>
       <div class="card-body compact scroll" id="trends-list">
         <div class="empty-state">Carregando...</div>
       </div>
     </div>
 
     <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">Reversões Detectadas</div>
+      <div class="card-header">Reversoes Detectadas</div>
       <div class="card-body compact scroll" id="reversals-list">
         <div class="empty-state">Carregando...</div>
       </div>
@@ -503,7 +487,7 @@
     </div>
 
     <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">Notícias & Fear & Greed</div>
+      <div class="card-header">Noticias & Fear & Greed</div>
       <div class="card-body compact scroll" id="news-list">
         <div class="empty-state">Carregando...</div>
       </div>
@@ -511,43 +495,40 @@
   </div>
 </div>
 
-<!-- Modal: Modo -->
 <div class="modal-overlay" id="modal-mode">
   <div class="modal">
-    <div class="modal-header">Alterar Modo de Mercado <button class="btn btn-sm ghost" onclick="closeModal('modal-mode')">✕</button></div>
+    <div class="modal-header">Alterar Modo de Mercado <button class="btn btn-sm ghost" onclick="closeModal('modal-mode')">X</button></div>
     <div class="modal-body">
       <div class="btn-group" style="flex-direction:column">
         <button class="btn" onclick="setMode('FOREX')">FOREX</button>
         <button class="btn" onclick="setMode('CRYPTO')">CRIPTO</button>
         <button class="btn" onclick="setMode('COMMODITIES')">COMMODITIES</button>
-        <button class="btn" onclick="setMode('INDICES')">ÍNDICES</button>
+        <button class="btn" onclick="setMode('INDICES')">INDICES</button>
         <button class="btn" onclick="setMode('TUDO')">TUDO</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Modal: Timeframe -->
 <div class="modal-overlay" id="modal-tf">
   <div class="modal">
-    <div class="modal-header">Alterar Timeframe <button class="btn btn-sm ghost" onclick="closeModal('modal-tf')">✕</button></div>
+    <div class="modal-header">Alterar Timeframe <button class="btn btn-sm ghost" onclick="closeModal('modal-tf')">X</button></div>
     <div class="modal-body">
       <div class="btn-group" style="flex-direction:column">
-        <button class="btn" onclick="setTF('1m')">1m — Agressivo</button>
-        <button class="btn" onclick="setTF('5m')">5m — Alto</button>
-        <button class="btn" onclick="setTF('15m')">15m — Moderado</button>
-        <button class="btn" onclick="setTF('30m')">30m — Conservador</button>
-        <button class="btn" onclick="setTF('1h')">1h — Seguro</button>
-        <button class="btn" onclick="setTF('4h')">4h — Muito Seguro</button>
+        <button class="btn" onclick="setTF('1m')">1m - Agressivo</button>
+        <button class="btn" onclick="setTF('5m')">5m - Alto</button>
+        <button class="btn" onclick="setTF('15m')">15m - Moderado</button>
+        <button class="btn" onclick="setTF('30m')">30m - Conservador</button>
+        <button class="btn" onclick="setTF('1h')">1h - Seguro</button>
+        <button class="btn" onclick="setTF('4h')">4h - Muito Seguro</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Modal: Balance -->
 <div class="modal-overlay" id="modal-balance">
   <div class="modal">
-    <div class="modal-header">Atualizar Saldo <button class="btn btn-sm ghost" onclick="closeModal('modal-balance')">✕</button></div>
+    <div class="modal-header">Atualizar Saldo <button class="btn btn-sm ghost" onclick="closeModal('modal-balance')">X</button></div>
     <div class="modal-body">
       <div class="form-group">
         <label>Novo Saldo (USD)</label>
@@ -561,13 +542,12 @@
   </div>
 </div>
 
-<!-- Modal: Leverage -->
 <div class="modal-overlay" id="modal-leverage">
   <div class="modal">
-    <div class="modal-header">Alterar Alavancagem <button class="btn btn-sm ghost" onclick="closeModal('modal-leverage')">✕</button></div>
+    <div class="modal-header">Alterar Alavancagem <button class="btn btn-sm ghost" onclick="closeModal('modal-leverage')">X</button></div>
     <div class="modal-body">
       <div class="form-group">
-        <label>Alavancagem (1–1000)</label>
+        <label>Alavancagem (1-1000)</label>
         <input type="number" id="input-leverage" placeholder="500" min="1" max="1000">
       </div>
     </div>
@@ -578,17 +558,16 @@
   </div>
 </div>
 
-<!-- Modal: Trade Plan -->
 <div class="modal-overlay" id="modal-plan">
   <div class="modal">
-    <div class="modal-header">Calculadora Trade Plan <button class="btn btn-sm ghost" onclick="closeModal('modal-plan')">✕</button></div>
+    <div class="modal-header">Calculadora Trade Plan <button class="btn btn-sm ghost" onclick="closeModal('modal-plan')">X</button></div>
     <div class="modal-body">
       <div class="form-group">
-        <label>Símbolo</label>
+        <label>Simbolo</label>
         <input type="text" id="plan-symbol" placeholder="EURUSD">
       </div>
       <div class="form-group">
-        <label>Preço de Entrada</label>
+        <label>Preco de Entrada</label>
         <input type="number" id="plan-entry" placeholder="1.08500" step="0.00001">
       </div>
       <div class="form-group">
@@ -607,11 +586,6 @@
 <div class="toast-container" id="toasts"></div>
 
 <script>
-/* =========================
-   BOT SNIPER v11.0 Dashboard
-   Tickmill Raw ECN Edition
-   ========================= */
-
 const API = "";
 let lastStatus = null;
 let lastPendingIds = new Set();
@@ -686,7 +660,6 @@ function playAlert() {
   } catch(e) {}
 }
 
-/* Status & Header */
 async function loadStatus() {
   const d = await api("/api/status");
   if (!d) return;
@@ -706,7 +679,7 @@ async function loadStatus() {
   const statusBadge = document.getElementById("status-badge");
   if (d.paused) {
     statusBadge.className = "badge pause";
-    statusBadge.innerHTML = "⛔ Pausado (" + (d.cb_mins||0) + "min)";
+    statusBadge.innerHTML = "Pausado (" + (d.cb_mins||0) + "min)";
   } else {
     statusBadge.className = "badge live";
     statusBadge.innerHTML = "<span class=\"pulse\"></span>Operando";
@@ -724,7 +697,7 @@ async function loadStatus() {
   document.getElementById("acc-risk").textContent = (d.risk_pct||2).toFixed(1) + "%";
   document.getElementById("acc-active").textContent = (d.active_trades||[]).length + " / " + (d.max_trades||3);
   document.getElementById("acc-pending").textContent = d.pending_count || 0;
-  document.getElementById("acc-cb").textContent = d.paused ? "ATIVO — " + d.cb_mins + "min" : "Inativo";
+  document.getElementById("acc-cb").textContent = d.paused ? "ATIVO - " + d.cb_mins + "min" : "Inativo";
   document.getElementById("acc-cb").className = "metric-value " + (d.paused ? "danger" : "");
   document.getElementById("acc-losses").textContent = d.consecutive_losses || 0;
 
@@ -763,7 +736,7 @@ function renderActive(trades) {
           <div><span class="k">Lote</span><span class="v">${(t.lot||0).toFixed(2)}</span></div>
           <div><span class="k">Alav.</span><span class="v">${t.max_leverage||500}x</span></div>
           <div><span class="k">Margem</span><span class="v">$${(t.margin_required||0).toFixed(2)}</span></div>
-          <div><span class="k">Comissão</span><span class="v">$${(t.commission||0).toFixed(2)}</span></div>
+          <div><span class="k">Comissao</span><span class="v">$${(t.commission||0).toFixed(2)}</span></div>
         </div>
         <div class="trade-pnl">
           <span style="font-size:11px;color:var(--text-dim)">P&L</span>
@@ -792,7 +765,7 @@ async function renderPending(count, active) {
   el.innerHTML = pending.map(p => {
     const dirClass = p.dir === "BUY" ? "buy" : "sell";
     const rr = p.rr_label || ("1:" + (p.rr_ratio||2.5));
-    const premium = (p.premium_reasons||[]).map(r => `• ${r}`).join("<br>");
+    const premium = (p.premium_reasons||[]).map(r => `&bull; ${r}`).join("<br>");
     return `
       <div class="pending-item">
         <div class="trade-header">
@@ -811,7 +784,7 @@ async function renderPending(count, active) {
           <button class="btn btn-sm primary" onclick="execPending(${p.pending_id}, 100)">$100</button>
           <button class="btn btn-sm primary" onclick="execPending(${p.pending_id}, 250)">$250</button>
           <button class="btn btn-sm" onclick="execPending(${p.pending_id}, 500)">$500</button>
-          <button class="btn btn-sm danger" onclick="rejectPending(${p.pending_id})">✕</button>
+          <button class="btn btn-sm danger" onclick="rejectPending(${p.pending_id})">X</button>
         </div>
       </div>`;
   }).join("");
@@ -837,7 +810,7 @@ async function loadTrends() {
 async function loadReversals() {
   const d = await api("/api/reversals");
   const el = document.getElementById("reversals-list");
-  if (!d || !d.length) { el.innerHTML = '<div class="empty-state">Sem reversões.</div>'; return; }
+  if (!d || !d.length) { el.innerHTML = '<div class="empty-state">Sem reversoes.</div>'; return; }
   el.innerHTML = d.slice(0, 20).map(r => {
     const dirClass = r.direction === "BUY" ? "buy" : "sell";
     return `
@@ -847,11 +820,11 @@ async function loadReversals() {
           <span class="trade-dir ${dirClass}">${r.direction}</span>
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-top:4px">
-          Força: <b style="color:var(--text)">${r.strength||0}</b> |
+          Forca: <b style="color:var(--text)">${r.strength||0}</b> |
           RSI: ${(r.rsi||0).toFixed(1)} |
           ADX: ${(r.adx||0).toFixed(1)}
         </div>
-        <div style="font-size:10px;color:var(--warning);margin-top:2px">${(r.reasons||[]).join(" • ")}</div>
+        <div style="font-size:10px;color:var(--warning);margin-top:2px">${(r.reasons||[]).join(" &bull; ")}</div>
       </div>`;
   }).join("");
 }
@@ -875,7 +848,7 @@ async function loadSignals() {
 async function loadNews() {
   const d = await api("/api/news");
   const el = document.getElementById("news-list");
-  if (!d) { el.innerHTML = '<div class="empty-state">Sem notícias.</div>'; return; }
+  if (!d) { el.innerHTML = '<div class="empty-state">Sem noticias.</div>'; return; }
   let html = "";
   if (d.fg && d.fg.value) {
     const val = parseInt(d.fg.value) || 50;
@@ -897,10 +870,9 @@ async function loadNews() {
       </div>
     `).join("");
   }
-  el.innerHTML = html || '<div class="empty-state">Sem notícias.</div>';
+  el.innerHTML = html || '<div class="empty-state">Sem noticias.</div>';
 }
 
-/* Actions */
 async function execPending(id, amount) {
   const res = await api("/api/execute_pending", {
     method: "POST",
@@ -929,13 +901,13 @@ async function setTF(tf) {
 }
 async function setBalance() {
   const v = parseFloat(document.getElementById("input-balance").value);
-  if (!v || v <= 0) return toast("Saldo inválido", "error");
+  if (!v || v <= 0) return toast("Saldo invalido", "error");
   const res = await api("/api/balance", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({balance: v}) });
   if (res && res.ok) { toast("Saldo atualizado", ""); closeModal("modal-balance"); loadStatus(); }
 }
 async function setLeverage() {
   const v = parseInt(document.getElementById("input-leverage").value);
-  if (!v || v < 1 || v > 1000) return toast("Alavancagem inválida", "error");
+  if (!v || v < 1 || v > 1000) return toast("Alavancagem invalida", "error");
   const res = await api("/api/leverage", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({leverage: v}) });
   if (res && res.ok) { toast("Alavancagem atualizada", ""); closeModal("modal-leverage"); loadStatus(); }
 }
@@ -963,20 +935,18 @@ async function calcPlan() {
         <div><span style="color:var(--text-dim)">TP:</span> <b style="color:var(--accent)">${fmtPrice(res.tp_price_buy, sym)} / ${fmtPrice(res.tp_price_sell, sym)}</b></div>
         <div><span style="color:var(--text-dim)">Risco $:</span> <b>$${res.risk_money?.toFixed(2)||0}</b></div>
         <div><span style="color:var(--text-dim)">Potencial $:</span> <b style="color:var(--accent)">$${res.potential_profit?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">Comissão:</span> <b>$${res.commission?.toFixed(2)||0}</b></div>
+        <div><span style="color:var(--text-dim)">Comissao:</span> <b>$${res.commission?.toFixed(2)||0}</b></div>
         <div><span style="color:var(--text-dim)">RR:</span> <b>1:${res.ratio||2.5}</b></div>
       </div>
     </div>`;
 }
 
-/* Modals */
 function openModal(id) { document.getElementById(id).classList.add("active"); }
 function closeModal(id) { document.getElementById(id).classList.remove("active"); }
 document.querySelectorAll(".modal-overlay").forEach(m => {
   m.addEventListener("click", e => { if (e.target === m) m.classList.remove("active"); });
 });
 
-/* Keyboard shortcuts */
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
   if (e.key === "m" || e.key === "M") openModal("modal-mode");
@@ -986,7 +956,6 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
 });
 
-/* Polling */
 function tick() {
   loadStatus();
   loadSignals();
@@ -1001,11 +970,14 @@ tickSlow();
 setInterval(tick, 5000);
 setInterval(tickSlow, 30000);
 
-/* Service Worker for PWA */
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 </script>
 </body>
-</html>
-'''
+</html>'''
+
+with open("/mnt/agents/output/dashboard.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print(f"HTML gerado: {len(html_content)} chars")
