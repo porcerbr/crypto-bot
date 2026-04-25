@@ -274,9 +274,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13
 <div class="debug-box" id="debug-box"></div>
 
 <script>
-const API="";
+// USA A URL DO PRÓPRIO DOMÍNIO (essencial para evitar erros de caminho)
+const API = window.location.origin;
 let lastStatus=null,lastPendingIds=new Set(),audioCtx=null;
 let debugLines=[];
+
 function debug(msg){
   debugLines.push(new Date().toLocaleTimeString()+" "+msg);
   if(debugLines.length>20)debugLines.shift();
@@ -285,6 +287,7 @@ function debug(msg){
   el.classList.add("active");
   console.log(msg);
 }
+
 function fmtMoney(v){if(v===undefined||v===null)return"$0.00";const n=Number(v),s=n<0?"-":"+";return s+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
 function fmtPct(v){if(v===undefined||v===null)return"0.00%";const n=Number(v),s=n<0?"":"+";return s+n.toFixed(2)+"%"}
 function fmtPrice(v,sym){if(!v)return"0";const n=Number(v);if(n>=10000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1000)return n.toFixed(2);if(n>=10)return n.toFixed(4);if(n>=1)return n.toFixed(5);return n.toFixed(6)}
@@ -355,7 +358,7 @@ async function loadStatus(){
 
   const statusBadge=document.getElementById("status-badge");
   if(d.paused){statusBadge.className="badge pause";statusBadge.innerHTML="Pausado ("+(d.cb_mins||0)+"min)"}
-  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\\"pulse\\"></span>Operando"}
+  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\"pulse\"></span>Operando"}
 
   document.getElementById("acc-balance").textContent=fmtMoney(d.balance).replace("+","");
   document.getElementById("acc-equity").textContent=fmtMoney(d.equity).replace("+","");
@@ -419,7 +422,12 @@ async function loadTrends(){
   debug("loadTrends()...");
   const d=await api("/api/trends");
   const el=document.getElementById("trends-list");
-  if(!d||!d.length){el.innerHTML='<div class="empty-state">Sem dados.</div>';return}
+  if(!d || !Array.isArray(d)) {
+    debug("TRENDS não é array: " + typeof d + " " + JSON.stringify(d).substring(0,150));
+    el.innerHTML='<div class="empty-state">Formato de dados inválido. Veja debug.</div>';
+    return;
+  }
+  if(!d.length){el.innerHTML='<div class="empty-state">Sem dados.</div>';return}
   el.innerHTML=d.slice(0,30).map(t=>{
     const scen=t.cenario==="ALTA"?"alta":t.cenario==="BAIXA"?"baixa":"neutro";
     return`<div class="trend-row"><span class="trend-sym">${t.symbol}</span><span class="trend-scenario ${scen}">${t.cenario}</span><span class="trend-price">${fmtPrice(t.price,t.symbol)}</span><span class="trend-rsi">RSI ${(t.rsi||0).toFixed(1)}</span><span style="font-size:10px;color:var(--text-dim);width:60px;text-align:right">${(t.change_pct||0).toFixed(2)}%</span></div>`
