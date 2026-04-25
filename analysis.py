@@ -89,7 +89,9 @@ def calc_confluence(res, d):
                   ("MACD Baixa", res["macd_bear"]), ("Volume OK", res["vol_ok"]), ("RSI > 35", res["rsi"] > 35),
                   ("TF Superior Baixa", res["h1_bear"]), ("ADX tendência", res["adx"] > Config.ADX_MIN)]
     sc = sum(1 for _, ok in checks if ok)
-    return sc, len(checks), checks
+    min_sc = Config.MIN_CONFLUENCE
+    passed = sc >= min_sc
+    return sc, len(checks), checks, passed, min_sc
 
 def cbar(sc, tot):
     f = math.floor(sc/tot*5)
@@ -216,7 +218,9 @@ def calc_reversal_conf(res, d):
                   ("RSI div. bullish", res["div_bull"]), ("MACD div. bullish", res["macd_div_bull"]),
                   ("Candle de alta", res["pat_bull"]), ("Wick inferior", res["wick_bull"]), ("ADX maduro", res["adx_mature"])]
     sc = sum(1 for _, ok in checks if ok)
-    return sc, len(checks), checks
+    min_sc = Config.MIN_CONFLUENCE_CT
+    passed = sc >= min_sc
+    return sc, len(checks), checks, passed, min_sc
 
 def detect_reversal(res):
     if not res: return (False, None, 0, [])
