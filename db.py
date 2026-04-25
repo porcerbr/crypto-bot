@@ -105,7 +105,8 @@ def load_state(bot):
 from config import Config
 from utils import log
 from analysis import get_analysis
-from risk import commission_for, contract_size_for
+from risk import commission_for
+from utils import contract_size_for
 
 def account_snapshot(bot):
     """Calcula equity, margem e P&L atual."""
