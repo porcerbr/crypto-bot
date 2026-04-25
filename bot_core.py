@@ -1,15 +1,18 @@
 # bot_core.py
-import os
-import time, threading, requests, json, re
+import os, time, threading, requests, json, re
 from datetime import datetime
 from config import Config
 from utils import fmt, log
 from db import save_state, load_state, account_snapshot
 from analysis import get_analysis, detect_reversal
-from risk import calc_trade_plan, commission_for, get_sl_tp_pct
+from risk import calc_trade_plan, commission_for, get_sl_tp_pct, calc_lot_from_margin
 from broker import mt5_send_order
 from signals import scan, scan_reversal_forex, check_correlation
 from utils import all_syms, mkt_open
+from genetic_optimizer import random_genome, evolve, GENOME_KEYS
+from portfolio_hedge import calc_hedge_score
+from whale_tracker import get_whale_alerts
+from sentiment import analyze_sentiment
 
 _push_subscriptions = []
 
@@ -52,7 +55,30 @@ class TradingBot:
         self.margin_call_level = Config.MARGIN_CALL_LEVEL
         self.stop_out_level = Config.STOP_OUT_LEVEL
         self.awaiting_custom_amount = None
+        # Novos atributos
+        self.intel_cache = {"whales": [], "sentiment_score": 0, "sentiment_reasons": [], "ts": 0}
+        self.genomes = []
+        self.best_genome = {}
+        self.last_genetic_ts = 0
+        if Config.GENETIC_ENABLED:
+            self.genomes = [random_genome() for _ in range(Config.GENETIC_POPULATION)]
+            self.best_genome = self.genomes[0]
 
+    def update_intel_cache(self):
+        if time.time() - self.intel_cache.get("ts", 0) < Config.INTEL_INTERVAL:
+            return
+        if self.mode not in ("CRYPTO", "TUDO"):
+            self.intel_cache["ts"] = time.time()
+            return
+        whales = get_whale_alerts()
+        headlines = [a["title"] for a in (self.news_cache.get("articles", []) or [])[:10]]
+        score, reasons = analyze_sentiment(headlines)
+        self.intel_cache = {
+            "whales": whales[:10],
+            "sentiment_score": score,
+            "sentiment_reasons": reasons,
+            "ts": time.time()
+        }
     def send(self, text, markup=None, disable_preview=False):
         clean = re.sub(r"<[^>]+>", " ", text).strip()
         tipo = push_title = push_body = None
@@ -327,7 +353,6 @@ class TradingBot:
             res = get_analysis(t["symbol"], self.timeframe)
             if not res: continue
             cur = res["price"]; atr = res["atr"]
-            # Trailing stop baseado em ATR
             if t["dir"] == "BUY":
                 new_sl = cur - Config.ATR_MULT_TRAIL * atr
                 if new_sl > t["sl"]:
@@ -336,25 +361,16 @@ class TradingBot:
                 new_sl = cur + Config.ATR_MULT_TRAIL * atr
                 if new_sl < t["sl"]:
                     t["sl"] = new_sl; changed = True
-            if not t.get("session_alerted", True):
-                dl = "BUY 🟢" if t["dir"] == "BUY" else "SELL 🔴"
-                self.send(
-                    f"📌 <b>TRADE RESTAURADO – {t['symbol']}</b>\n"
-                    f"Ação: <b>{dl}</b> | Aberto: {t.get('opened_at','?')}\n"
-                    f"Entrada: <code>{fmt(t['entry'])}</code> | Atual: <code>{fmt(cur)}</code>\n"
-                    f"🎯 TP: <code>{fmt(t['tp'])}</code> | 🛡 SL: <code>{fmt(t['sl'])}</code>"
-                )
-                t["session_alerted"] = True; changed = True
             is_win = (t["dir"] == "BUY" and cur >= t["tp"]) or (t["dir"] == "SELL" and cur <= t["tp"])
             is_loss = (t["dir"] == "BUY" and cur <= t["sl"]) or (t["dir"] == "SELL" and cur >= t["sl"])
             if is_win or is_loss:
                 lot = float(t.get("lot", Config.MIN_LOT))
-                cs = float(t.get("contract_size", contract_size_for(t["symbol"])))
+                cs = float(t.get("contract_size", 1))
                 if t["dir"] == "BUY":
                     raw_pnl = (cur - t["entry"]) * cs * lot
                 else:
                     raw_pnl = (t["entry"] - cur) * cs * lot
-                comm = t.get("commission", commission_for(t["symbol"], lot))
+                comm = t.get("commission", 0)
                 pnl_money_net = round(raw_pnl - comm, 2)
                 margin_required = float(t.get("margin_required", 0))
                 self.balance = round(self.balance + margin_required + pnl_money_net, 2)
@@ -391,7 +407,6 @@ class TradingBot:
                         "Use /resetpausa para retomar.",
                     ]))
         if changed: save_state(self)
-
 # Funções auxiliares que o bot precisa
 def build_news_msg():
     from news import get_news, get_fear_greed  # será criado depois
