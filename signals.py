@@ -114,6 +114,7 @@ def scan(bot):
             "tp": tp_est, "sl": sl_est, "dir": dir_s,
             "peak": price, "atr": atr,
             "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+            "created_at": time.time(),
             "session_alerted": True,
             "conf_txt": conf_txt, "sc": sc, "tot_c": tot_c, "bar": bar,
             "sl_pct": sl_pct, "tp_pct": tp_pct,
@@ -141,7 +142,7 @@ def scan_reversal_forex(bot):
         sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
         cands = []
         for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
-            sc, tot_c, checks, passed, min_sc = calc_confluence(res, dir_s)
+            sc, tot_c, checks, passed, min_sc = calc_reversal_conf(res, d)
             strong_anchor = (d == "SELL" and res.get("trend_up")) or (d == "BUY" and res.get("trend_down"))
             extreme = (d == "SELL" and res["rsi_overbought"] and res["near_upper"]) or (d == "BUY" and res["rsi_oversold"] and res["near_lower"])
             rejection = (d == "SELL" and (res["div_bear"] or res["macd_div_bear"] or res["pat_bear"] or res["wick_bear"])) or (d == "BUY" and (res["div_bull"] or res["macd_div_bull"] or res["pat_bull"] or res["wick_bull"]))
@@ -161,7 +162,7 @@ def scan_reversal_forex(bot):
                     if res["macd_div_bull"]: sinais.append("MACD divergência bullish")
                     if res["wick_bull"]: sinais.append("Wick de rejeição")
                     if res["pat_bull"] and res["pat_name"]: sinais.append(res["pat_name"])
-                cands.append((sc, tc, ch, d, sinais))
+                cands.append((sc, tot_c, checks, d, sinais))
         if not cands: continue
         cands.sort(key=lambda x: x[0], reverse=True)
         sc, tc, ch, dir_s, sinais = cands[0]
@@ -185,6 +186,7 @@ def scan_reversal_forex(bot):
             "entry": price, "tp": tp, "sl": sl, "dir": dir_s,
             "peak": price, "atr": atr, "tipo": "CONTRA-TENDÊNCIA ⚡",
             "opened_at": datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M"),
+            "created_at": time.time(),
             "session_alerted": True, "conf_txt": conf_txt, "sc": sc, "tc": tc,
             "bar": bar, "sl_pct": sl_pct, "tp_pct": tp_pct, "sinais": sinais,
             "rr_ratio": rr_ratio, "rr_label": rr_label,
