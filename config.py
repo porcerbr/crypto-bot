@@ -104,7 +104,7 @@ class Config:
     NEWS_FILTER_IMPACT = ["HIGH"]
     CORRELATION_LIMIT = 0.7
     # ── Filtro de Sessão (UTC) ─────────────────────────────────
-    SESSION_FILTER_ENABLED = True
+    SESSION_FILTER_ENABLED = False
     # Horários de início/fim das sessões (UTC)
     SESSIONS = {
         "Tokyo":    (0, 9),
