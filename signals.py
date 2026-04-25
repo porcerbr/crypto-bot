@@ -1,5 +1,5 @@
 # signals.py
-import time
+import time, requests
 from datetime import datetime
 from config import Config
 from utils import log, fmt, all_syms, mkt_open, asset_cat, asset_name, max_leverage_for
@@ -8,9 +8,90 @@ from risk import get_sl_tp_pct, commission_for
 from db import save_state
 from session_filter import is_trading_session_open
 from news_filter import is_high_impact_news_near
-from whale_tracker import whale_signal_for
-from sentiment import analyze_sentiment
 
+# -------------------------------------------------------------------
+# Funções de inteligência de mercado (embutidas para evitar imports)
+# -------------------------------------------------------------------
+def analyze_sentiment(texts):
+    """Análise de sentimento via Hugging Face FinBERT (opcional)."""
+    if not Config.HF_API_TOKEN or not texts:
+        return 0, []
+    try:
+        headers = {"Authorization": f"Bearer {Config.HF_API_TOKEN}"}
+        payload = {"inputs": texts}
+        resp = requests.post(
+            "https://api-inference.huggingface.co/models/ProsusAI/finbert",
+            headers=headers, json=payload, timeout=10
+        )
+        if resp.status_code != 200:
+            log(f"[SENTIMENT] Erro API: {resp.status_code}")
+            return 0, []
+        results = resp.json()
+        scores, reasons = [], []
+        for i, res in enumerate(results):
+            if not res:
+                continue
+            pos = next((d["score"] for d in res if d["label"] == "positive"), 0)
+            neg = next((d["score"] for d in res if d["label"] == "negative"), 0)
+            s = pos - neg
+            scores.append(s)
+            if abs(s) > 0.5 and i < len(texts):
+                reasons.append((texts[i][:100], round(s, 2)))
+        avg = sum(scores) / len(scores) if scores else 0
+        return avg, reasons[:3]
+    except Exception as e:
+        log(f"[SENTIMENT] Erro: {e}")
+        return 0, []
+
+def get_whale_alerts(symbols=None):
+    """Coleta alertas de baleias (Whale Alert API)."""
+    if not Config.WHALE_ALERT_API_KEY:
+        return []
+    try:
+        url = f"https://api.whale-alert.io/v1/transactions?api_key={Config.WHALE_ALERT_API_KEY}&min_value=500000&limit=50"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            log(f"[WHALE] Erro API: {resp.status_code}")
+            return []
+        data = resp.json()
+        whales = []
+        for tx in data.get("transactions", []):
+            symbol = tx.get("symbol", "")
+            if not symbol:
+                continue
+            whales.append({
+                "symbol": symbol,
+                "amount_usd": tx.get("amount_usd", 0),
+                "from_owner": tx.get("from", {}).get("owner_type", "unknown"),
+                "to_owner": tx.get("to", {}).get("owner_type", "unknown"),
+            })
+        log(f"[WHALE] {len(whales)} alertas carregados")
+        return [w for w in whales if symbols is None or w["symbol"] in symbols]
+    except Exception as e:
+        log(f"[WHALE] Erro: {e}")
+        return []
+
+def whale_signal_for(symbol):
+    """Calcula pressão compradora/vendedora das baleias para um símbolo."""
+    alerts = get_whale_alerts([symbol])
+    if not alerts:
+        return 0, []
+    score = 0
+    reasons = []
+    for a in alerts:
+        if "exchange" in a["to_owner"].lower():
+            score -= 1
+            reasons.append(f"${a['amount_usd']:,.0f} → exchange")
+        elif "exchange" in a["from_owner"].lower():
+            score += 1
+            reasons.append(f"${a['amount_usd']:,.0f} ← exchange")
+    if reasons:
+        score = max(-1, min(1, score / len(reasons)))
+    return score, reasons[:3]
+
+# -------------------------------------------------------------------
+# Função de correlação
+# -------------------------------------------------------------------
 def check_correlation(bot, symbol):
     correlations = {
         "EURUSD": ["GBPUSD", "USDCHF", "AUDUSD"],
@@ -25,6 +106,9 @@ def check_correlation(bot, symbol):
                 return True
     return False
 
+# -------------------------------------------------------------------
+# Scanner principal
+# -------------------------------------------------------------------
 def scan(bot):
     if bot.is_paused(): return
     if len(bot.active_trades) >= Config.MAX_TRADES: return
@@ -136,6 +220,9 @@ def scan(bot):
         bot.radar_list[s] = bot.gatilho_list[s] = time.time()
         save_state(bot)
 
+# -------------------------------------------------------------------
+# Scanner de reversões (Forex)
+# -------------------------------------------------------------------
 def scan_reversal_forex(bot):
     if bot.is_paused(): return
     if not mkt_open("FOREX"): return
