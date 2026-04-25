@@ -1,6 +1,4 @@
-
-# Gerar dashboard FINAL corrigido - sem problemas de aspas, com debug
-html_final = '''<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -357,7 +355,7 @@ async function loadStatus(){
 
   const statusBadge=document.getElementById("status-badge");
   if(d.paused){statusBadge.className="badge pause";statusBadge.innerHTML="Pausado ("+(d.cb_mins||0)+"min)"}
-  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\\"pulse\\"></span>Operando"}
+  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\"pulse\"></span>Operando"}
 
   document.getElementById("acc-balance").textContent=fmtMoney(d.balance).replace("+","");
   document.getElementById("acc-equity").textContent=fmtMoney(d.equity).replace("+","");
@@ -525,10 +523,4 @@ setInterval(tickSlow,30000);
 if("serviceWorker"in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 </script>
 </body>
-</html>'''
-
-with open("/mnt/agents/output/dashboard.html", "w", encoding="utf-8") as f:
-    f.write(html_final)
-
-print(f"dashboard.html FINAL: {len(html_final)} chars")
-print("Debug box ativado - aparecera na parte inferior da tela")
+</html>
