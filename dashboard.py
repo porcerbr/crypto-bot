@@ -219,8 +219,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .skel{background:linear-gradient(90deg,var(--bg3) 25%,var(--bg4) 50%,var(--bg3) 75%);background-size:200% 100%;animation:shimmer 1.6s infinite;border-radius:var(--r)}
 .skel-card{height:120px;margin-bottom:10px}
-
 .eb{background:var(--r3);border:1px solid rgba(255,61,113,.2);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:12px;color:var(--red);display:none;text-align:center}
+.amt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -611,6 +611,22 @@ function renderPendingFromApi(list){
   el.innerHTML=list.length?list.map(p=>{
     const buy=p.dir==='BUY';const cls=buy?'buy':'sell';const dirLabel=buy?'▲ BUY':'▼ SELL';
     const slPct=p.sl_pct||0;const tpPct=p.tp_pct||0;
+    const minMargin = p.min_margin_for_min_lot || null;
+    const minMarginStr = minMargin ? `$${minMargin.toFixed(2)}` : '--';
+    const is50ok  = minMargin !== null && 50  >= minMargin;
+    const is100ok = minMargin !== null && 100 >= minMargin;
+    const is250ok = minMargin !== null && 250 >= minMargin;
+    const is500ok = minMargin !== null && 500 >= minMargin;
+    const is1000ok= minMargin !== null && 1000>= minMargin;
+    const amtBtn = (val, label, ok) => {
+      const clsBtn = ok ? `amt-btn amt-${val}` : `amt-btn amt-custom`;
+      const disabled = ok ? '' : 'disabled';
+      const click = ok ? `onclick="openPendingAmt(${p.pending_id},${val},this)"` : '';
+      return `<button class="${clsBtn}" ${click} ${disabled} style="${ok ? '' : 'opacity:0.4; cursor:not-allowed'}">
+        ${label}
+      </button>`;
+    };
+
     return`<div class="pcard" data-pid="${p.pending_id}">
       <div class="pcard-head">
         <div>
@@ -631,11 +647,11 @@ function renderPendingFromApi(list){
         💡 Clique no valor para ver o preview
       </div>
       <div class="amt-grid">
-        <button class="amt-btn amt-50" onclick="openPendingAmt(${p.pending_id},50,this)">$50</button>
-        <button class="amt-btn amt-100" onclick="openPendingAmt(${p.pending_id},100,this)">$100</button>
-        <button class="amt-btn amt-250" onclick="openPendingAmt(${p.pending_id},250,this)">$250</button>
-        <button class="amt-btn amt-500" onclick="openPendingAmt(${p.pending_id},500,this)">$500</button>
-        <button class="amt-btn amt-1000" onclick="openPendingAmt(${p.pending_id},1000,this)">$1000</button>
+        ${amtBtn(50, '$50', is50ok)}
+        ${amtBtn(100, '$100', is100ok)}
+        ${amtBtn(250, '$250', is250ok)}
+        ${amtBtn(500, '$500', is500ok)}
+        ${amtBtn(1000, '$1000', is1000ok)}
         <button class="amt-btn amt-custom" onclick="toggleCustomAmt(${p.pending_id},this)">✏️ Custom</button>
       </div>
       <div class="amt-input-wrap" id="custom-wrap-${p.pending_id}" style="display:none">
@@ -643,6 +659,7 @@ function renderPendingFromApi(list){
         <button class="amt-ok" onclick="submitCustomAmt(${p.pending_id})">✓ OK</button>
       </div>
       <div class="preview-box" id="preview-${p.pending_id}">
+        <div class="prv-row"><span class="prv-l">Lote mínimo</span><span class="prv-v">0.01 (${minMarginStr})</span></div>
         <div class="prv-row"><span class="prv-l">Lote calculado</span><span class="prv-v" id="prv-lot-${p.pending_id}">--</span></div>
         <div class="prv-row"><span class="prv-l">Margem necessária</span><span class="prv-v" id="prv-margin-${p.pending_id}">--</span></div>
         <div class="prv-row"><span class="prv-l">Comissão RT</span><span class="prv-v" id="prv-comm-${p.pending_id}">--</span></div>
@@ -653,6 +670,8 @@ function renderPendingFromApi(list){
     </div>`;
   }).join('')
   :'<div class="empty"><span class="empi">✨</span><div class="empt">Nenhuma confirmação pendente</div></div>';
+  _pending=list;updBadge();
+}
   _pending=list;updBadge();
 }
 async function previewTradePlan(pid, src){
