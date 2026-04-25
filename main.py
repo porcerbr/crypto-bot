@@ -1,6 +1,4 @@
-
-# 3. main.py corrigido - codigo PURO do bot, sem nada de geracao de arquivo
-main_content = '''# main.py
+# main.py
 import threading, requests, time
 from config import Config
 from utils import log, fmt, account_snapshot
@@ -128,13 +126,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-'''
-
-with open("/mnt/agents/output/main.py", "w", encoding="utf-8") as f:
-    f.write(main_content)
-
-print(f"main.py: {len(main_content)} chars")
-print("\n=== TODOS OS ARQUIVOS GERADOS ===")
-print("1. dashboard.html - HTML puro (nao e Python)")
-print("2. api.py - Le dashboard.html de arquivo")
-print("3. main.py - Entry point do bot (sem codigo de geracao)")
