@@ -37,6 +37,7 @@ def db_set(key, value):
     except Exception as e:
         log(f"[DB] write error: {e}")
 
+# dentro de save_state, no dicionário data, adicione:
 def save_state(bot):
     data = {
         "mode": bot.mode, "timeframe": bot.timeframe,
@@ -57,7 +58,13 @@ def save_state(bot):
         "account_currency": bot.account_currency,
         "account_type": bot.account_type,
         "platform": bot.platform,
+        # NOVOS
+        "intel_cache": bot.intel_cache,
+        "best_genome": bot.best_genome,
+        "genomes": bot.genomes,
+        "last_genetic_ts": bot.last_genetic_ts,
     }
+    # ... restante da função ...
     db_set("state", data)
     # fallback JSON
     try:
