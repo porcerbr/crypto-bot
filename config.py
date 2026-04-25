@@ -117,3 +117,17 @@ class Config:
     NEWS_FILTER_ENABLED = True
     NEWS_BLOCK_MINUTES = 15        # minutos antes/depois do evento
     FOREX_FACTORY_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+
+    # ── Inteligência de Mercado ────────────────────────────────
+    WHALE_ALERT_API_KEY = os.getenv("WHALE_ALERT_API_KEY", "")
+    HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
+    INTEL_INTERVAL = 600
+
+    # ── Otimização Genética ────────────────────────────────────
+    GENETIC_ENABLED = True
+    GENETIC_INTERVAL = 86400
+    GENETIC_POPULATION = 10
+
+    # ── Hedge Automático ───────────────────────────────────────
+    HEDGE_ENABLED = True
+    HEDGE_MIN_TRADES = 2
