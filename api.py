@@ -18,6 +18,7 @@ def _load_dashboard_html():
     if _dashboard_html_cache is not None:
         return _dashboard_html_cache
     paths = [
+        "/mnt/agents/output/dashboard.html",          # ← novo: caminho real de saída
         os.path.join(os.path.dirname(__file__), "dashboard.html"),
         os.path.join(os.path.dirname(__file__), "templates", "dashboard.html"),
         "dashboard.html",
