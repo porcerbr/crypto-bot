@@ -111,7 +111,7 @@ class Config:
         "London":   (8, 17),
         "NewYork":  (13, 22),
     }
-    MIN_SESSIONS_OVERLAP = 2   # mínimo de sessões abertas simultâneas
+    MIN_SESSIONS_OVERLAP = 1   # mínimo de sessões abertas simultâneas
 
     # ── Filtro de Notícias ─────────────────────────────────────
     NEWS_FILTER_ENABLED = True
