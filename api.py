@@ -134,9 +134,16 @@ def create_api(bot):
         pending = []
         for p in bot.pending_trades:
             item = dict(p)
-            item.update({"balance": snap["balance"], "equity": snap["equity"],
-                         "used_margin": snap["used_margin"], "free_margin": snap["free_margin"],
-                         "margin_level": snap["margin_level"]})
+            # Calcula o plano para o lote mínimo e pega a margem mínima
+            plan_min = calc_trade_plan(p["symbol"], p["entry"], bot.leverage, bot.balance, bot.risk_pct, Config.MIN_LOT)
+            item["min_margin_for_min_lot"] = plan_min.get("min_margin_for_min_lot", 0) if plan_min.get("ok") else None
+            item.update({
+                "balance": snap["balance"],
+                "equity": snap["equity"],
+                "used_margin": snap["used_margin"],
+                "free_margin": snap["free_margin"],
+                "margin_level": snap["margin_level"]
+            })
             pending.append(item)
         return jsonify(pending)
 
