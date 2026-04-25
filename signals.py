@@ -84,15 +84,15 @@ def scan(bot):
             )
             bot.gatilho_list[s] = time.time()
 
-        sc, tot_c, checks = calc_confluence(res, dir_s)
+        sc, tot_c, checks, passed, min_sc = calc_confluence(res, dir_s)
         bar = cbar(sc, tot_c)
         conf_txt = "\n".join(f"   {'✅' if ok else '❌'} {nm}" for nm, ok in checks)
-        if sc < Config.MIN_CONFLUENCE:
+        if not passed:
             falhou = [nm for nm, ok in checks if not ok]
             bot.send(
                 f"⚡ <b>CONFLUÊNCIA INSUF. – {s}</b>\n\n"
                 f"Gatilho atingido mas bot NÃO entrou.\n"
-                f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {Config.MIN_CONFLUENCE})\n\n"
+                f"Score: <code>{sc}/{tot_c}</code> [{bar}] (min: {min_sc})\n\n"
                 f"<b>Filtros que falharam:</b>\n" + "\n".join(f"   ❌ {nm}" for nm in falhou)
             )
             continue
@@ -141,11 +141,11 @@ def scan_reversal_forex(bot):
         sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
         cands = []
         for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
-            sc, tc, ch = calc_reversal_conf(res, d)
+            sc, tot_c, checks, passed, min_sc = calc_confluence(res, dir_s)
             strong_anchor = (d == "SELL" and res.get("trend_up")) or (d == "BUY" and res.get("trend_down"))
             extreme = (d == "SELL" and res["rsi_overbought"] and res["near_upper"]) or (d == "BUY" and res["rsi_oversold"] and res["near_lower"])
             rejection = (d == "SELL" and (res["div_bear"] or res["macd_div_bear"] or res["pat_bear"] or res["wick_bear"])) or (d == "BUY" and (res["div_bull"] or res["macd_div_bull"] or res["pat_bull"] or res["wick_bull"]))
-            if sc >= Config.MIN_CONFLUENCE_CT and sc >= Config.REVERSAL_MIN_SCORE and strong_anchor and extreme and rejection:
+            if not passed:
                 sinais = []
                 if d == "SELL":
                     if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
