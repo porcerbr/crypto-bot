@@ -1,8 +1,8 @@
 # main.py
 import threading, requests, time
 from config import Config
-from utils import log, fmt, account_snapshot
-from db import init_db, load_state
+from utils import log, fmt
+from db import init_db, load_state, account_snapshot
 from bot_core import TradingBot
 
 def bot_loop(bot):
