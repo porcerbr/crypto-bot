@@ -167,7 +167,7 @@ def scan(bot):
         sentiment_score, sentiment_reasons = 0, []
         if asset_cat(s) == "CRYPTO":
             whale_score, whale_reasons = whale_signal_for(s)
-        if bot.news_cache and bot.news_cache.get("articles"):
+        if bot.news_cache and isinstance(bot.news_cache, dict) and bot.news_cache.get("articles"):
             headlines = [a["title"] for a in bot.news_cache["articles"][:10]]
             sentiment_score, sentiment_reasons = analyze_sentiment(headlines)
 
