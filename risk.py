@@ -90,41 +90,52 @@ def calc_lot_from_risk(symbol, entry, sl_price, balance, risk_pct):
     lot = risk_money / loss_per_lot
     return normalize_lot(lot)
 
-def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
+ def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
     entry = float(entry)
-    leverage = max(1.0, min(float(leverage), max_leverage_for(symbol)))
+    # alavancagem efetiva já limita ao máximo do símbolo
+    eff_lev = max(1.0, min(float(leverage), max_leverage_for(symbol)))
     balance = float(balance)
     risk_pct = float(risk_pct)
     margin_usd = float(margin_usd)
+
+    # margem necessária para o LOTE MÍNIMO (0.01) com essa alavancagem
+    min_margin_min_lot = calc_margin(symbol, entry, eff_lev, Config.MIN_LOT)
+
     if margin_usd <= 0:
         return {"ok": False, "error": "Valor de investimento deve ser maior que zero."}
     if entry <= 0:
         return {"ok": False, "error": "Preço de entrada inválido."}
     if balance <= 0:
         return {"ok": False, "error": "Saldo inválido."}
-    sl_pct, tp_pct = get_sl_tp_pct(leverage)
+
+    sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
+
     sl_price_buy = round(entry * (1 - sl_pct/100), 5)
     tp_price_buy = round(entry * (1 + tp_pct/100), 5)
     sl_price_sell = round(entry * (1 + sl_pct/100), 5)
     tp_price_sell = round(entry * (1 - tp_pct/100), 5)
-    lot_by_margin = calc_lot_from_margin(symbol, entry, leverage, margin_usd)
+
+    lot_by_margin = calc_lot_from_margin(symbol, entry, eff_lev, margin_usd)
     lot_by_risk_buy = calc_lot_from_risk(symbol, entry, sl_price_buy, balance, risk_pct)
     lot_by_risk_sell = calc_lot_from_risk(symbol, entry, sl_price_sell, balance, risk_pct)
     lot_by_risk = min(lot_by_risk_buy, lot_by_risk_sell)
     final_lot = normalize_lot(min(lot_by_margin, lot_by_risk))
+
     if final_lot < Config.MIN_LOT:
-        min_margin = calc_margin(symbol, entry, leverage, Config.MIN_LOT)
         return {
             "ok": False,
-            "error": f"Valor insuficiente. Mínimo para 0.01 lotes de {symbol}: ${min_margin:.2f} de margem.",
-            "min_margin_required": min_margin,
+            "error": f"Valor insuficiente. Mínimo para 0.01 lotes de {symbol}: ${min_margin_min_lot:.2f} de margem.",
+            "min_margin_required": min_margin_min_lot,
             "lot_by_margin": lot_by_margin,
             "lot_by_risk": lot_by_risk,
+            "min_margin_for_min_lot": min_margin_min_lot,
         }
-    margin_required = calc_margin(symbol, entry, leverage, final_lot)
+
+    margin_required = calc_margin(symbol, entry, eff_lev, final_lot)
     sl_dist_buy = abs(entry - sl_price_buy)
     profile = symbol_profile(symbol)
     cs = float(profile["contract_size"])
+
     if profile["kind"] == "FX" and profile["quote"] == "USD":
         risk_loss_buy = sl_dist_buy * cs * final_lot
     elif profile["kind"] == "FX" and profile["base"] == "USD":
@@ -132,6 +143,7 @@ def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
         risk_loss_buy = sl_dist_buy * cs * final_lot * quote_to_usd
     else:
         risk_loss_buy = sl_dist_buy * cs * final_lot
+
     commission = commission_for(symbol, final_lot)
     tp_dist_buy = abs(tp_price_buy - entry)
     if profile["kind"] == "FX" and profile["quote"] == "USD":
@@ -141,12 +153,14 @@ def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
         potential_profit = tp_dist_buy * cs * final_lot * quote_to_usd - commission
     else:
         potential_profit = tp_dist_buy * cs * final_lot - commission
+
     ratio = round(tp_pct / sl_pct, 2) if sl_pct > 0 else 0
+
     return {
         "ok": True,
         "symbol": symbol,
         "entry": entry,
-        "leverage": leverage,
+        "leverage": eff_lev,
         "max_leverage": max_leverage_for(symbol),
         "sl_pct": sl_pct,
         "tp_pct": tp_pct,
@@ -165,5 +179,6 @@ def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
         "potential_profit": round(potential_profit, 2),
         "ratio": ratio,
         "contract_size": cs,
+        "min_margin_for_min_lot": min_margin_min_lot,
         "note": [],
-    }
+                                   }
