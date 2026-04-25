@@ -11,6 +11,16 @@ def scan(bot):
     if bot.is_paused(): return
     if len(bot.active_trades) >= Config.MAX_TRADES: return
     universe = all_syms() if bot.mode == "TUDO" else list(Config.MARKET_CATEGORIES[bot.mode]["assets"].keys())
+    # ── Filtro de Sessão ─────────────────────────
+    from session_filter import is_trading_session_open
+    if not is_trading_session_open():
+        return  # sai silenciosamente se fora do horário
+
+    # ── Filtro de Notícias ───────────────────────
+    from news_filter import is_high_impact_news_near
+    if is_high_impact_news_near():
+        log("⏸️ Sessão pausada — evento de alto impacto próximo.")
+        return
     for s in universe:
         cat = asset_cat(s)
         if not mkt_open(cat): continue
