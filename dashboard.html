@@ -1,983 +1,301 @@
-
-# Gerar o HTML corrigido (sem caracteres problemáticos para Python)
-html_content = '''<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOT SNIPER v11.0 PRO - Tickmill Dashboard</title>
 <style>
-  :root {
-    --bg: #06090f;
-    --bg-card: #0d1117;
-    --bg-hover: #161b22;
-    --border: #21262d;
-    --text: #c9d1d9;
-    --text-dim: #8b949e;
-    --accent: #00e676;
-    --accent-dim: #00c853;
-    --danger: #f85149;
-    --danger-dim: #da3633;
-    --warning: #f0883e;
-    --warning-dim: #db6d28;
-    --info: #58a6ff;
-    --info-dim: #388bfd;
-    --buy: #00e676;
-    --sell: #f85149;
-    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    --radius: 8px;
-    --shadow: 0 4px 24px rgba(0,0,0,0.45);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.45;
-    overflow-x: hidden;
-  }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
-
-  .header {
-    position: sticky; top: 0; z-index: 100;
-    background: rgba(6,9,15,0.92);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    padding: 10px 16px;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    flex-wrap: wrap;
-  }
-  .header-left { display: flex; align-items: center; gap: 14px; }
-  .logo {
-    font-size: 18px; font-weight: 800; letter-spacing: -0.5px;
-    color: var(--accent); display: flex; align-items: center; gap: 8px;
-  }
-  .logo::before {
-    content: "S"; display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; background: var(--accent); color: var(--bg);
-    border-radius: 6px; font-size: 16px; font-weight: 900;
-  }
-  .badge {
-    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-    padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
-    background: var(--bg-card); color: var(--text-dim);
-  }
-  .badge.live { border-color: var(--accent); color: var(--accent); background: rgba(0,230,118,0.08); }
-  .badge.pause { border-color: var(--danger); color: var(--danger); background: rgba(248,81,73,0.08); }
-  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .header-stat { text-align: right; }
-  .header-stat .label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.4px; }
-  .header-stat .value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .header-stat .value.pos { color: var(--accent); }
-  .header-stat .value.neg { color: var(--danger); }
-  .header-stat .value.warn { color: var(--warning); }
-
-  .grid {
-    display: grid;
-    grid-template-columns: 320px 1fr 360px;
-    grid-template-rows: auto 1fr;
-    gap: 12px;
-    padding: 12px;
-    max-width: 1920px;
-    margin: 0 auto;
-    height: calc(100vh - 60px);
-  }
-  @media (max-width: 1400px) {
-    .grid { grid-template-columns: 280px 1fr 300px; }
-  }
-  @media (max-width: 1100px) {
-    .grid { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
-  }
-
-  .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-  .card-header {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
-    color: var(--text-dim);
-    background: rgba(255,255,255,0.02);
-  }
-  .card-body { padding: 10px 14px; overflow-y: auto; flex: 1; }
-  .card-body.compact { padding: 6px 10px; }
-
-  .account-panel { grid-row: span 2; }
-  .metric-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 8px 0; border-bottom: 1px solid var(--border);
-  }
-  .metric-row:last-child { border-bottom: none; }
-  .metric-label { color: var(--text-dim); font-size: 12px; }
-  .metric-value { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 13px; }
-  .metric-value.accent { color: var(--accent); }
-  .metric-value.danger { color: var(--danger); }
-  .metric-value.warning { color: var(--warning); }
-  .metric-value.info { color: var(--info); }
-
-  .progress-bar {
-    width: 100%; height: 6px; background: var(--bg); border-radius: 3px; margin-top: 6px; overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%; border-radius: 3px; transition: width 0.4s ease, background 0.3s;
-  }
-
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    border: 1px solid var(--border); background: var(--bg-hover); color: var(--text);
-    padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
-    transition: all 0.15s; font-family: inherit; white-space: nowrap;
-  }
-  .btn:hover { border-color: var(--text-dim); background: var(--border); }
-  .btn:active { transform: translateY(1px); }
-  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-dim); }
-  .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn.danger:hover { background: var(--danger-dim); }
-  .btn.warning { background: var(--warning); color: #000; border-color: var(--warning); }
-  .btn.ghost { background: transparent; }
-  .btn-sm { padding: 5px 10px; font-size: 11px; }
-  .btn-block { width: 100%; margin-top: 8px; }
-
-  .btn-group { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-
-  .trade-item {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    transition: border-color 0.2s;
-  }
-  .trade-item:hover { border-color: var(--text-dim); }
-  .trade-header {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
-  }
-  .trade-symbol { font-weight: 800; font-size: 14px; letter-spacing: -0.3px; }
-  .trade-dir {
-    font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 2px 8px;
-    border-radius: 4px; letter-spacing: 0.5px;
-  }
-  .trade-dir.buy { background: rgba(0,230,118,0.12); color: var(--buy); border: 1px solid rgba(0,230,118,0.25); }
-  .trade-dir.sell { background: rgba(248,81,73,0.12); color: var(--sell); border: 1px solid rgba(248,81,73,0.25); }
-  .trade-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
-    font-size: 11.5px; color: var(--text-dim);
-  }
-  .trade-grid div { display: flex; justify-content: space-between; }
-  .trade-grid .k { color: var(--text-dim); }
-  .trade-grid .v { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-  .trade-pnl {
-    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .trade-pnl .amount { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .trade-pnl .amount.pos { color: var(--accent); }
-  .trade-pnl .amount.neg { color: var(--danger); }
-  .trade-progress {
-    margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--text-dim);
-  }
-  .trade-progress .bar { flex: 1; height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
-  .trade-progress .fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.5s; }
-
-  .pending-item {
-    background: linear-gradient(90deg, rgba(0,230,118,0.04), transparent);
-    border-left: 3px solid var(--accent);
-    border-radius: 0 6px 6px 0;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    animation: slideIn 0.3s ease;
-  }
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-10px); }
-    to { opacity: 1; transform: translateX(0); }
-  }
-  .pending-actions { display: flex; gap: 6px; margin-top: 8px; }
-  .pending-actions .btn { flex: 1; }
-
-  .trend-row, .signal-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px;
-  }
-  .trend-row:last-child, .signal-row:last-child { border-bottom: none; }
-  .trend-sym { font-weight: 700; width: 70px; }
-  .trend-price { font-variant-numeric: tabular-nums; color: var(--text-dim); width: 80px; text-align: right; }
-  .trend-scenario {
-    font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 4px;
-    text-transform: uppercase; letter-spacing: 0.4px;
-  }
-  .trend-scenario.alta { background: rgba(0,230,118,0.1); color: var(--accent); }
-  .trend-scenario.baixa { background: rgba(248,81,73,0.1); color: var(--danger); }
-  .trend-scenario.neutro { background: rgba(88,166,255,0.1); color: var(--info); }
-  .trend-rsi { font-variant-numeric: tabular-nums; width: 50px; text-align: right; color: var(--text-dim); }
-
-  .signal-row .time { color: var(--text-dim); font-size: 11px; width: 70px; }
-  .signal-row .type { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-right: 8px; }
-  .signal-row .type.radar { background: rgba(240,136,62,0.12); color: var(--warning); }
-  .signal-row .type.sinal { background: rgba(0,230,118,0.12); color: var(--accent); }
-  .signal-row .type.close { background: rgba(88,166,255,0.12); color: var(--info); }
-  .signal-row .type.cb { background: rgba(248,81,73,0.12); color: var(--danger); }
-  .signal-row .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
-  .news-item:last-child { border-bottom: none; }
-  .news-item a { color: var(--text); text-decoration: none; font-size: 12px; font-weight: 500; }
-  .news-item a:hover { color: var(--accent); }
-  .news-item .source { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
-  .fg-index {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-    padding: 10px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border);
-  }
-  .fg-value {
-    font-size: 24px; font-weight: 800; width: 50px; text-align: center;
-  }
-  .fg-label { font-size: 12px; font-weight: 600; }
-  .fg-bar { flex: 1; height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
-  .fg-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
-
-  .scroll { overflow-y: auto; max-height: 100%; }
-  .scroll-thin { max-height: 280px; }
-
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200;
-    display: none; align-items: center; justify-content: center; padding: 20px;
-  }
-  .modal-overlay.active { display: flex; }
-  .modal {
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-    width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow);
-  }
-  .modal-header {
-    padding: 14px 18px; border-bottom: 1px solid var(--border);
-    font-size: 14px; font-weight: 700; display: flex; justify-content: space-between; align-items: center;
-  }
-  .modal-body { padding: 18px; }
-  .form-group { margin-bottom: 14px; }
-  .form-group label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
-  .form-group input, .form-group select {
-    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    padding: 10px 12px; border-radius: 6px; font-family: inherit; font-size: 13px;
-  }
-  .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
-  .modal-footer { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
-
-  .toast-container {
-    position: fixed; top: 70px; right: 16px; z-index: 300;
-    display: flex; flex-direction: column; gap: 8px;
-  }
-  .toast {
-    background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--accent);
-    padding: 12px 16px; border-radius: 6px; box-shadow: var(--shadow);
-    font-size: 12px; max-width: 320px; animation: toastIn 0.3s ease;
-    display: flex; align-items: center; gap: 10px;
-  }
-  .toast.error { border-left-color: var(--danger); }
-  .toast.warn { border-left-color: var(--warning); }
-  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
-
-  .pulse {
-    width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
-    animation: pulse 2s infinite; display: inline-block; margin-right: 6px;
-  }
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(0,230,118,0.4); }
-    70% { box-shadow: 0 0 0 6px rgba(0,230,118,0); }
-    100% { box-shadow: 0 0 0 0 rgba(0,230,118,0); }
-  }
-
-  .kbd {
-    display: inline-block; padding: 1px 5px; background: var(--bg);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 10px;
-    font-family: monospace; color: var(--text-dim);
-  }
-
-  .empty-state {
-    text-align: center; padding: 30px 10px; color: var(--text-dim); font-size: 12px;
-  }
-  .separator {
-    height: 1px; background: var(--border); margin: 10px 0;
-  }
-  .tag {
-    font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--bg);
-    border: 1px solid var(--border); color: var(--text-dim); font-weight: 600;
-  }
+:root{--bg:#06090f;--bg-card:#0d1117;--bg-hover:#161b22;--border:#21262d;--text:#c9d1d9;--text-dim:#8b949e;--accent:#00e676;--accent-dim:#00c853;--danger:#f85149;--danger-dim:#da3633;--warning:#f0883e;--warning-dim:#db6d28;--info:#58a6ff;--info-dim:#388bfd;--buy:#00e676;--sell:#f85149;--font:'Segoe UI',system-ui,-apple-system,sans-serif;--radius:8px;--shadow:0 4px 24px rgba(0,0,0,0.45)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;line-height:1.45;overflow-x:hidden}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+.header{position:sticky;top:0;z-index:100;background:rgba(6,9,15,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.header-left{display:flex;align-items:center;gap:14px}
+.logo{font-size:18px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);display:flex;align-items:center;gap:8px}
+.logo::before{content:"S";display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:var(--accent);color:var(--bg);border-radius:6px;font-size:16px;font-weight:900}
+.badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-dim)}
+.badge.live{border-color:var(--accent);color:var(--accent);background:rgba(0,230,118,0.08)}
+.badge.pause{border-color:var(--danger);color:var(--danger);background:rgba(248,81,73,0.08)}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.header-stat{text-align:right}
+.header-stat .label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.4px}
+.header-stat .value{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.header-stat .value.pos{color:var(--accent)}
+.header-stat .value.neg{color:var(--danger)}
+.header-stat .value.warn{color:var(--warning)}
+.grid{display:grid;grid-template-columns:320px 1fr 360px;grid-template-rows:auto 1fr;gap:12px;padding:12px;max-width:1920px;margin:0 auto;height:calc(100vh - 60px)}
+@media(max-width:1400px){.grid{grid-template-columns:280px 1fr 300px}}
+@media(max-width:1100px){.grid{grid-template-columns:1fr;grid-template-rows:auto;height:auto}}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.card-header{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-dim);background:rgba(255,255,255,0.02)}
+.card-body{padding:10px 14px;overflow-y:auto;flex:1}
+.card-body.compact{padding:6px 10px}
+.account-panel{grid-row:span 2}
+.metric-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.metric-row:last-child{border-bottom:none}
+.metric-label{color:var(--text-dim);font-size:12px}
+.metric-value{font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
+.metric-value.accent{color:var(--accent)}
+.metric-value.danger{color:var(--danger)}
+.metric-value.warning{color:var(--warning)}
+.metric-value.info{color:var(--info)}
+.progress-bar{width:100%;height:6px;background:var(--bg);border-radius:3px;margin-top:6px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;transition:width 0.4s ease,background 0.3s}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:var(--bg-hover);color:var(--text);padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:inherit;white-space:nowrap}
+.btn:hover{border-color:var(--text-dim);background:var(--border)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.primary:hover{background:var(--accent-dim)}
+.btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+.btn.danger:hover{background:var(--danger-dim)}
+.btn.warning{background:var(--warning);color:#000;border-color:var(--warning)}
+.btn.ghost{background:transparent}
+.btn-sm{padding:5px 10px;font-size:11px}
+.btn-block{width:100%;margin-top:8px}
+.btn-group{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.trade-item{background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;transition:border-color 0.2s}
+.trade-item:hover{border-color:var(--text-dim)}
+.trade-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.trade-symbol{font-weight:800;font-size:14px;letter-spacing:-0.3px}
+.trade-dir{font-size:10px;font-weight:800;text-transform:uppercase;padding:2px 8px;border-radius:4px;letter-spacing:0.5px}
+.trade-dir.buy{background:rgba(0,230,118,0.12);color:var(--buy);border:1px solid rgba(0,230,118,0.25)}
+.trade-dir.sell{background:rgba(248,81,73,0.12);color:var(--sell);border:1px solid rgba(248,81,73,0.25)}
+.trade-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:11.5px;color:var(--text-dim)}
+.trade-grid div{display:flex;justify-content:space-between}
+.trade-grid .k{color:var(--text-dim)}
+.trade-grid .v{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.trade-pnl{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.trade-pnl .amount{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+.trade-pnl .amount.pos{color:var(--accent)}
+.trade-pnl .amount.neg{color:var(--danger)}
+.trade-progress{margin-top:6px;display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-dim)}
+.trade-progress .bar{flex:1;height:4px;background:var(--bg);border-radius:2px;overflow:hidden}
+.trade-progress .fill{height:100%;background:var(--accent);border-radius:2px;transition:width 0.5s}
+.pending-item{background:linear-gradient(90deg,rgba(0,230,118,0.04),transparent);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:10px 12px;margin-bottom:8px;animation:slideIn 0.3s ease}
+@keyframes slideIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+.pending-actions{display:flex;gap:6px;margin-top:8px}
+.pending-actions .btn{flex:1}
+.trend-row,.signal-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+.trend-row:last-child,.signal-row:last-child{border-bottom:none}
+.trend-sym{font-weight:700;width:70px}
+.trend-price{font-variant-numeric:tabular-nums;color:var(--text-dim);width:80px;text-align:right}
+.trend-scenario{font-size:10px;font-weight:700;padding:1px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:0.4px}
+.trend-scenario.alta{background:rgba(0,230,118,0.1);color:var(--accent)}
+.trend-scenario.baixa{background:rgba(248,81,73,0.1);color:var(--danger)}
+.trend-scenario.neutro{background:rgba(88,166,255,0.1);color:var(--info)}
+.trend-rsi{font-variant-numeric:tabular-nums;width:50px;text-align:right;color:var(--text-dim)}
+.signal-row .time{color:var(--text-dim);font-size:11px;width:70px}
+.signal-row .type{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:8px}
+.signal-row .type.radar{background:rgba(240,136,62,0.12);color:var(--warning)}
+.signal-row .type.sinal{background:rgba(0,230,118,0.12);color:var(--accent)}
+.signal-row .type.close{background:rgba(88,166,255,0.12);color:var(--info)}
+.signal-row .type.cb{background:rgba(248,81,73,0.12);color:var(--danger)}
+.signal-row .text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.news-item{padding:8px 0;border-bottom:1px solid var(--border)}
+.news-item:last-child{border-bottom:none}
+.news-item a{color:var(--text);text-decoration:none;font-size:12px;font-weight:500}
+.news-item a:hover{color:var(--accent)}
+.news-item .source{font-size:10px;color:var(--text-dim);margin-top:2px}
+.fg-index{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px;background:var(--bg);border-radius:6px;border:1px solid var(--border)}
+.fg-value{font-size:24px;font-weight:800;width:50px;text-align:center}
+.fg-label{font-size:12px;font-weight:600}
+.fg-bar{flex:1;height:8px;background:var(--bg-card);border-radius:4px;overflow:hidden}
+.fg-fill{height:100%;border-radius:4px;transition:width 0.5s}
+.scroll{overflow-y:auto;max-height:100%}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.active{display:flex}
+.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:420px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal-header{padding:14px 18px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+.modal-body{padding:18px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px}
+.form-group input,.form-group select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:6px;font-family:inherit;font-size:13px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--accent)}
+.modal-footer{padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+.toast-container{position:fixed;top:70px;right:16px;z-index:300;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--accent);padding:12px 16px;border-radius:6px;box-shadow:var(--shadow);font-size:12px;max-width:320px;animation:toastIn 0.3s ease;display:flex;align-items:center;gap:10px}
+.toast.error{border-left-color:var(--danger)}
+.toast.warn{border-left-color:var(--warning)}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.pulse{width:8px;height:8px;background:var(--accent);border-radius:50%;animation:pulse 2s infinite;display:inline-block;margin-right:6px}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,230,118,0.4)}70%{box-shadow:0 0 0 6px rgba(0,230,118,0)}100%{box-shadow:0 0 0 0 rgba(0,230,118,0)}}
+.kbd{display:inline-block;padding:1px 5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:10px;font-family:monospace;color:var(--text-dim)}
+.empty-state{text-align:center;padding:30px 10px;color:var(--text-dim);font-size:12px}
+.separator{height:1px;background:var(--border);margin:10px 0}
+.tag{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);font-weight:600}
 </style>
 </head>
 <body>
-
 <div class="header">
-  <div class="header-left">
-    <div class="logo">BOT SNIPER <span style="color:var(--text-dim);font-size:13px;font-weight:500">v11.0 PRO</span></div>
-    <div class="badge" id="broker-badge">Tickmill MT5</div>
-    <div class="badge" id="account-badge">RAW ECN</div>
-    <div class="badge live" id="status-badge"><span class="pulse"></span>Operando</div>
-  </div>
-  <div class="header-right">
-    <div class="header-stat">
-      <div class="label">Win Rate</div>
-      <div class="value" id="hdr-winrate">0.0%</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Placar</div>
-      <div class="value" id="hdr-placar">0W / 0L</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Balance</div>
-      <div class="value accent" id="hdr-balance">$0.00</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Equity</div>
-      <div class="value" id="hdr-equity">$0.00</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Margin Level</div>
-      <div class="value" id="hdr-margin">0.0%</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Modo</div>
-      <div class="value" id="hdr-modo">CRYPTO</div>
-    </div>
-    <div class="header-stat">
-      <div class="label">Timeframe</div>
-      <div class="value" id="hdr-tf">15m</div>
-    </div>
-  </div>
+<div class="header-left">
+<div class="logo">BOT SNIPER <span style="color:var(--text-dim);font-size:13px;font-weight:500">v11.0 PRO</span></div>
+<div class="badge" id="broker-badge">Tickmill MT5</div>
+<div class="badge" id="account-badge">RAW ECN</div>
+<div class="badge live" id="status-badge"><span class="pulse"></span>Operando</div>
 </div>
-
+<div class="header-right">
+<div class="header-stat"><div class="label">Win Rate</div><div class="value" id="hdr-winrate">0.0%</div></div>
+<div class="header-stat"><div class="label">Placar</div><div class="value" id="hdr-placar">0W / 0L</div></div>
+<div class="header-stat"><div class="label">Balance</div><div class="value accent" id="hdr-balance">$0.00</div></div>
+<div class="header-stat"><div class="label">Equity</div><div class="value" id="hdr-equity">$0.00</div></div>
+<div class="header-stat"><div class="label">Margin Level</div><div class="value" id="hdr-margin">0.0%</div></div>
+<div class="header-stat"><div class="label">Modo</div><div class="value" id="hdr-modo">CRYPTO</div></div>
+<div class="header-stat"><div class="label">Timeframe</div><div class="value" id="hdr-tf">15m</div></div>
+</div>
+</div>
 <div class="grid">
-  <div class="card account-panel">
-    <div class="card-header">Conta Tickmill</div>
-    <div class="card-body">
-      <div class="metric-row">
-        <span class="metric-label">Saldo</span>
-        <span class="metric-value accent" id="acc-balance">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Equity</span>
-        <span class="metric-value" id="acc-equity">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Used Margin</span>
-        <span class="metric-value" id="acc-used">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Free Margin</span>
-        <span class="metric-value" id="acc-free">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Margin Level</span>
-        <span class="metric-value" id="acc-level">0.0%</span>
-      </div>
-      <div class="progress-bar"><div class="progress-fill" id="acc-level-bar" style="width:0%"></div></div>
-      <div class="metric-row" style="margin-top:8px">
-        <span class="metric-label">Alavancagem</span>
-        <span class="metric-value" id="acc-leverage">500x</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Risco/Trade</span>
-        <span class="metric-value" id="acc-risk">2.0%</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Trades Ativos</span>
-        <span class="metric-value" id="acc-active">0 / 3</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Pendentes</span>
-        <span class="metric-value" id="acc-pending">0</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Circuit Breaker</span>
-        <span class="metric-value" id="acc-cb">Inativo</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Losses Consec.</span>
-        <span class="metric-value" id="acc-losses">0</span>
-      </div>
-
-      <div class="separator"></div>
-
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Performance</div>
-      <div class="metric-row">
-        <span class="metric-label">Hoje (USD)</span>
-        <span class="metric-value" id="perf-daily-usd">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Hoje (%)</span>
-        <span class="metric-value" id="perf-daily-pct">0.00%</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Semanal (USD)</span>
-        <span class="metric-value" id="perf-week-usd">$0.00</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">Mensal (USD)</span>
-        <span class="metric-value" id="perf-month-usd">$0.00</span>
-      </div>
-
-      <div class="separator"></div>
-
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Controles Rapidos</div>
-      <div class="btn-group">
-        <button class="btn btn-sm" onclick="openModal('modal-mode')">Modo</button>
-        <button class="btn btn-sm" onclick="openModal('modal-tf')">Timeframe</button>
-        <button class="btn btn-sm" onclick="openModal('modal-balance')">Saldo</button>
-        <button class="btn btn-sm" onclick="openModal('modal-leverage')">Alav.</button>
-      </div>
-      <button class="btn btn-block warning" onclick="resetPause()">Reset Circuit Breaker</button>
-      <button class="btn btn-block" onclick="openModal('modal-plan')">Calculadora Trade Plan</button>
-      <div style="margin-top:10px;font-size:10px;color:var(--text-dim);text-align:center">
-        Atalhos: <span class="kbd">M</span> Modo <span class="kbd">T</span> TF <span class="kbd">P</span> Plan <span class="kbd">R</span> Reset
-      </div>
-    </div>
-  </div>
-
-  <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
-    <div class="card" style="flex:1.2;min-height:0">
-      <div class="card-header">
-        <span>Trades Ativos <span class="tag" id="active-count">0</span></span>
-        <span style="font-size:10px;color:var(--text-dim)">Auto-refresh 5s</span>
-      </div>
-      <div class="card-body scroll" id="active-trades">
-        <div class="empty-state">Nenhum trade ativo no momento.</div>
-      </div>
-    </div>
-
-    <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">
-        <span>Sinais Pendentes <span class="tag" id="pending-count">0</span></span>
-        <span style="font-size:10px;color:var(--text-dim)">Expiram em 15min</span>
-      </div>
-      <div class="card-body scroll" id="pending-trades">
-        <div class="empty-state">Nenhum sinal pendente.</div>
-      </div>
-    </div>
-  </div>
-
-  <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
-    <div class="card" style="flex:1.2;min-height:0">
-      <div class="card-header">Tendencias de Mercado</div>
-      <div class="card-body compact scroll" id="trends-list">
-        <div class="empty-state">Carregando...</div>
-      </div>
-    </div>
-
-    <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">Reversoes Detectadas</div>
-      <div class="card-body compact scroll" id="reversals-list">
-        <div class="empty-state">Carregando...</div>
-      </div>
-    </div>
-
-    <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">Feed de Sinais</div>
-      <div class="card-body compact scroll" id="signals-list">
-        <div class="empty-state">Carregando...</div>
-      </div>
-    </div>
-
-    <div class="card" style="flex:1;min-height:0">
-      <div class="card-header">Noticias & Fear & Greed</div>
-      <div class="card-body compact scroll" id="news-list">
-        <div class="empty-state">Carregando...</div>
-      </div>
-    </div>
-  </div>
+<div class="card account-panel">
+<div class="card-header">Conta Tickmill</div>
+<div class="card-body">
+<div class="metric-row"><span class="metric-label">Saldo</span><span class="metric-value accent" id="acc-balance">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Equity</span><span class="metric-value" id="acc-equity">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Used Margin</span><span class="metric-value" id="acc-used">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Free Margin</span><span class="metric-value" id="acc-free">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Margin Level</span><span class="metric-value" id="acc-level">0.0%</span></div>
+<div class="progress-bar"><div class="progress-fill" id="acc-level-bar" style="width:0%"></div></div>
+<div class="metric-row" style="margin-top:8px"><span class="metric-label">Alavancagem</span><span class="metric-value" id="acc-leverage">500x</span></div>
+<div class="metric-row"><span class="metric-label">Risco/Trade</span><span class="metric-value" id="acc-risk">2.0%</span></div>
+<div class="metric-row"><span class="metric-label">Trades Ativos</span><span class="metric-value" id="acc-active">0 / 3</span></div>
+<div class="metric-row"><span class="metric-label">Pendentes</span><span class="metric-value" id="acc-pending">0</span></div>
+<div class="metric-row"><span class="metric-label">Circuit Breaker</span><span class="metric-value" id="acc-cb">Inativo</span></div>
+<div class="metric-row"><span class="metric-label">Losses Consec.</span><span class="metric-value" id="acc-losses">0</span></div>
+<div class="separator"></div>
+<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Performance</div>
+<div class="metric-row"><span class="metric-label">Hoje (USD)</span><span class="metric-value" id="perf-daily-usd">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Hoje (%)</span><span class="metric-value" id="perf-daily-pct">0.00%</span></div>
+<div class="metric-row"><span class="metric-label">Semanal (USD)</span><span class="metric-value" id="perf-week-usd">$0.00</span></div>
+<div class="metric-row"><span class="metric-label">Mensal (USD)</span><span class="metric-value" id="perf-month-usd">$0.00</span></div>
+<div class="separator"></div>
+<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Controles Rapidos</div>
+<div class="btn-group">
+<button class="btn btn-sm" onclick="openModal('modal-mode')">Modo</button>
+<button class="btn btn-sm" onclick="openModal('modal-tf')">Timeframe</button>
+<button class="btn btn-sm" onclick="openModal('modal-balance')">Saldo</button>
+<button class="btn btn-sm" onclick="openModal('modal-leverage')">Alav.</button>
 </div>
-
+<button class="btn btn-block warning" onclick="resetPause()">Reset Circuit Breaker</button>
+<button class="btn btn-block" onclick="openModal('modal-plan')">Calculadora Trade Plan</button>
+<div style="margin-top:10px;font-size:10px;color:var(--text-dim);text-align:center">Atalhos: <span class="kbd">M</span> Modo <span class="kbd">T</span> TF <span class="kbd">P</span> Plan <span class="kbd">R</span> Reset</div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;min-height:0">
+<div class="card" style="flex:1.2;min-height:0">
+<div class="card-header"><span>Trades Ativos <span class="tag" id="active-count">0</span></span><span style="font-size:10px;color:var(--text-dim)">Auto-refresh 5s</span></div>
+<div class="card-body scroll" id="active-trades"><div class="empty-state">Nenhum trade ativo no momento.</div></div>
+</div>
+<div class="card" style="flex:1;min-height:0">
+<div class="card-header"><span>Sinais Pendentes <span class="tag" id="pending-count">0</span></span><span style="font-size:10px;color:var(--text-dim)">Expiram em 15min</span></div>
+<div class="card-body scroll" id="pending-trades"><div class="empty-state">Nenhum sinal pendente.</div></div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;min-height:0">
+<div class="card" style="flex:1.2;min-height:0">
+<div class="card-header">Tendencias de Mercado</div>
+<div class="card-body compact scroll" id="trends-list"><div class="empty-state">Carregando...</div></div>
+</div>
+<div class="card" style="flex:1;min-height:0">
+<div class="card-header">Reversoes Detectadas</div>
+<div class="card-body compact scroll" id="reversals-list"><div class="empty-state">Carregando...</div></div>
+</div>
+<div class="card" style="flex:1;min-height:0">
+<div class="card-header">Feed de Sinais</div>
+<div class="card-body compact scroll" id="signals-list"><div class="empty-state">Carregando...</div></div>
+</div>
+<div class="card" style="flex:1;min-height:0">
+<div class="card-header">Noticias & Fear & Greed</div>
+<div class="card-body compact scroll" id="news-list"><div class="empty-state">Carregando...</div></div>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="modal-mode">
-  <div class="modal">
-    <div class="modal-header">Alterar Modo de Mercado <button class="btn btn-sm ghost" onclick="closeModal('modal-mode')">X</button></div>
-    <div class="modal-body">
-      <div class="btn-group" style="flex-direction:column">
-        <button class="btn" onclick="setMode('FOREX')">FOREX</button>
-        <button class="btn" onclick="setMode('CRYPTO')">CRIPTO</button>
-        <button class="btn" onclick="setMode('COMMODITIES')">COMMODITIES</button>
-        <button class="btn" onclick="setMode('INDICES')">INDICES</button>
-        <button class="btn" onclick="setMode('TUDO')">TUDO</button>
-      </div>
-    </div>
-  </div>
+<div class="modal">
+<div class="modal-header">Alterar Modo de Mercado <button class="btn btn-sm ghost" onclick="closeModal('modal-mode')">X</button></div>
+<div class="modal-body"><div class="btn-group" style="flex-direction:column">
+<button class="btn" onclick="setMode('FOREX')">FOREX</button>
+<button class="btn" onclick="setMode('CRYPTO')">CRIPTO</button>
+<button class="btn" onclick="setMode('COMMODITIES')">COMMODITIES</button>
+<button class="btn" onclick="setMode('INDICES')">INDICES</button>
+<button class="btn" onclick="setMode('TUDO')">TUDO</button>
+</div></div>
 </div>
-
+</div>
 <div class="modal-overlay" id="modal-tf">
-  <div class="modal">
-    <div class="modal-header">Alterar Timeframe <button class="btn btn-sm ghost" onclick="closeModal('modal-tf')">X</button></div>
-    <div class="modal-body">
-      <div class="btn-group" style="flex-direction:column">
-        <button class="btn" onclick="setTF('1m')">1m - Agressivo</button>
-        <button class="btn" onclick="setTF('5m')">5m - Alto</button>
-        <button class="btn" onclick="setTF('15m')">15m - Moderado</button>
-        <button class="btn" onclick="setTF('30m')">30m - Conservador</button>
-        <button class="btn" onclick="setTF('1h')">1h - Seguro</button>
-        <button class="btn" onclick="setTF('4h')">4h - Muito Seguro</button>
-      </div>
-    </div>
-  </div>
+<div class="modal">
+<div class="modal-header">Alterar Timeframe <button class="btn btn-sm ghost" onclick="closeModal('modal-tf')">X</button></div>
+<div class="modal-body"><div class="btn-group" style="flex-direction:column">
+<button class="btn" onclick="setTF('1m')">1m - Agressivo</button>
+<button class="btn" onclick="setTF('5m')">5m - Alto</button>
+<button class="btn" onclick="setTF('15m')">15m - Moderado</button>
+<button class="btn" onclick="setTF('30m')">30m - Conservador</button>
+<button class="btn" onclick="setTF('1h')">1h - Seguro</button>
+<button class="btn" onclick="setTF('4h')">4h - Muito Seguro</button>
+</div></div>
 </div>
-
+</div>
 <div class="modal-overlay" id="modal-balance">
-  <div class="modal">
-    <div class="modal-header">Atualizar Saldo <button class="btn btn-sm ghost" onclick="closeModal('modal-balance')">X</button></div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Novo Saldo (USD)</label>
-        <input type="number" id="input-balance" placeholder="500.00" step="0.01">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-balance')">Cancelar</button>
-      <button class="btn primary" onclick="setBalance()">Salvar</button>
-    </div>
-  </div>
+<div class="modal">
+<div class="modal-header">Atualizar Saldo <button class="btn btn-sm ghost" onclick="closeModal('modal-balance')">X</button></div>
+<div class="modal-body"><div class="form-group"><label>Novo Saldo (USD)</label><input type="number" id="input-balance" placeholder="500.00" step="0.01"></div></div>
+<div class="modal-footer"><button class="btn" onclick="closeModal('modal-balance')">Cancelar</button><button class="btn primary" onclick="setBalance()">Salvar</button></div>
 </div>
-
+</div>
 <div class="modal-overlay" id="modal-leverage">
-  <div class="modal">
-    <div class="modal-header">Alterar Alavancagem <button class="btn btn-sm ghost" onclick="closeModal('modal-leverage')">X</button></div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Alavancagem (1-1000)</label>
-        <input type="number" id="input-leverage" placeholder="500" min="1" max="1000">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-leverage')">Cancelar</button>
-      <button class="btn primary" onclick="setLeverage()">Salvar</button>
-    </div>
-  </div>
+<div class="modal">
+<div class="modal-header">Alterar Alavancagem <button class="btn btn-sm ghost" onclick="closeModal('modal-leverage')">X</button></div>
+<div class="modal-body"><div class="form-group"><label>Alavancagem (1-1000)</label><input type="number" id="input-leverage" placeholder="500" min="1" max="1000"></div></div>
+<div class="modal-footer"><button class="btn" onclick="closeModal('modal-leverage')">Cancelar</button><button class="btn primary" onclick="setLeverage()">Salvar</button></div>
 </div>
-
+</div>
 <div class="modal-overlay" id="modal-plan">
-  <div class="modal">
-    <div class="modal-header">Calculadora Trade Plan <button class="btn btn-sm ghost" onclick="closeModal('modal-plan')">X</button></div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Simbolo</label>
-        <input type="text" id="plan-symbol" placeholder="EURUSD">
-      </div>
-      <div class="form-group">
-        <label>Preco de Entrada</label>
-        <input type="number" id="plan-entry" placeholder="1.08500" step="0.00001">
-      </div>
-      <div class="form-group">
-        <label>Margem a Investir (USD)</label>
-        <input type="number" id="plan-amount" placeholder="100" step="1">
-      </div>
-      <div id="plan-result" style="margin-top:10px"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-plan')">Fechar</button>
-      <button class="btn primary" onclick="calcPlan()">Calcular</button>
-    </div>
-  </div>
+<div class="modal">
+<div class="modal-header">Calculadora Trade Plan <button class="btn btn-sm ghost" onclick="closeModal('modal-plan')">X</button></div>
+<div class="modal-body">
+<div class="form-group"><label>Simbolo</label><input type="text" id="plan-symbol" placeholder="EURUSD"></div>
+<div class="form-group"><label>Preco de Entrada</label><input type="number" id="plan-entry" placeholder="1.08500" step="0.00001"></div>
+<div class="form-group"><label>Margem a Investir (USD)</label><input type="number" id="plan-amount" placeholder="100" step="1"></div>
+<div id="plan-result" style="margin-top:10px"></div>
 </div>
-
+<div class="modal-footer"><button class="btn" onclick="closeModal('modal-plan')">Fechar</button><button class="btn primary" onclick="calcPlan()">Calcular</button></div>
+</div>
+</div>
 <div class="toast-container" id="toasts"></div>
-
 <script>
-const API = "";
-let lastStatus = null;
-let lastPendingIds = new Set();
-let audioCtx = null;
-
-function fmtMoney(v) {
-  if (v === undefined || v === null) return "$0.00";
-  const n = Number(v);
-  const s = n < 0 ? "-" : "+";
-  return s + "$" + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
-}
-function fmtPct(v) {
-  if (v === undefined || v === null) return "0.00%";
-  const n = Number(v);
-  const s = n < 0 ? "" : "+";
-  return s + n.toFixed(2) + "%";
-}
-function fmtPrice(v, sym) {
-  if (!v) return "0";
-  const n = Number(v);
-  if (n >= 10000) return n.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  if (n >= 1000) return n.toFixed(2);
-  if (n >= 10) return n.toFixed(4);
-  if (n >= 1) return n.toFixed(5);
-  return n.toFixed(6);
-}
-function clsForPct(v) {
-  const n = Number(v) || 0;
-  return n >= 0 ? "pos" : "neg";
-}
-function colorForMargin(level) {
-  const l = Number(level) || 0;
-  if (l >= 150) return "var(--accent)";
-  if (l >= 100) return "var(--warning)";
-  return "var(--danger)";
-}
-
-async function api(path, opts) {
-  try {
-    const res = await fetch(API + path, opts);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.json();
-  } catch (e) {
-    console.error("API", path, e);
-    toast("Erro na API: " + path, "error");
-    return null;
-  }
-}
-
-function toast(msg, type="") {
-  const el = document.createElement("div");
-  el.className = "toast " + type;
-  el.textContent = msg;
-  document.getElementById("toasts").appendChild(el);
-  setTimeout(() => el.remove(), 4000);
-}
-
-function playAlert() {
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.15);
-    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.2);
-  } catch(e) {}
-}
-
-async function loadStatus() {
-  const d = await api("/api/status");
-  if (!d) return;
-  lastStatus = d;
-
-  document.getElementById("hdr-winrate").textContent = (d.winrate || 0).toFixed(1) + "%";
-  document.getElementById("hdr-placar").textContent = (d.wins||0) + "W / " + (d.losses||0) + "L";
-  document.getElementById("hdr-balance").textContent = fmtMoney(d.balance).replace("+","");
-  document.getElementById("hdr-equity").textContent = fmtMoney(d.equity).replace("+","");
-  const ml = d.margin_level || 0;
-  const mlEl = document.getElementById("hdr-margin");
-  mlEl.textContent = ml.toFixed(1) + "%";
-  mlEl.className = "value " + (ml < 100 ? "neg" : ml < 150 ? "warn" : "pos");
-  document.getElementById("hdr-modo").textContent = d.mode || "CRYPTO";
-  document.getElementById("hdr-tf").textContent = d.timeframe || "15m";
-
-  const statusBadge = document.getElementById("status-badge");
-  if (d.paused) {
-    statusBadge.className = "badge pause";
-    statusBadge.innerHTML = "Pausado (" + (d.cb_mins||0) + "min)";
-  } else {
-    statusBadge.className = "badge live";
-    statusBadge.innerHTML = "<span class=\"pulse\"></span>Operando";
-  }
-
-  document.getElementById("acc-balance").textContent = fmtMoney(d.balance).replace("+","");
-  document.getElementById("acc-equity").textContent = fmtMoney(d.equity).replace("+","");
-  document.getElementById("acc-used").textContent = fmtMoney(d.used_margin).replace("+","");
-  document.getElementById("acc-free").textContent = fmtMoney(d.free_margin).replace("+","");
-  document.getElementById("acc-level").textContent = ml.toFixed(1) + "%";
-  const lvlBar = document.getElementById("acc-level-bar");
-  lvlBar.style.width = Math.min(ml, 100) + "%";
-  lvlBar.style.background = colorForMargin(ml);
-  document.getElementById("acc-leverage").textContent = (d.leverage||500) + "x";
-  document.getElementById("acc-risk").textContent = (d.risk_pct||2).toFixed(1) + "%";
-  document.getElementById("acc-active").textContent = (d.active_trades||[]).length + " / " + (d.max_trades||3);
-  document.getElementById("acc-pending").textContent = d.pending_count || 0;
-  document.getElementById("acc-cb").textContent = d.paused ? "ATIVO - " + d.cb_mins + "min" : "Inativo";
-  document.getElementById("acc-cb").className = "metric-value " + (d.paused ? "danger" : "");
-  document.getElementById("acc-losses").textContent = d.consecutive_losses || 0;
-
-  document.getElementById("perf-daily-usd").textContent = fmtMoney(d.daily_pnl_usd).replace("+","");
-  document.getElementById("perf-daily-usd").className = "metric-value " + clsForPct(d.daily_pnl_usd);
-  document.getElementById("perf-daily-pct").textContent = fmtPct(d.daily_pnl);
-  document.getElementById("perf-daily-pct").className = "metric-value " + clsForPct(d.daily_pnl);
-  document.getElementById("perf-week-usd").textContent = fmtMoney(d.weekly_pnl_usd).replace("+","");
-  document.getElementById("perf-week-usd").className = "metric-value " + clsForPct(d.weekly_pnl_usd);
-  document.getElementById("perf-month-usd").textContent = fmtMoney(d.monthly_pnl_usd).replace("+","");
-  document.getElementById("perf-month-usd").className = "metric-value " + clsForPct(d.monthly_pnl_usd);
-
-  renderActive(d.active_trades || []);
-  renderPending(d.pending_count || 0, d.active_trades || []);
-}
-
-function renderActive(trades) {
-  const el = document.getElementById("active-trades");
-  document.getElementById("active-count").textContent = trades.length;
-  if (!trades.length) { el.innerHTML = '<div class="empty-state">Nenhum trade ativo no momento.</div>'; return; }
-  el.innerHTML = trades.map(t => {
-    const pnlClass = clsForPct(t.pnl);
-    const progress = Math.min(Math.max(t.progress || 0, 0), 100);
-    const dirClass = t.dir === "BUY" ? "buy" : "sell";
-    return `
-      <div class="trade-item">
-        <div class="trade-header">
-          <span class="trade-symbol">${t.symbol} <span style="font-size:11px;color:var(--text-dim)">${t.name||''}</span></span>
-          <span class="trade-dir ${dirClass}">${t.dir}</span>
-        </div>
-        <div class="trade-grid">
-          <div><span class="k">Entrada</span><span class="v">${fmtPrice(t.entry, t.symbol)}</span></div>
-          <div><span class="k">Atual</span><span class="v">${fmtPrice(t.current, t.symbol)}</span></div>
-          <div><span class="k">SL</span><span class="v" style="color:var(--danger)">${fmtPrice(t.sl, t.symbol)} (${t.sl_pct||0}%)</span></div>
-          <div><span class="k">TP</span><span class="v" style="color:var(--accent)">${fmtPrice(t.tp, t.symbol)} (${t.tp_pct||0}%)</span></div>
-          <div><span class="k">Lote</span><span class="v">${(t.lot||0).toFixed(2)}</span></div>
-          <div><span class="k">Alav.</span><span class="v">${t.max_leverage||500}x</span></div>
-          <div><span class="k">Margem</span><span class="v">$${(t.margin_required||0).toFixed(2)}</span></div>
-          <div><span class="k">Comissao</span><span class="v">$${(t.commission||0).toFixed(2)}</span></div>
-        </div>
-        <div class="trade-pnl">
-          <span style="font-size:11px;color:var(--text-dim)">P&L</span>
-          <span class="amount ${pnlClass}">${fmtMoney(t.pnl_money)} (${fmtPct(t.pnl)})</span>
-        </div>
-        <div class="trade-progress">
-          <span>Progresso TP</span>
-          <div class="bar"><div class="fill" style="width:${progress}%"></div></div>
-          <span>${progress.toFixed(1)}%</span>
-        </div>
-      </div>`;
-  }).join("");
-}
-
-async function renderPending(count, active) {
-  const el = document.getElementById("pending-trades");
-  document.getElementById("pending-count").textContent = count;
-  if (!count) { el.innerHTML = '<div class="empty-state">Nenhum sinal pendente.</div>'; return; }
-  const pending = await api("/api/pending");
-  if (!pending || !pending.length) { el.innerHTML = '<div class="empty-state">Nenhum sinal pendente.</div>'; return; }
-
-  const currentIds = new Set(pending.map(p => p.pending_id));
-  if (currentIds.size > lastPendingIds.size) playAlert();
-  lastPendingIds = currentIds;
-
-  el.innerHTML = pending.map(p => {
-    const dirClass = p.dir === "BUY" ? "buy" : "sell";
-    const rr = p.rr_label || ("1:" + (p.rr_ratio||2.5));
-    const premium = (p.premium_reasons||[]).map(r => `&bull; ${r}`).join("<br>");
-    return `
-      <div class="pending-item">
-        <div class="trade-header">
-          <span class="trade-symbol">${p.symbol} <span style="font-size:11px;color:var(--text-dim)">${p.name||''}</span></span>
-          <span class="trade-dir ${dirClass}">${p.dir}</span>
-        </div>
-        <div style="font-size:11px;color:var(--text-dim);margin:4px 0">
-          Entrada: <b style="color:var(--text)">${fmtPrice(p.entry, p.symbol)}</b> |
-          SL: <b style="color:var(--danger)">${fmtPrice(p.sl, p.symbol)}</b> |
-          TP: <b style="color:var(--accent)">${fmtPrice(p.tp, p.symbol)}</b>
-        </div>
-        <div style="font-size:11px;margin:4px 0"><span class="tag">${rr}</span> <span class="tag">Conf: ${p.sc||0}/${p.tot_c||0}</span></div>
-        ${premium ? `<div style="font-size:10px;color:var(--accent);margin-top:4px">${premium}</div>` : ""}
-        <div class="pending-actions">
-          <button class="btn btn-sm primary" onclick="execPending(${p.pending_id}, 50)">$50</button>
-          <button class="btn btn-sm primary" onclick="execPending(${p.pending_id}, 100)">$100</button>
-          <button class="btn btn-sm primary" onclick="execPending(${p.pending_id}, 250)">$250</button>
-          <button class="btn btn-sm" onclick="execPending(${p.pending_id}, 500)">$500</button>
-          <button class="btn btn-sm danger" onclick="rejectPending(${p.pending_id})">X</button>
-        </div>
-      </div>`;
-  }).join("");
-}
-
-async function loadTrends() {
-  const d = await api("/api/trends");
-  const el = document.getElementById("trends-list");
-  if (!d || !d.length) { el.innerHTML = '<div class="empty-state">Sem dados.</div>'; return; }
-  el.innerHTML = d.slice(0, 30).map(t => {
-    const scen = t.cenario === "ALTA" ? "alta" : t.cenario === "BAIXA" ? "baixa" : "neutro";
-    return `
-      <div class="trend-row">
-        <span class="trend-sym">${t.symbol}</span>
-        <span class="trend-scenario ${scen}">${t.cenario}</span>
-        <span class="trend-price">${fmtPrice(t.price, t.symbol)}</span>
-        <span class="trend-rsi">RSI ${(t.rsi||0).toFixed(1)}</span>
-        <span style="font-size:10px;color:var(--text-dim);width:60px;text-align:right">${(t.change_pct||0).toFixed(2)}%</span>
-      </div>`;
-  }).join("");
-}
-
-async function loadReversals() {
-  const d = await api("/api/reversals");
-  const el = document.getElementById("reversals-list");
-  if (!d || !d.length) { el.innerHTML = '<div class="empty-state">Sem reversoes.</div>'; return; }
-  el.innerHTML = d.slice(0, 20).map(r => {
-    const dirClass = r.direction === "BUY" ? "buy" : "sell";
-    return `
-      <div class="trade-item" style="margin-bottom:6px;padding:8px 10px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-weight:700">${r.symbol}</span>
-          <span class="trade-dir ${dirClass}">${r.direction}</span>
-        </div>
-        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">
-          Forca: <b style="color:var(--text)">${r.strength||0}</b> |
-          RSI: ${(r.rsi||0).toFixed(1)} |
-          ADX: ${(r.adx||0).toFixed(1)}
-        </div>
-        <div style="font-size:10px;color:var(--warning);margin-top:2px">${(r.reasons||[]).join(" &bull; ")}</div>
-      </div>`;
-  }).join("");
-}
-
-async function loadSignals() {
-  const d = await api("/api/signals");
-  const el = document.getElementById("signals-list");
-  if (!d || !d.length) { el.innerHTML = '<div class="empty-state">Sem sinais.</div>'; return; }
-  el.innerHTML = d.slice(0, 40).map(s => {
-    const typeMap = { radar: "radar", gatilho: "sinal", sinal: "sinal", ct: "sinal", close: "close", cb: "cb", insuf: "warn" };
-    const cls = typeMap[s.tipo] || "sinal";
-    return `
-      <div class="signal-row">
-        <span class="time">${s.ts||''}</span>
-        <span class="type ${cls}">${s.tipo||''}</span>
-        <span class="text" title="${(s.texto||'').replace(/"/g,'&quot;')}">${s.texto||''}</span>
-      </div>`;
-  }).join("");
-}
-
-async function loadNews() {
-  const d = await api("/api/news");
-  const el = document.getElementById("news-list");
-  if (!d) { el.innerHTML = '<div class="empty-state">Sem noticias.</div>'; return; }
-  let html = "";
-  if (d.fg && d.fg.value) {
-    const val = parseInt(d.fg.value) || 50;
-    const color = val >= 75 ? "var(--danger)" : val >= 55 ? "var(--warning)" : val >= 45 ? "var(--info)" : val >= 25 ? "var(--accent)" : "var(--buy)";
-    html += `
-      <div class="fg-index">
-        <div class="fg-value" style="color:${color}">${val}</div>
-        <div style="flex:1">
-          <div class="fg-label">Fear & Greed: ${d.fg.label||''}</div>
-          <div class="fg-bar"><div class="fg-fill" style="width:${val}%;background:${color}"></div></div>
-        </div>
-      </div>`;
-  }
-  if (d.articles && d.articles.length) {
-    html += d.articles.slice(0, 8).map(a => `
-      <div class="news-item">
-        <a href="${a.url}" target="_blank" rel="noopener">${a.title||''}</a>
-        <div class="source">${a.source||''}</div>
-      </div>
-    `).join("");
-  }
-  el.innerHTML = html || '<div class="empty-state">Sem noticias.</div>';
-}
-
-async function execPending(id, amount) {
-  const res = await api("/api/execute_pending", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({pending_id: id, amount: amount})
-  });
-  if (res && res.ok) { toast("Trade executado: $" + amount, ""); loadStatus(); }
-  else toast("Falha ao executar trade", "error");
-}
-async function rejectPending(id) {
-  const res = await api("/api/reject", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({pending_id: id})
-  });
-  if (res && res.ok) { toast("Trade rejeitado", ""); loadStatus(); }
-  else toast("Falha ao rejeitar", "error");
-}
-async function setMode(mode) {
-  const res = await api("/api/mode", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({mode}) });
-  if (res && res.ok) { toast("Modo: " + mode, ""); closeModal("modal-mode"); loadStatus(); }
-}
-async function setTF(tf) {
-  const res = await api("/api/timeframe", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({timeframe: tf}) });
-  if (res && res.ok) { toast("TF: " + tf, ""); closeModal("modal-tf"); loadStatus(); }
-}
-async function setBalance() {
-  const v = parseFloat(document.getElementById("input-balance").value);
-  if (!v || v <= 0) return toast("Saldo invalido", "error");
-  const res = await api("/api/balance", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({balance: v}) });
-  if (res && res.ok) { toast("Saldo atualizado", ""); closeModal("modal-balance"); loadStatus(); }
-}
-async function setLeverage() {
-  const v = parseInt(document.getElementById("input-leverage").value);
-  if (!v || v < 1 || v > 1000) return toast("Alavancagem invalida", "error");
-  const res = await api("/api/leverage", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({leverage: v}) });
-  if (res && res.ok) { toast("Alavancagem atualizada", ""); closeModal("modal-leverage"); loadStatus(); }
-}
-async function resetPause() {
-  const res = await api("/api/resetpausa", { method: "POST", headers: {"Content-Type":"application/json"}, body: "{}" });
-  if (res && res.ok) { toast("Circuit Breaker resetado", ""); loadStatus(); }
-}
-async function calcPlan() {
-  const sym = document.getElementById("plan-symbol").value.trim().toUpperCase();
-  const entry = parseFloat(document.getElementById("plan-entry").value);
-  const amount = parseFloat(document.getElementById("plan-amount").value);
-  if (!sym || !entry || !amount) return toast("Preencha todos os campos", "error");
-  const res = await api("/api/trade_plan", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({symbol: sym, entry, amount}) });
-  const out = document.getElementById("plan-result");
-  if (!res || !res.ok) {
-    out.innerHTML = `<div style="color:var(--danger);font-size:12px">${res?.error||"Erro"}</div>`;
-    return;
-  }
-  out.innerHTML = `
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        <div><span style="color:var(--text-dim)">Lote:</span> <b>${res.lot?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">Margem Req:</span> <b>$${res.margin_required?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">SL:</span> <b style="color:var(--danger)">${fmtPrice(res.sl_price_buy, sym)} / ${fmtPrice(res.sl_price_sell, sym)}</b></div>
-        <div><span style="color:var(--text-dim)">TP:</span> <b style="color:var(--accent)">${fmtPrice(res.tp_price_buy, sym)} / ${fmtPrice(res.tp_price_sell, sym)}</b></div>
-        <div><span style="color:var(--text-dim)">Risco $:</span> <b>$${res.risk_money?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">Potencial $:</span> <b style="color:var(--accent)">$${res.potential_profit?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">Comissao:</span> <b>$${res.commission?.toFixed(2)||0}</b></div>
-        <div><span style="color:var(--text-dim)">RR:</span> <b>1:${res.ratio||2.5}</b></div>
-      </div>
-    </div>`;
-}
-
-function openModal(id) { document.getElementById(id).classList.add("active"); }
-function closeModal(id) { document.getElementById(id).classList.remove("active"); }
-document.querySelectorAll(".modal-overlay").forEach(m => {
-  m.addEventListener("click", e => { if (e.target === m) m.classList.remove("active"); });
-});
-
-document.addEventListener("keydown", e => {
-  if (e.target.tagName === "INPUT") return;
-  if (e.key === "m" || e.key === "M") openModal("modal-mode");
-  if (e.key === "t" || e.key === "T") openModal("modal-tf");
-  if (e.key === "p" || e.key === "P") openModal("modal-plan");
-  if (e.key === "r" || e.key === "R") resetPause();
-  if (e.key === "Escape") document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
-});
-
-function tick() {
-  loadStatus();
-  loadSignals();
-}
-function tickSlow() {
-  loadTrends();
-  loadReversals();
-  loadNews();
-}
-tick();
-tickSlow();
-setInterval(tick, 5000);
-setInterval(tickSlow, 30000);
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
-}
+const API="";let lastStatus=null,lastPendingIds=new Set(),audioCtx=null;
+function fmtMoney(v){if(v===undefined||v===null)return"$0.00";const n=Number(v),s=n<0?"-":"+";return s+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtPct(v){if(v===undefined||v===null)return"0.00%";const n=Number(v),s=n<0?"":"+";return s+n.toFixed(2)+"%"}
+function fmtPrice(v,sym){if(!v)return"0";const n=Number(v);if(n>=10000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1000)return n.toFixed(2);if(n>=10)return n.toFixed(4);if(n>=1)return n.toFixed(5);return n.toFixed(6)}
+function clsForPct(v){const n=Number(v)||0;return n>=0?"pos":"neg"}
+function colorForMargin(level){const l=Number(level)||0;if(l>=150)return"var(--accent)";if(l>=100)return"var(--warning)";return"var(--danger)"}
+async function api(path,opts){try{const res=await fetch(API+path,opts);if(!res.ok)throw new Error("HTTP "+res.status);return await res.json()}catch(e){console.error("API",path,e);toast("Erro na API: "+path,"error");return null}}
+function toast(msg,type=""){const el=document.createElement("div");el.className="toast "+type;el.textContent=msg;document.getElementById("toasts").appendChild(el);setTimeout(()=>el.remove(),4000)}
+function playAlert(){try{if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();osc.connect(gain);gain.connect(audioCtx.destination);osc.type="sine";osc.frequency.setValueAtTime(880,audioCtx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,audioCtx.currentTime+0.15);gain.gain.setValueAtTime(0.1,audioCtx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);osc.start();osc.stop(audioCtx.currentTime+0.2)}catch(e){}}
+async function loadStatus(){const d=await api("/api/status");if(!d)return;lastStatus=d;document.getElementById("hdr-winrate").textContent=(d.winrate||0).toFixed(1)+"%";document.getElementById("hdr-placar").textContent=(d.wins||0)+"W / "+(d.losses||0)+"L";document.getElementById("hdr-balance").textContent=fmtMoney(d.balance).replace("+","");document.getElementById("hdr-equity").textContent=fmtMoney(d.equity).replace("+","");const ml=d.margin_level||0;const mlEl=document.getElementById("hdr-margin");mlEl.textContent=ml.toFixed(1)+"%";mlEl.className="value "+(ml<100?"neg":ml<150?"warn":"pos");document.getElementById("hdr-modo").textContent=d.mode||"CRYPTO";document.getElementById("hdr-tf").textContent=d.timeframe||"15m";const statusBadge=document.getElementById("status-badge");if(d.paused){statusBadge.className="badge pause";statusBadge.innerHTML="Pausado ("+(d.cb_mins||0)+"min)"}else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\"pulse\"></span>Operando"}document.getElementById("acc-balance").textContent=fmtMoney(d.balance).replace("+","");document.getElementById("acc-equity").textContent=fmtMoney(d.equity).replace("+","");document.getElementById("acc-used").textContent=fmtMoney(d.used_margin).replace("+","");document.getElementById("acc-free").textContent=fmtMoney(d.free_margin).replace("+","");document.getElementById("acc-level").textContent=ml.toFixed(1)+"%";const lvlBar=document.getElementById("acc-level-bar");lvlBar.style.width=Math.min(ml,100)+"%";lvlBar.style.background=colorForMargin(ml);document.getElementById("acc-leverage").textContent=(d.leverage||500)+"x";document.getElementById("acc-risk").textContent=(d.risk_pct||2).toFixed(1)+"%";document.getElementById("acc-active").textContent=(d.active_trades||[]).length+" / "+(d.max_trades||3);document.getElementById("acc-pending").textContent=d.pending_count||0;document.getElementById("acc-cb").textContent=d.paused?"ATIVO - "+d.cb_mins+"min":"Inativo";document.getElementById("acc-cb").className="metric-value "+(d.paused?"danger":"");document.getElementById("acc-losses").textContent=d.consecutive_losses||0;document.getElementById("perf-daily-usd").textContent=fmtMoney(d.daily_pnl_usd).replace("+","");document.getElementById("perf-daily-usd").className="metric-value "+clsForPct(d.daily_pnl_usd);document.getElementById("perf-daily-pct").textContent=fmtPct(d.daily_pnl);document.getElementById("perf-daily-pct").className="metric-value "+clsForPct(d.daily_pnl);document.getElementById("perf-week-usd").textContent=fmtMoney(d.weekly_pnl_usd).replace("+","");document.getElementById("perf-week-usd").className="metric-value "+clsForPct(d.weekly_pnl_usd);document.getElementById("perf-month-usd").textContent=fmtMoney(d.monthly_pnl_usd).replace("+","");document.getElementById("perf-month-usd").className="metric-value "+clsForPct(d.monthly_pnl_usd);renderActive(d.active_trades||[]);renderPending(d.pending_count||0,d.active_trades||[])}
+function renderActive(trades){const el=document.getElementById("active-trades");document.getElementById("active-count").textContent=trades.length;if(!trades.length){el.innerHTML='<div class="empty-state">Nenhum trade ativo no momento.</div>';return}el.innerHTML=trades.map(t=>{const pnlClass=clsForPct(t.pnl);const progress=Math.min(Math.max(t.progress||0,0),100);const dirClass=t.dir==="BUY"?"buy":"sell";return`<div class="trade-item"><div class="trade-header"><span class="trade-symbol">${t.symbol} <span style="font-size:11px;color:var(--text-dim)">${t.name||''}</span></span><span class="trade-dir ${dirClass}">${t.dir}</span></div><div class="trade-grid"><div><span class="k">Entrada</span><span class="v">${fmtPrice(t.entry,t.symbol)}</span></div><div><span class="k">Atual</span><span class="v">${fmtPrice(t.current,t.symbol)}</span></div><div><span class="k">SL</span><span class="v" style="color:var(--danger)">${fmtPrice(t.sl,t.symbol)} (${t.sl_pct||0}%)</span></div><div><span class="k">TP</span><span class="v" style="color:var(--accent)">${fmtPrice(t.tp,t.symbol)} (${t.tp_pct||0}%)</span></div><div><span class="k">Lote</span><span class="v">${(t.lot||0).toFixed(2)}</span></div><div><span class="k">Alav.</span><span class="v">${t.max_leverage||500}x</span></div><div><span class="k">Margem</span><span class="v">$${(t.margin_required||0).toFixed(2)}</span></div><div><span class="k">Comissao</span><span class="v">$${(t.commission||0).toFixed(2)}</span></div></div><div class="trade-pnl"><span style="font-size:11px;color:var(--text-dim)">P&L</span><span class="amount ${pnlClass}">${fmtMoney(t.pnl_money)} (${fmtPct(t.pnl)})</span></div><div class="trade-progress"><span>Progresso TP</span><div class="bar"><div class="fill" style="width:${progress}%"></div></div><span>${progress.toFixed(1)}%</span></div></div>`}).join("")}
+async function renderPending(count,active){const el=document.getElementById("pending-trades");document.getElementById("pending-count").textContent=count;if(!count){el.innerHTML='<div class="empty-state">Nenhum sinal pendente.</div>';return}const pending=await api("/api/pending");if(!pending||!pending.length){el.innerHTML='<div class="empty-state">Nenhum sinal pendente.</div>';return}const currentIds=new Set(pending.map(p=>p.pending_id));if(currentIds.size>lastPendingIds.size)playAlert();lastPendingIds=currentIds;el.innerHTML=pending.map(p=>{const dirClass=p.dir==="BUY"?"buy":"sell";const rr=p.rr_label||("1:"+(p.rr_ratio||2.5));const premium=(p.premium_reasons||[]).map(r=>`&bull; ${r}`).join("<br>");return`<div class="pending-item"><div class="trade-header"><span class="trade-symbol">${p.symbol} <span style="font-size:11px;color:var(--text-dim)">${p.name||''}</span></span><span class="trade-dir ${dirClass}">${p.dir}</span></div><div style="font-size:11px;color:var(--text-dim);margin:4px 0">Entrada: <b style="color:var(--text)">${fmtPrice(p.entry,p.symbol)}</b> | SL: <b style="color:var(--danger)">${fmtPrice(p.sl,p.symbol)}</b> | TP: <b style="color:var(--accent)">${fmtPrice(p.tp,p.symbol)}</b></div><div style="font-size:11px;margin:4px 0"><span class="tag">${rr}</span> <span class="tag">Conf: ${p.sc||0}/${p.tot_c||0}</span></div>${premium?`<div style="font-size:10px;color:var(--accent);margin-top:4px">${premium}</div>`:""}<div class="pending-actions"><button class="btn btn-sm primary" onclick="execPending(${p.pending_id},50)">$50</button><button class="btn btn-sm primary" onclick="execPending(${p.pending_id},100)">$100</button><button class="btn btn-sm primary" onclick="execPending(${p.pending_id},250)">$250</button><button class="btn btn-sm" onclick="execPending(${p.pending_id},500)">$500</button><button class="btn btn-sm danger" onclick="rejectPending(${p.pending_id})">X</button></div></div>`}).join("")}
+async function loadTrends(){const d=await api("/api/trends");const el=document.getElementById("trends-list");if(!d||!d.length){el.innerHTML='<div class="empty-state">Sem dados.</div>';return}el.innerHTML=d.slice(0,30).map(t=>{const scen=t.cenario==="ALTA"?"alta":t.cenario==="BAIXA"?"baixa":"neutro";return`<div class="trend-row"><span class="trend-sym">${t.symbol}</span><span class="trend-scenario ${scen}">${t.cenario}</span><span class="trend-price">${fmtPrice(t.price,t.symbol)}</span><span class="trend-rsi">RSI ${(t.rsi||0).toFixed(1)}</span><span style="font-size:10px;color:var(--text-dim);width:60px;text-align:right">${(t.change_pct||0).toFixed(2)}%</span></div>`}).join("")}
+async function loadReversals(){const d=await api("/api/reversals");const el=document.getElementById("reversals-list");if(!d||!d.length){el.innerHTML='<div class="empty-state">Sem reversoes.</div>';return}el.innerHTML=d.slice(0,20).map(r=>{const dirClass=r.direction==="BUY"?"buy":"sell";return`<div class="trade-item" style="margin-bottom:6px;padding:8px 10px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700">${r.symbol}</span><span class="trade-dir ${dirClass}">${r.direction}</span></div><div style="font-size:11px;color:var(--text-dim);margin-top:4px">Forca: <b style="color:var(--text)">${r.strength||0}</b> | RSI: ${(r.rsi||0).toFixed(1)} | ADX: ${(r.adx||0).toFixed(1)}</div><div style="font-size:10px;color:var(--warning);margin-top:2px">${(r.reasons||[]).join(" &bull; ")}</div></div>`}).join("")}
+async function loadSignals(){const d=await api("/api/signals");const el=document.getElementById("signals-list");if(!d||!d.length){el.innerHTML='<div class="empty-state">Sem sinais.</div>';return}el.innerHTML=d.slice(0,40).map(s=>{const typeMap={radar:"radar",gatilho:"sinal",sinal:"sinal",ct:"sinal",close:"close",cb:"cb",insuf:"warn"};const cls=typeMap[s.tipo]||"sinal";return`<div class="signal-row"><span class="time">${s.ts||''}</span><span class="type ${cls}">${s.tipo||''}</span><span class="text" title="${(s.texto||'').replace(/"/g,'&quot;')}">${s.texto||''}</span></div>`}).join("")}
+async function loadNews(){const d=await api("/api/news");const el=document.getElementById("news-list");if(!d){el.innerHTML='<div class="empty-state">Sem noticias.</div>';return}let html="";if(d.fg&&d.fg.value){const val=parseInt(d.fg.value)||50;const color=val>=75?"var(--danger)":val>=55?"var(--warning)":val>=45?"var(--info)":val>=25?"var(--accent)":"var(--buy)";html+=`<div class="fg-index"><div class="fg-value" style="color:${color}">${val}</div><div style="flex:1"><div class="fg-label">Fear & Greed: ${d.fg.label||''}</div><div class="fg-bar"><div class="fg-fill" style="width:${val}%;background:${color}"></div></div></div></div>`}if(d.articles&&d.articles.length){html+=d.articles.slice(0,8).map(a=>`<div class="news-item"><a href="${a.url}" target="_blank" rel="noopener">${a.title||''}</a><div class="source">${a.source||''}</div></div>`).join("")}el.innerHTML=html||'<div class="empty-state">Sem noticias.</div>'}
+async function execPending(id,amount){const res=await api("/api/execute_pending",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pending_id:id,amount:amount})});if(res&&res.ok){toast("Trade executado: $"+amount,"");loadStatus()}else toast("Falha ao executar trade","error")}
+async function rejectPending(id){const res=await api("/api/reject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pending_id:id})});if(res&&res.ok){toast("Trade rejeitado","");loadStatus()}else toast("Falha ao rejeitar","error")}
+async function setMode(mode){const res=await api("/api/mode",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode})});if(res&&res.ok){toast("Modo: "+mode,"");closeModal("modal-mode");loadStatus()}}
+async function setTF(tf){const res=await api("/api/timeframe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({timeframe:tf})});if(res&&res.ok){toast("TF: "+tf,"");closeModal("modal-tf");loadStatus()}}
+async function setBalance(){const v=parseFloat(document.getElementById("input-balance").value);if(!v||v<=0)return toast("Saldo invalido","error");const res=await api("/api/balance",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({balance:v})});if(res&&res.ok){toast("Saldo atualizado","");closeModal("modal-balance");loadStatus()}}
+async function setLeverage(){const v=parseInt(document.getElementById("input-leverage").value);if(!v||v<1||v>1000)return toast("Alavancagem invalida","error");const res=await api("/api/leverage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({leverage:v})});if(res&&res.ok){toast("Alavancagem atualizada","");closeModal("modal-leverage");loadStatus()}}
+async function resetPause(){const res=await api("/api/resetpausa",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});if(res&&res.ok){toast("Circuit Breaker resetado","");loadStatus()}}
+async function calcPlan(){const sym=document.getElementById("plan-symbol").value.trim().toUpperCase();const entry=parseFloat(document.getElementById("plan-entry").value);const amount=parseFloat(document.getElementById("plan-amount").value);if(!sym||!entry||!amount)return toast("Preencha todos os campos","error");const res=await api("/api/trade_plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symbol:sym,entry,amount})});const out=document.getElementById("plan-result");if(!res||!res.ok){out.innerHTML=`<div style="color:var(--danger);font-size:12px">${res?.error||"Erro"}</div>`;return}out.innerHTML=`<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div><span style="color:var(--text-dim)">Lote:</span> <b>${res.lot?.toFixed(2)||0}</b></div><div><span style="color:var(--text-dim)">Margem Req:</span> <b>$${res.margin_required?.toFixed(2)||0}</b></div><div><span style="color:var(--text-dim)">SL:</span> <b style="color:var(--danger)">${fmtPrice(res.sl_price_buy,sym)} / ${fmtPrice(res.sl_price_sell,sym)}</b></div><div><span style="color:var(--text-dim)">TP:</span> <b style="color:var(--accent)">${fmtPrice(res.tp_price_buy,sym)} / ${fmtPrice(res.tp_price_sell,sym)}</b></div><div><span style="color:var(--text-dim)">Risco $:</span> <b>$${res.risk_money?.toFixed(2)||0}</b></div><div><span style="color:var(--text-dim)">Potencial $:</span> <b style="color:var(--accent)">$${res.potential_profit?.toFixed(2)||0}</b></div><div><span style="color:var(--text-dim)">Comissao:</span> <b>$${res.commission?.toFixed(2)||0}</b></div><div><span style="color:var(--text-dim)">RR:</span> <b>1:${res.ratio||2.5}</b></div></div></div>`}
+function openModal(id){document.getElementById(id).classList.add("active")}
+function closeModal(id){document.getElementById(id).classList.remove("active")}
+document.querySelectorAll(".modal-overlay").forEach(m=>{m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("active")})})
+document.addEventListener("keydown",e=>{if(e.target.tagName==="INPUT")return;if(e.key==="m"||e.key==="M")openModal("modal-mode");if(e.key==="t"||e.key==="T")openModal("modal-tf");if(e.key==="p"||e.key==="P")openModal("modal-plan");if(e.key==="r"||e.key==="R")resetPause();if(e.key==="Escape")document.querySelectorAll(".modal-overlay").forEach(m=>m.classList.remove("active"))})
+function tick(){loadStatus();loadSignals()}
+function tickSlow(){loadTrends();loadReversals();loadNews()}
+tick();tickSlow();setInterval(tick,5000);setInterval(tickSlow,30000)
+if("serviceWorker"in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 </script>
 </body>
-</html>'''
-
-with open("/mnt/agents/output/dashboard.html", "w", encoding="utf-8") as f:
-    f.write(html_content)
-
-print(f"HTML gerado: {len(html_content)} chars")
+</html>
