@@ -1,6 +1,4 @@
-
-# 2. api.py corrigido - le HTML do arquivo, nao importa de dashboard.py
-api_content = '''# api.py
+# api.py
 import os, time, json
 from datetime import datetime
 from flask import Flask, jsonify, request, Response
@@ -59,7 +57,7 @@ def create_api(bot):
     @app.route("/icon-512.png")
     def icon():
         size = 192 if "192" in request.path else 512
-        svg = f\'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>\'
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>'
         return Response(svg, mimetype="image/svg+xml")
 
     @app.route("/api/health")
@@ -338,9 +336,3 @@ def run_api(bot):
     app = create_api(bot)
     log(f"Flask rodando na porta {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
-'''
-
-with open("/mnt/agents/output/api.py", "w", encoding="utf-8") as f:
-    f.write(api_content)
-
-print(f"api.py: {len(api_content)} chars")
