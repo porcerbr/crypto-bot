@@ -355,7 +355,7 @@ async function loadStatus(){
 
   const statusBadge=document.getElementById("status-badge");
   if(d.paused){statusBadge.className="badge pause";statusBadge.innerHTML="Pausado ("+(d.cb_mins||0)+"min)"}
-  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\"pulse\"></span>Operando"}
+  else{statusBadge.className="badge live";statusBadge.innerHTML="<span class=\\"pulse\\"></span>Operando"}
 
   document.getElementById("acc-balance").textContent=fmtMoney(d.balance).replace("+","");
   document.getElementById("acc-equity").textContent=fmtMoney(d.equity).replace("+","");
