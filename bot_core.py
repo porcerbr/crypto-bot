@@ -7,7 +7,7 @@ from db import save_state, load_state, account_snapshot
 from analysis import get_analysis, detect_reversal
 from risk import calc_trade_plan, commission_for, get_sl_tp_pct, calc_lot_from_margin
 from broker import mt5_send_order
-from utils import all_syms, mkt_open
+from utils import all_syms, mkt_open, asset_cat, max_leverage_for as _max_lev_for
 
 _push_subscriptions = []
 
@@ -29,6 +29,7 @@ def send_push(title, body, icon="/icon-192.png"):
         for d in dead: _push_subscriptions.remove(d)
     except ImportError: pass
     except Exception as e: log(f"[PUSH] {e}")
+
 
 # -------------------------------------------------------------------
 # Funções internas (genética, hedge, inteligência)
@@ -172,8 +173,9 @@ def analyze_sentiment(texts):
         log(f"[SENTIMENT] Erro: {e}")
         return 0, []
 
+
 # -------------------------------------------------------------------
-# Classe do Bot (completa)
+# Classe do Bot (COMPLETA)
 # -------------------------------------------------------------------
 class TradingBot:
     def __init__(self):
@@ -205,7 +207,13 @@ class TradingBot:
             self.genomes = [random_genome() for _ in range(Config.GENETIC_POPULATION)]
             self.best_genome = self.genomes[0]
 
-    # ---------- Métodos auxiliares ----------
+    def is_paused(self):
+        return time.time() < self.paused_until
+
+    def reset_pause(self):
+        self.paused_until = 0; self.consecutive_losses = 0; save_state(self)
+        self.send("✅ Circuit Breaker resetado.")
+
     def send(self, text, markup=None, disable_preview=False):
         clean = re.sub(r"<[^>]+>", " ", text).strip()
         tipo = push_title = push_body = None
@@ -230,9 +238,10 @@ class TradingBot:
         except Exception as e: log(f"[SEND] {e}")
 
     def send_pending_notification(self, t):
+        from utils import asset_cat as _ac, max_leverage_for as _mlf
         dl = "COMPRAR (BUY) 🟢" if t["dir"] == "BUY" else "VENDER (SELL) 🔴"
         snap = account_snapshot(self)
-        eff_lev = min(self.leverage, max_leverage_for_sym(t["symbol"]))
+        eff_lev = min(self.leverage, _mlf(t["symbol"]))
         sl_pct = t.get("sl_pct", get_sl_tp_pct(eff_lev)[0])
         tp_pct = t.get("tp_pct", get_sl_tp_pct(eff_lev)[1])
         rr_ratio = t.get("rr_ratio", Config.TP_SL_RATIO)
@@ -245,12 +254,12 @@ class TradingBot:
         else:
             rr_line = f"RR padrao 1:{Config.TP_SL_RATIO} (mercado nao atingiu condicoes premium)"
         comm_info = ""
-        if asset_cat(t["symbol"]) in ("FOREX", "COMMODITIES"):
+        if _ac(t["symbol"]) in ("FOREX", "COMMODITIES"):
             comm_info = f"\n💳 Comissao RT estimada: <code>${commission_for(t['symbol'], Config.MIN_LOT):.2f}</code>/lote (Raw ECN)"
         text = "\n".join([
             f"🎯 <b>SINAL PENDENTE – {t['symbol']}</b> ({t['name']}) [Tickmill MT5]",
             f"Conta: <b>{self.account_type}</b> {self.platform} | Moeda: <b>{self.account_currency}</b>",
-            f"Alavancagem efetiva: <code>{eff_lev}x</code> (max. Tickmill: <code>{max_leverage_for_sym(t['symbol'])}x</code>)",
+            f"Alavancagem efetiva: <code>{eff_lev}x</code> (max. Tickmill: <code>{_mlf(t['symbol'])}x</code>)",
             f"SL/TP: <code>-{sl_pct}%</code> / <code>+{tp_pct}%</code>",
             rr_line,
             f"Escolha quanto deseja investir (margem em USD):{comm_info}",
@@ -300,4 +309,255 @@ class TradingBot:
         rows.append([{"text": "« Voltar", "callback_data": "main_menu"}])
         self.send("Selecione o Timeframe", {"inline_keyboard": rows})
 
-    # ... outros métodos do bot (mantenha exatamente como estavam no código original, sem alterações)
+    def set_timeframe(self, tf):
+        if tf not in Config.TIMEFRAMES: return
+        old = self.timeframe; self.timeframe = tf; save_state(self)
+        self.send(f"✅ TF: {old} → {tf}")
+
+    def set_mode(self, mode):
+        if mode not in list(Config.MARKET_CATEGORIES.keys()) + ["TUDO"]: return
+        self.mode = mode; save_state(self); self.send(f"✅ Modo: {mode}")
+
+    def set_balance(self, value):
+        try: value = float(value)
+        except: return False
+        if value <= 0: return False
+        self.balance = round(value, 2); save_state(self)
+        self.send(f"🏦 <b>Saldo atualizado</b>\nNovo saldo: <code>{fmt(self.balance)}</code>")
+        return True
+
+    def set_leverage(self, value):
+        try: value = int(value)
+        except: return False
+        if value < 1 or value > 1000: return False
+        self.leverage = value; save_state(self)
+        self.send(f"⚙️ <b>Alavancagem atualizada</b>\nNova alavancagem: <code>{self.leverage}x</code>")
+        return True
+
+    def _open_trade_with_plan(self, pending_trade, plan, source="telegram"):
+        trade = {k: v for k, v in pending_trade.items() if k not in ("conf_txt", "sc", "tot_c", "tc", "bar", "ratio", "vol_txt", "sinais", "pending_id")}
+        trade.update({
+            "capital_base": plan["margin_usd"],
+            "margin_required": plan["margin_required"],
+            "lot": plan["lot"],
+            "contract_size": plan["contract_size"],
+            "base_ccy": Config.BASE_CURRENCY,
+            "quote_ccy": Config.BASE_CURRENCY,
+            "risk_pct": plan["risk_pct_of_balance"],
+            "risk_money": plan["risk_money"],
+            "tp_gain": plan["potential_profit"],
+            "leverage": plan["leverage"],
+            "commission": plan["commission"],
+            "sl_pct": plan["sl_pct"],
+            "tp_pct": plan["tp_pct"],
+            "source": source,
+        })
+        self.balance -= plan["margin_required"]
+        self.balance = round(self.balance, 2)
+        self.active_trades.append(trade)
+        save_state(self)
+        return trade
+
+    def execute_pending_with_amount(self, pending_id, amount, source="dashboard"):
+        from signals import check_correlation
+        for t in self.pending_trades[:]:
+            if t.get("pending_id") != pending_id:
+                continue
+            if check_correlation(self, t["symbol"]):
+                self.send(f"⚠️ <b>ALERTA DE CORRELAÇÃO – {t['symbol']}</b>\nVocê já possui trade aberto em ativo correlacionado. Operação cancelada.")
+                return False
+            plan = calc_trade_plan(t["symbol"], t["entry"], self.leverage, self.balance, self.risk_pct, amount)
+            if not plan.get("ok"):
+                self.send(f"❌ <b>Não foi possível abrir {t['symbol']}</b>\n{plan.get('error','Erro desconhecido')}")
+                return False
+            self.pending_trades.remove(t)
+            opened = self._open_trade_with_plan(t, plan, source=source)
+            if not opened:
+                save_state(self)
+                return False
+            dl = "BUY 🟢" if opened["dir"] == "BUY" else "SELL 🔴"
+            self.send(
+                f"✅ <b>TRADE ABERTO – {opened['symbol']}</b> [Tickmill MT5]\n"
+                f"{dl} | Entrada: <code>{fmt(opened['entry'])}</code>\n"
+                f"💵 Margem alocada: <code>${plan['margin_required']:.2f}</code> | Alav.: <code>{int(plan['leverage'])}x</code>\n"
+                f"📦 Lote: <code>{plan['lot']:.2f}</code> | Comissão: <code>${plan['commission']:.2f}</code>\n"
+                f"🛡 SL: <code>{fmt(opened['sl'])}</code> ({-plan['sl_pct']}%) | 🎯 TP: <code>{fmt(opened['tp'])}</code> (+{plan['tp_pct']}%)\n"
+                f"📉 Risco: <code>${plan['risk_money']:.2f}</code> ({plan['risk_pct_of_balance']:.2f}% do saldo)\n"
+                f"📈 Potencial: <code>${plan['potential_profit']:.2f}</code>\n"
+                f"🏦 Saldo após reservar margem: <code>{fmt(self.balance)}</code>"
+            )
+            ok, msg = mt5_send_order(opened["symbol"], opened["dir"], plan["lot"], opened["sl"], opened["tp"])
+            if ok:
+                self.send(f"✅ <b>ORDEM ENVIADA AO MT5</b>\n{msg}")
+            else:
+                self.active_trades.remove(opened)
+                self.balance += plan["margin_required"]
+                self.send(f"⚠️ <b>FALHA NO MT5:</b> {msg}\nTrade revertido.")
+            save_state(self)
+            return True
+        return False
+
+    def request_custom_amount(self, pending_id):
+        self.awaiting_custom_amount = pending_id
+        self.send(
+            f"💬 <b>Valor custom solicitado</b>\n\nEnvie agora o valor em dólares que deseja investir (margem).\n"
+            f"Exemplo: <code>500</code>\n\nVocê pode cancelar enviando <code>cancelar</code>."
+        )
+
+    def confirm_pending(self, pending_id, amount=None):
+        if amount is None:
+            amount = max(100.0, self.balance * 0.10)
+        return self.execute_pending_with_amount(pending_id, amount, source="dashboard")
+
+    def reject_pending(self, pending_id):
+        for t in self.pending_trades[:]:
+            if t.get("pending_id") == pending_id:
+                self.pending_trades.remove(t); save_state(self)
+                self.send(f"❌ <b>TRADE RECUSADO – {t['symbol']}</b>\nSinal ignorado.")
+                return True
+        return False
+
+    def send_news(self):
+        from news import get_news, get_fear_greed
+        arts = get_news(5); fg = get_fear_greed()
+        lines = ["📰 NOTÍCIAS\n"]
+        for i, a in enumerate(arts, 1):
+            t = a["title"][:120] + ("…" if len(a["title"]) > 120 else "  ")
+            lines.append(f"{i}. <a href='{a['url']}'>{t} ({a['source']})")
+        lines.append(f"\n😱 F&G: {fg['value']} – {fg['label']}")
+        self.send("\n".join(lines), disable_preview=True)
+        self.last_news_ts = time.time()
+
+    def maybe_send_news(self):
+        if time.time() - self.last_news_ts >= Config.NEWS_INTERVAL:
+            self.send_news()
+
+    def send_status(self):
+        snap = account_snapshot(self)
+        lines = [
+            "<b>OPERAÇÕES ABERTAS</b>",
+            f"🏦 Saldo: <code>{fmt(self.balance)}</code> | Equity: <code>{fmt(snap['equity'])}</code>",
+            f"📉 Margem usada: <code>{fmt(snap['used_margin'])}</code> | Free: <code>{fmt(snap['free_margin'])}</code>",
+            f"📊 Margin Level: <code>{snap['margin_level']:.1f}%</code>",
+            ""
+        ]
+        if not self.active_trades:
+            lines.append("Nenhuma."); self.send("\n".join(lines)); return
+        for t in self.active_trades:
+            res = get_analysis(t["symbol"], self.timeframe)
+            cur = res["price"] if res else t["entry"]
+            pnl = (cur - t["entry"]) / t["entry"] * 100
+            if t["dir"] == "SELL": pnl = -pnl
+            lot = float(t.get("lot", Config.MIN_LOT))
+            cs = float(t.get("contract_size", 1))
+            if t["dir"] == "BUY":
+                pnl_money = (cur - t["entry"]) * cs * lot - t.get("commission", 0)
+            else:
+                pnl_money = (t["entry"] - cur) * cs * lot - t.get("commission", 0)
+            lines.append(f"{'🟢' if pnl>=0 else '🔴'} {t['symbol']} {t['dir']} | P&L: {pnl:+.2f}% | ${pnl_money:+.2f}")
+        self.send("\n".join(lines))
+
+    def send_placar(self):
+        tot = self.wins + self.losses
+        wr = (self.wins/tot*100) if tot > 0 else 0
+        self.send(f"📊 <b>PLACAR</b>\n{self.wins}W / {self.losses}L\nWin Rate: {wr:.1f}%")
+
+    def update_trends_cache(self):
+        if time.time() - self.last_trends_update < Config.TRENDS_INTERVAL: return
+        log("📡 Atualizando cache tendências...")
+        for s in all_syms():
+            try:
+                res = get_analysis(s, self.timeframe)
+                if res:
+                    rev = detect_reversal(res)
+                    self.trend_cache[s] = {
+                        "data": res,
+                        "reversal": {"has": rev[0], "dir": rev[1], "strength": rev[2], "reasons": rev[3]},
+                        "ts": time.time(),
+                    }
+            except Exception as e: log(f"[TRENDS] {s}: {e}")
+        self.last_trends_update = time.time()
+
+    def update_intel_cache(self):
+        if time.time() - self.intel_cache.get("ts", 0) < Config.INTEL_INTERVAL:
+            return
+        if self.mode not in ("CRYPTO", "TUDO"):
+            self.intel_cache["ts"] = time.time()
+            return
+        whales = get_whale_alerts()
+        headlines = [a["title"] for a in (self.news_cache.get("articles", []) or [])[:10]]
+        score, reasons = analyze_sentiment(headlines)
+        self.intel_cache = {
+            "whales": whales[:10],
+            "sentiment_score": score,
+            "sentiment_reasons": reasons,
+            "ts": time.time()
+        }
+
+    def monitor_trades(self):
+        changed = False
+        now_ts = time.time()
+        for t in self.pending_trades[:]:
+            created_at = t.get("created_at", now_ts)
+            if now_ts - created_at > 900:
+                self.pending_trades.remove(t)
+                self.send(f"⏳ <b>SINAL EXPIRADO – {t['symbol']}</b>\nO sinal não foi respondido em 15 minutos.")
+                changed = True
+        for t in self.active_trades[:]:
+            res = get_analysis(t["symbol"], self.timeframe)
+            if not res: continue
+            cur = res["price"]; atr = res["atr"]
+            if t["dir"] == "BUY":
+                new_sl = cur - Config.ATR_MULT_TRAIL * atr
+                if new_sl > t["sl"]:
+                    t["sl"] = new_sl; changed = True
+            else:
+                new_sl = cur + Config.ATR_MULT_TRAIL * atr
+                if new_sl < t["sl"]:
+                    t["sl"] = new_sl; changed = True
+            is_win = (t["dir"] == "BUY" and cur >= t["tp"]) or (t["dir"] == "SELL" and cur <= t["tp"])
+            is_loss = (t["dir"] == "BUY" and cur <= t["sl"]) or (t["dir"] == "SELL" and cur >= t["sl"])
+            if is_win or is_loss:
+                lot = float(t.get("lot", Config.MIN_LOT))
+                cs = float(t.get("contract_size", 1))
+                if t["dir"] == "BUY":
+                    raw_pnl = (cur - t["entry"]) * cs * lot
+                else:
+                    raw_pnl = (t["entry"] - cur) * cs * lot
+                comm = t.get("commission", 0)
+                pnl_money_net = round(raw_pnl - comm, 2)
+                margin_required = float(t.get("margin_required", 0))
+                self.balance = round(self.balance + margin_required + pnl_money_net, 2)
+                st = "✅ TAKE PROFIT (WIN)" if is_win else "❌ STOP LOSS (LOSS)"
+                closed_at = datetime.now(Config.BR_TZ).strftime("%d/%m %H:%M")
+                pnl_pct = round(pnl_money_net / margin_required * 100, 2) if margin_required else 0
+                if is_win:
+                    self.wins += 1; self.consecutive_losses = 0
+                else:
+                    self.losses += 1; self.consecutive_losses += 1
+                    self.asset_cooldown[t["symbol"]] = time.time()
+                self.history.append({
+                    "symbol": t["symbol"], "dir": t["dir"], "result": "WIN" if is_win else "LOSS",
+                    "pnl": pnl_pct, "pnl_money": pnl_money_net, "commission": round(comm, 2),
+                    "closed_at": closed_at, "lot": lot, "margin_required": round(margin_required, 2)
+                })
+                self.send("\n".join([
+                    "🏁 <b>OPERAÇÃO ENCERRADA</b> [Tickmill MT5]",
+                    f"Ativo: <b>{t['symbol']}</b> ({t.get('name','')}) | {t['dir']}",
+                    f"Resultado: <b>{st}</b>", "",
+                    f"💰 Entrada: <code>{fmt(t['entry'])}</code>",
+                    f"🔚 Saída: <code>{fmt(cur)}</code>",
+                    f"P&L: <code>{pnl_pct:+.2f}%</code> | <b>${pnl_money_net:+.2f}</b>",
+                    f"🏦 Saldo atual: <code>{fmt(self.balance)}</code>",
+                ]))
+                self.active_trades.remove(t); changed = True
+                if not is_win and self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
+                    self.paused_until = time.time() + Config.PAUSE_DURATION
+                    mins = Config.PAUSE_DURATION // 60
+                    self.send("\n".join([
+                        "⛔ <b>CIRCUIT BREAKER ATIVADO</b>", "",
+                        f"{self.consecutive_losses} losses consecutivos.",
+                        f"Pausado por <b>{mins} minutos</b>.", "",
+                        "Use /resetpausa para retomar.",
+                    ]))
+        if changed: save_state(self)
