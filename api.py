@@ -6,7 +6,7 @@ from flask_cors import CORS
 from config import Config
 from utils import log, fmt, all_syms, mkt_open, asset_cat, asset_name, contract_size_for, max_leverage_for
 from analysis import get_analysis, detect_reversal
-from risk import calc_trade_plan, commission_for, get_sl_tp_pct
+from risk import calc_trade_plan, commission_for, get_sl_tp_pct, calc_lot_from_margin
 from news import get_news, get_fear_greed
 from db import account_snapshot
 
@@ -18,7 +18,6 @@ def _load_dashboard_html():
     if _dashboard_html_cache is not None:
         return _dashboard_html_cache
     paths = [
-        "/mnt/agents/output/dashboard.html",          # ← novo: caminho real de saída
         os.path.join(os.path.dirname(__file__), "dashboard.html"),
         os.path.join(os.path.dirname(__file__), "templates", "dashboard.html"),
         "dashboard.html",
@@ -39,6 +38,7 @@ def _load_dashboard_html():
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
+
     @app.after_request
     def cors_headers(resp):
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -63,7 +63,7 @@ def create_api(bot):
 
     @app.route("/api/health")
     def api_health():
-        return jsonify({"status": "ok", "version": "11.0 MODULAR", "broker": Config.BROKER_NAME})
+        return jsonify({"status": "ok", "version": "11.0 QUANTUM", "broker": Config.BROKER_NAME})
 
     @app.route("/api/status")
     def api_status():
@@ -103,6 +103,7 @@ def create_api(bot):
 
         daily, weekly, monthly = period_stats(today_trades), period_stats(week_trades), period_stats(month_trades)
         snap = account_snapshot(bot)
+
         trades_out = []
         for t in bot.active_trades:
             try:
@@ -134,7 +135,17 @@ def create_api(bot):
                 "sl_pct": t.get("sl_pct", 0), "tp_pct": t.get("tp_pct", 0),
                 "max_leverage": max_leverage_for(t["symbol"]),
             })
+
         sl_pct, tp_pct = get_sl_tp_pct(bot.leverage)
+
+        min_lot_info = {}
+        for sym in ["EURUSD", "BTCUSD"]:
+            eff_lev = min(bot.leverage, max_leverage_for(sym))
+            min_lot_info[sym] = {
+                "min_lot": Config.MIN_LOT,
+                "min_margin": round(calc_lot_from_margin(sym, 1.0, eff_lev, 100) * 0, 2)  # placeholder
+            }
+
         return jsonify({
             "wins": bot.wins, "losses": bot.losses, "winrate": wr,
             "consecutive_losses": bot.consecutive_losses, "mode": bot.mode, "timeframe": bot.timeframe,
@@ -155,21 +166,8 @@ def create_api(bot):
             "broker": Config.BROKER_NAME, "account_type": bot.account_type, "platform": bot.platform,
             "sl_auto": sl_pct, "tp_auto": tp_pct,
             "max_trades": Config.MAX_TRADES,
+            "min_lot_info": min_lot_info,
         })
-
-    @app.route("/api/trade_plan", methods=["POST"])
-    def api_trade_plan():
-        data = request.get_json(force=True) or {}
-        symbol = data.get("symbol")
-        entry = data.get("entry")
-        amount = data.get("amount")
-        try:
-            amount = float(amount)
-            entry = float(entry)
-        except:
-            return jsonify({"error": "Parametros invalidos"}), 400
-        plan = calc_trade_plan(symbol, entry, bot.leverage, bot.balance, bot.risk_pct, amount)
-        return jsonify(plan)
 
     @app.route("/api/pending")
     def api_pending():
@@ -177,9 +175,32 @@ def create_api(bot):
         pending = []
         for p in bot.pending_trades:
             item = dict(p)
-            item.update({"balance": snap["balance"], "equity": snap["equity"],
-                         "used_margin": snap["used_margin"], "free_margin": snap["free_margin"],
-                         "margin_level": snap["margin_level"]})
+            eff_lev = min(bot.leverage, max_leverage_for(p["symbol"]))
+            # CALCULO PARA 2% DO CAPITAL (usando a porcentagem de risco configurada)
+            amt_2pct = round(bot.balance * Config.RISK_PERCENT_PER_TRADE / 100, 2)
+            lot_2pct = calc_lot_from_margin(p["symbol"], p["entry"], eff_lev, amt_2pct)
+            # Garante pelo menos o lote mínimo
+            if lot_2pct < Config.MIN_LOT:
+                lot_2pct = Config.MIN_LOT
+                # Recalcula a margem para o lote mínimo
+                amt_2pct = round(calc_lot_from_margin(p["symbol"], p["entry"], eff_lev, Config.MIN_LOT) or 50, 2)
+            item["capital_2pct_info"] = {
+                "amount_usd": amt_2pct,
+                "lot": round(lot_2pct, 2),
+                "pct": Config.RISK_PERCENT_PER_TRADE
+            }
+            # Mantém as lot_options para compatibilidade, se necessário (não usamos no frontend agora)
+            lot_options = {}
+            for amt in [50, 100, 250, 500]:
+                lot = calc_lot_from_margin(p["symbol"], p["entry"], eff_lev, amt)
+                lot_options[str(amt)] = {"lot": round(lot, 2), "margin": amt}
+            item["lot_options"] = lot_options
+
+            item["balance"] = snap["balance"]
+            item["equity"] = snap["equity"]
+            item["used_margin"] = snap["used_margin"]
+            item["free_margin"] = snap["free_margin"]
+            item["margin_level"] = snap["margin_level"]
             pending.append(item)
         return jsonify(pending)
 
@@ -203,6 +224,15 @@ def create_api(bot):
         data = request.get_json(force=True) or {}
         pid = data.get("pending_id")
         return jsonify({"ok": True}) if bot.reject_pending(pid) else (jsonify({"error": "not found"}), 404)
+
+    @app.route("/api/intel")
+    def api_intel():
+        bot.update_intel_cache()
+        return jsonify({
+            "whales": bot.intel_cache.get("whales", [])[:5],
+            "sentiment_score": round(bot.intel_cache.get("sentiment_score", 0), 2),
+            "sentiment_reasons": bot.intel_cache.get("sentiment_reasons", []),
+        })
 
     @app.route("/api/news")
     def api_news():
