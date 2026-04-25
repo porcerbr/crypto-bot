@@ -103,3 +103,17 @@ class Config:
     ATR_TRAILING_MULT = 2.0
     NEWS_FILTER_IMPACT = ["HIGH"]
     CORRELATION_LIMIT = 0.7
+    # ── Filtro de Sessão (UTC) ─────────────────────────────────
+    SESSION_FILTER_ENABLED = True
+    # Horários de início/fim das sessões (UTC)
+    SESSIONS = {
+        "Tokyo":    (0, 9),
+        "London":   (8, 17),
+        "NewYork":  (13, 22),
+    }
+    MIN_SESSIONS_OVERLAP = 2   # mínimo de sessões abertas simultâneas
+
+    # ── Filtro de Notícias ─────────────────────────────────────
+    NEWS_FILTER_ENABLED = True
+    NEWS_BLOCK_MINUTES = 15        # minutos antes/depois do evento
+    FOREX_FACTORY_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
