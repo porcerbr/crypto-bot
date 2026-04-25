@@ -1,7 +1,7 @@
 # risk.py
 import math
 from config import Config
-from utils import currency_to_usd, symbol_profile, contract_size_for, max_leverage_for
+from utils import currency_to_usd, symbol_profile, contract_size_for, max_leverage_for, asset_cat
 
 def normalize_lot(lot):
     if lot <= 0:
@@ -90,7 +90,7 @@ def calc_lot_from_risk(symbol, entry, sl_price, balance, risk_pct):
     lot = risk_money / loss_per_lot
     return normalize_lot(lot)
 
- def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
+def calc_trade_plan(symbol, entry, leverage, balance, risk_pct, margin_usd):
     entry = float(entry)
     # alavancagem efetiva já limita ao máximo do símbolo
     eff_lev = max(1.0, min(float(leverage), max_leverage_for(symbol)))
@@ -181,4 +181,4 @@ def calc_lot_from_risk(symbol, entry, sl_price, balance, risk_pct):
         "contract_size": cs,
         "min_margin_for_min_lot": min_margin_min_lot,
         "note": [],
-                                   }
+    }
