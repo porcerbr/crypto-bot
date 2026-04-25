@@ -187,7 +187,7 @@ class TradingBot:
         self.reversal_list = {}; self.asset_cooldown = {}; self.history = []
         self.last_id = 0; self.last_news_ts = 0; self._restore_msg = None
         self.trend_cache = {}; self.last_trends_update = 0
-        self.signals_feed = []; self.news_cache = []; self.news_cache_ts = 0
+        self.signals_feed = []; self.news_cache = {}; self.news_cache_ts = 0
         self.balance = Config.INITIAL_BALANCE
         self.leverage = Config.DEFAULT_LEVERAGE
         self.risk_pct = Config.RISK_PERCENT_PER_TRADE
@@ -485,7 +485,8 @@ class TradingBot:
             self.intel_cache["ts"] = time.time()
             return
         whales = get_whale_alerts()
-        headlines = [a["title"] for a in (self.news_cache.get("articles", []) or [])[:10]]
+        _nc = self.news_cache if isinstance(self.news_cache, dict) else {}
+        headlines = [a["title"] for a in (_nc.get("articles", []) or [])[:10]]
         score, reasons = analyze_sentiment(headlines)
         self.intel_cache = {
             "whales": whales[:10],
