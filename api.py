@@ -1,5 +1,5 @@
 
-# Gerar o api.py corrigido que le o HTML do arquivo
+# 2. api.py corrigido - le HTML do arquivo, nao importa de dashboard.py
 api_content = '''# api.py
 import os, time, json
 from datetime import datetime
@@ -12,15 +12,13 @@ from risk import calc_trade_plan, commission_for, get_sl_tp_pct
 from news import get_news, get_fear_greed
 from db import account_snapshot
 
-# Carregar dashboard HTML do arquivo (evita SyntaxError com caracteres especiais)
-_dashboard_html = None
+_dashboard_html_cache = None
 _sw_js = "self.addEventListener('fetch', e=>e.respondWith(fetch(e.request)));"
 
 def _load_dashboard_html():
-    global _dashboard_html
-    if _dashboard_html is not None:
-        return _dashboard_html
-    # Tentar caminhos comuns
+    global _dashboard_html_cache
+    if _dashboard_html_cache is not None:
+        return _dashboard_html_cache
     paths = [
         os.path.join(os.path.dirname(__file__), "dashboard.html"),
         os.path.join(os.path.dirname(__file__), "templates", "dashboard.html"),
@@ -31,14 +29,13 @@ def _load_dashboard_html():
         if os.path.exists(p):
             try:
                 with open(p, "r", encoding="utf-8") as f:
-                    _dashboard_html = f.read()
+                    _dashboard_html_cache = f.read()
                 log(f"[DASHBOARD] Carregado de: {p}")
-                return _dashboard_html
+                return _dashboard_html_cache
             except Exception as e:
                 log(f"[DASHBOARD] Erro ao ler {p}: {e}")
-    # Fallback basico
-    _dashboard_html = "<h1>BOT SNIPER v11.0 - Dashboard nao encontrado</h1><p>Coloque o dashboard.html na raiz do projeto.</p>"
-    return _dashboard_html
+    _dashboard_html_cache = "<h1>BOT SNIPER v11.0 - Dashboard nao encontrado</h1><p>Coloque o dashboard.html na raiz do projeto.</p>"
+    return _dashboard_html_cache
 
 def create_api(bot):
     app = Flask(__name__)
@@ -62,7 +59,7 @@ def create_api(bot):
     @app.route("/icon-512.png")
     def icon():
         size = 192 if "192" in request.path else 512
-        svg = f\'\'\'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>\'\'\'
+        svg = f\'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="{size//6}" fill="#06090f"/><text x="{size//2}" y="{int(size*.72)}" font-size="{int(size*.55)}" text-anchor="middle" fill="#00e676" font-family="monospace" font-weight="700">S</text></svg>\'
         return Response(svg, mimetype="image/svg+xml")
 
     @app.route("/api/health")
@@ -346,5 +343,4 @@ def run_api(bot):
 with open("/mnt/agents/output/api.py", "w", encoding="utf-8") as f:
     f.write(api_content)
 
-print("api.py corrigido gerado com sucesso!")
-print(f"Tamanho: {len(api_content)} caracteres")
+print(f"api.py: {len(api_content)} chars")
