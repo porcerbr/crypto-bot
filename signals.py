@@ -143,26 +143,24 @@ def scan_reversal_forex(bot):
         cands = []
         for d in (["SELL"] if res["signal_sell_ct"] else []) + (["BUY"] if res["signal_buy_ct"] else []):
             sc, tot_c, checks, passed, min_sc = calc_reversal_conf(res, d)
-            strong_anchor = (d == "SELL" and res.get("trend_up")) or (d == "BUY" and res.get("trend_down"))
-            extreme = (d == "SELL" and res["rsi_overbought"] and res["near_upper"]) or (d == "BUY" and res["rsi_oversold"] and res["near_lower"])
-            rejection = (d == "SELL" and (res["div_bear"] or res["macd_div_bear"] or res["pat_bear"] or res["wick_bear"])) or (d == "BUY" and (res["div_bull"] or res["macd_div_bull"] or res["pat_bull"] or res["wick_bull"]))
             if not passed:
-                sinais = []
-                if d == "SELL":
-                    if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
-                    if res["near_upper"]: sinais.append("BB Superior atingida")
-                    if res["div_bear"]: sinais.append("RSI divergência bearish")
-                    if res["macd_div_bear"]: sinais.append("MACD divergência bearish")
-                    if res["wick_bear"]: sinais.append("Wick de rejeição")
-                    if res["pat_bear"] and res["pat_name"]: sinais.append(res["pat_name"])
-                else:
-                    if res["rsi_oversold"]: sinais.append(f"RSI {res['rsi']:.0f} sobrevendido")
-                    if res["near_lower"]: sinais.append("BB Inferior atingida")
-                    if res["div_bull"]: sinais.append("RSI divergência bullish")
-                    if res["macd_div_bull"]: sinais.append("MACD divergência bullish")
-                    if res["wick_bull"]: sinais.append("Wick de rejeição")
-                    if res["pat_bull"] and res["pat_name"]: sinais.append(res["pat_name"])
-                cands.append((sc, tot_c, checks, d, sinais))
+                continue
+            sinais = []
+            if d == "SELL":
+                if res["rsi_overbought"]: sinais.append(f"RSI {res['rsi']:.0f} sobrecomprado")
+                if res["near_upper"]: sinais.append("BB Superior atingida")
+                if res["div_bear"]: sinais.append("RSI divergência bearish")
+                if res["macd_div_bear"]: sinais.append("MACD divergência bearish")
+                if res["wick_bear"]: sinais.append("Wick de rejeição")
+                if res["pat_bear"] and res["pat_name"]: sinais.append(res["pat_name"])
+            else:
+                if res["rsi_oversold"]: sinais.append(f"RSI {res['rsi']:.0f} sobrevendido")
+                if res["near_lower"]: sinais.append("BB Inferior atingida")
+                if res["div_bull"]: sinais.append("RSI divergência bullish")
+                if res["macd_div_bull"]: sinais.append("MACD divergência bullish")
+                if res["wick_bull"]: sinais.append("Wick de rejeição")
+                if res["pat_bull"] and res["pat_name"]: sinais.append(res["pat_name"])
+            cands.append((sc, tot_c, checks, d, sinais))
         if not cands: continue
         cands.sort(key=lambda x: x[0], reverse=True)
         sc, tc, ch, dir_s, sinais = cands[0]
