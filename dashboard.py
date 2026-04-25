@@ -1,3 +1,4 @@
+'''
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1007,3 +1008,4 @@ if ("serviceWorker" in navigator) {
 </script>
 </body>
 </html>
+'''
