@@ -1,127 +1,161 @@
+import json
 import os
-from flask import Flask, jsonify, request, render_template_string
-from flask_cors import CORS
+import time
+from datetime import datetime
+from utils import log
+from config import Config
 
-def create_api(bot):
-    app = Flask(__name__)
-    CORS(app)
+STATE_FILE = "state.json"
+LOG_FILE = "bot_logs.jsonl"
+METRICS_FILE = "bot_metrics.json"
 
-    @app.route("/")
-    def index():
+
+def save_state(bot):
+    """Salva estado completo do bot em state.json"""
+    data = {
+        "mode": bot.mode,
+        "timeframe": bot.timeframe,
+        "leverage": bot.leverage,
+        "balance": bot.balance,
+        "wins": bot.wins,
+        "losses": bot.losses,
+        "consecutive_losses": bot.consecutive_losses,
+        "paused_until": bot.paused_until,
+        "active_trades": bot.active_trades,
+        "pending_trades": bot.pending_trades,
+        "history": bot.history[-200:],
+        "asset_cooldown": bot.asset_cooldown,
+        "pending_counter": bot.pending_counter,
+        "last_id": getattr(bot, 'last_id', 0),
+        "_current_leverage": getattr(bot, '_current_leverage', bot.leverage),
+        "saved_at": datetime.now().isoformat(),
+    }
+    temp_file = STATE_FILE + ".tmp"
+    with open(temp_file, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(temp_file, STATE_FILE)
+    log("Estado salvo.")
+
+
+def load_state(bot):
+    """Carrega estado do bot de state.json"""
+    if os.path.exists(STATE_FILE):
         try:
-            with open("dashboard.html", "r", encoding="utf-8") as f:
-                html = f.read()
-            return render_template_string(html)
-        except FileNotFoundError:
-            return "<h1>Dashboard não encontrado</h1><p>Coloque o arquivo dashboard.html na raiz do projeto.</p>", 404
-
-    @app.route("/api/status")
-    def status():
-        active = []
-        for t in bot.active_trades:
-            active.append({
-                "symbol": t["symbol"],
-                "name": t.get("name", ""),
-                "dir": t["dir"],
-                "entry": t["entry"],
-                "sl": t["sl"],
-                "tp": t["tp"],
-                "lot": t.get("lot", 0),
-                "pnl": t.get("pnl", 0),
-                "opened_at": t.get("opened_at", ""),
-                "effective_leverage": t.get("effective_leverage", bot.leverage),
-            })
-        total = bot.wins + bot.losses
-        wr = round(bot.wins / total * 100, 1) if total > 0 else 0
-
-        # NOVO: Informações de segurança dinâmica
-        from utils import get_dynamic_leverage, get_dynamic_max_trades, get_allowed_symbols
-
-        return jsonify({
-            "active_trades": active,
-            "pending_count": len(bot.pending_trades),
-            "balance": round(bot.balance, 2),
-            "leverage": bot.get_current_leverage(),
-            "winrate": wr,
-            "wins": bot.wins,
-            "losses": bot.losses,
-            "mode": bot.mode,
-            "timeframe": bot.timeframe,
-            "paused": bot.is_paused(),
-            # NOVO: Dados de segurança
-            "dynamic_leverage": get_dynamic_leverage(bot.balance),
-            "max_trades_allowed": get_dynamic_max_trades(bot.balance),
-            "allowed_symbols": get_allowed_symbols(bot.balance),
-            "consecutive_losses": bot.consecutive_losses,
-        })
-
-    @app.route("/api/pending")
-    def pending():
-        return jsonify(bot.pending_trades)
-
-    @app.route("/api/execute", methods=["POST"])
-    def execute():
-        data = request.get_json(force=True) or {}
-        pid = data.get("pending_id")
-        try:
-            amount = float(data.get("amount", 0))
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "message": "Valor inválido"}), 400
-        ok, msg = bot.execute_pending(pid, amount)
-        return jsonify({"ok": ok, "message": msg})
-
-    @app.route("/api/reject", methods=["POST"])
-    def reject():
-        data = request.get_json(force=True) or {}
-        pid = data.get("pending_id")
-        ok = bot.reject_pending(pid)
-        return jsonify({"ok": ok})
-
-    @app.route("/api/history")
-    def history():
-        return jsonify(bot.history[-20:])
-
-    # ═══════════════════════════════════════════════════════════
-    # NOVOS ENDPOINTS: Logs e Métricas
-    # ═══════════════════════════════════════════════════════════
-
-    @app.route("/api/logs")
-    def logs():
-        """Retorna logs recentes do bot."""
-        from db import get_recent_logs
-        entry_type = request.args.get("type")
-        hours = request.args.get("hours", 24, type=int)
-        limit = request.args.get("limit", 100, type=int)
-
-        logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
-        return jsonify({
-            "logs": logs_data,
-            "count": len(logs_data),
-            "filter": {"type": entry_type, "hours": hours}
-        })
-
-    @app.route("/api/metrics")
-    def metrics():
-        """Retorna métricas de performance calculadas."""
-        from db import calculate_metrics, load_metrics
-
-        current = calculate_metrics(bot)
-        saved = load_metrics()
-
-        return jsonify({
-            "current": current,
-            "last_saved": saved.get("updated_at") if saved else None,
-            "initial_balance": Config.INITIAL_BALANCE,
-        })
-
-    @app.route("/api/force-save", methods=["POST"])
-    def force_save():
-        """Força salvamento do estado imediatamente."""
-        from db import save_state
-        try:
-            save_state(bot)
-            return jsonify({"ok": True, "message": "Estado salvo com sucesso"})
+            with open(STATE_FILE) as f:
+                data = json.load(f)
+            for k, v in data.items():
+                if hasattr(bot, k) and k != "saved_at":
+                    setattr(bot, k, v)
+            saved_at = data.get("saved_at", "desconhecido")
+            log("Estado carregado de " + str(saved_at))
+            return True
         except Exception as e:
-            return jsonify({"ok": False, "message": str(e)}), 500
+            log("[ERRO] Falha ao carregar estado: " + str(e))
+            return False
+    return False
 
-    return app
+
+def append_log(entry_type, data):
+    """Adiciona entrada de log persistente em formato JSON Lines."""
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "type": entry_type,
+        "data": data,
+    }
+    with open(LOG_FILE, "a") as f:
+        f.write(json.dumps(entry, default=str) + chr(10))
+
+
+def get_recent_logs(entry_type=None, hours=24, limit=100):
+    """Retorna logs recentes do arquivo persistente."""
+    if not os.path.exists(LOG_FILE):
+        return []
+
+    cutoff = time.time() - (hours * 3600)
+    results = []
+
+    try:
+        with open(LOG_FILE, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    entry_ts = datetime.fromisoformat(entry["timestamp"]).timestamp()
+                    if entry_ts < cutoff:
+                        continue
+                    if entry_type and entry["type"] != entry_type:
+                        continue
+                    results.append(entry)
+                except:
+                    continue
+    except Exception as e:
+        log("[ERRO] Falha ao ler logs: " + str(e))
+
+    return results[-limit:]
+
+
+def save_metrics(metrics):
+    """Salva metricas agregadas em arquivo separado."""
+    data = {
+        "updated_at": datetime.now().isoformat(),
+        **metrics
+    }
+    temp_file = METRICS_FILE + ".tmp"
+    with open(temp_file, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(temp_file, METRICS_FILE)
+
+
+def load_metrics():
+    """Carrega metricas salvas."""
+    if os.path.exists(METRICS_FILE):
+        try:
+            with open(METRICS_FILE) as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def calculate_metrics(bot):
+    """Calcula metricas de performance do bot."""
+    total = bot.wins + bot.losses
+    wr = round(bot.wins / total * 100, 1) if total > 0 else 0
+
+    total_profit = sum(h["pnl"] for h in bot.history if h["result"] == "WIN")
+    total_loss = abs(sum(h["pnl"] for h in bot.history if h["result"] == "LOSS"))
+    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else 0
+
+    avg_win = total_profit / bot.wins if bot.wins > 0 else 0
+    avg_loss = total_loss / bot.losses if bot.losses > 0 else 0
+
+    expectancy = round((wr/100 * avg_win) - ((100-wr)/100 * avg_loss), 2) if total > 0 else 0
+
+    peak = Config.INITIAL_BALANCE
+    max_dd = 0
+    running = Config.INITIAL_BALANCE
+    for h in bot.history:
+        running += h["pnl"]
+        if running > peak:
+            peak = running
+        dd = (peak - running) / peak if peak > 0 else 0
+        if dd > max_dd:
+            max_dd = dd
+
+    return {
+        "total_trades": total,
+        "winrate": wr,
+        "wins": bot.wins,
+        "losses": bot.losses,
+        "profit_factor": profit_factor,
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "expectancy": expectancy,
+        "max_drawdown_pct": round(max_dd * 100, 2),
+        "current_balance": bot.balance,
+        "total_pnl": round(bot.balance - Config.INITIAL_BALANCE, 2),
+        "active_trades_count": len(bot.active_trades),
+        "pending_trades_count": len(bot.pending_trades),
+    }
