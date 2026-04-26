@@ -74,3 +74,10 @@ class Config:
         "GBPJPY": "GBPJPY=X",
         "XAUUSD": "GC=F",
     }
+
+        # Trailing Stop
+    TRAILING_ACTIVATION = 0.5   # ativa após 50% do caminho até o TP
+    ATR_MULT_TRAIL = 1.5        # distância do stop móvel em ATR
+
+        # Notificação push (ntfy.sh)
+    NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
