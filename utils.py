@@ -25,6 +25,15 @@ def jpy_to_usd(pnl_jpy, usdjpy_price):
     return 0.0
 
 def max_leverage(symbol, lot=0.01):
+    """
+    Retorna a alavancagem efetiva.
+    Se USE_FIXED_LEVERAGE = True, sempre retorna DEFAULT_LEVERAGE.
+    Se False, usa a alavancagem dinâmica da Tickmill.
+    """
+    if Config.USE_FIXED_LEVERAGE:
+        return Config.DEFAULT_LEVERAGE
+
+    # Dinâmica Tickmill (MT5)
     if symbol == "XAUUSD":
         return 1000 if lot <= 1.0 else 500
     return 1000 if lot <= 2.0 else 500
