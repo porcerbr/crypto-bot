@@ -29,20 +29,30 @@ def create_api(bot):
                 "lot": t.get("lot", 0),
                 "pnl": t.get("pnl", 0),
                 "opened_at": t.get("opened_at", ""),
+                "effective_leverage": t.get("effective_leverage", bot.leverage),
             })
         total = bot.wins + bot.losses
         wr = round(bot.wins / total * 100, 1) if total > 0 else 0
+
+        # NOVO: Informações de segurança dinâmica
+        from utils import get_dynamic_leverage, get_dynamic_max_trades, get_allowed_symbols
+
         return jsonify({
             "active_trades": active,
             "pending_count": len(bot.pending_trades),
             "balance": round(bot.balance, 2),
-            "leverage": bot.leverage,
+            "leverage": bot.get_current_leverage(),
             "winrate": wr,
             "wins": bot.wins,
             "losses": bot.losses,
             "mode": bot.mode,
             "timeframe": bot.timeframe,
             "paused": bot.is_paused(),
+            # NOVO: Dados de segurança
+            "dynamic_leverage": get_dynamic_leverage(bot.balance),
+            "max_trades_allowed": get_dynamic_max_trades(bot.balance),
+            "allowed_symbols": get_allowed_symbols(bot.balance),
+            "consecutive_losses": bot.consecutive_losses,
         })
 
     @app.route("/api/pending")
@@ -70,5 +80,48 @@ def create_api(bot):
     @app.route("/api/history")
     def history():
         return jsonify(bot.history[-20:])
+
+    # ═══════════════════════════════════════════════════════════
+    # NOVOS ENDPOINTS: Logs e Métricas
+    # ═══════════════════════════════════════════════════════════
+
+    @app.route("/api/logs")
+    def logs():
+        """Retorna logs recentes do bot."""
+        from db import get_recent_logs
+        entry_type = request.args.get("type")
+        hours = request.args.get("hours", 24, type=int)
+        limit = request.args.get("limit", 100, type=int)
+
+        logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
+        return jsonify({
+            "logs": logs_data,
+            "count": len(logs_data),
+            "filter": {"type": entry_type, "hours": hours}
+        })
+
+    @app.route("/api/metrics")
+    def metrics():
+        """Retorna métricas de performance calculadas."""
+        from db import calculate_metrics, load_metrics
+
+        current = calculate_metrics(bot)
+        saved = load_metrics()
+
+        return jsonify({
+            "current": current,
+            "last_saved": saved.get("updated_at") if saved else None,
+            "initial_balance": Config.INITIAL_BALANCE,
+        })
+
+    @app.route("/api/force-save", methods=["POST"])
+    def force_save():
+        """Força salvamento do estado imediatamente."""
+        from db import save_state
+        try:
+            save_state(bot)
+            return jsonify({"ok": True, "message": "Estado salvo com sucesso"})
+        except Exception as e:
+            return jsonify({"ok": False, "message": str(e)}), 500
 
     return app
