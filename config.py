@@ -111,3 +111,89 @@ class Config:
     ATR_MULT_TRAIL = 1.5
 
     NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+
+    # ═══════════════════════════════════════════════════════════
+    # NOVO: ALAVANCAGEM DINÂMICA POR BANCA
+    # ═══════════════════════════════════════════════════════════
+    # Reduz alavancagem conforme capital cresce — protege lucros
+    # acumulados e reduz drasticamente o risco de gap catastrófico
+    DYNAMIC_LEVERAGE_TABLE = {
+        500:    500,   # $0-$500:   sobrevivência (única opção viável)
+        2000:   200,   # $500-$2k:  já operável, reduz risco
+        5000:   100,   # $2k-$5k:   confortável
+        10000:  50,    # $5k-$10k:  crescimento seguro
+        30000:  30,    # $10k-$30k: sustentabilidade
+        float('inf'): 20,  # $30k+: patrimônio, alav institucional
+    }
+
+    # Se True, usa a tabela acima. Se False, usa DEFAULT_LEVERAGE fixo.
+    USE_DYNAMIC_LEVERAGE = True
+
+    # ═══════════════════════════════════════════════════════════
+    # NOVO: PROTEÇÕES DE SEGURANÇA PARA FASE 500x
+    # ═══════════════════════════════════════════════════════════
+
+    # 1. Máximo de trades ativos por nível de banca
+    # Com $150 e 500x, 3 trades abertos = suicídio se mercado abrir com gap
+    DYNAMIC_MAX_TRADES = {
+        500:    1,   # até $500:   APENAS 1 trade por vez
+        1500:   2,   # até $1500:  máximo 2 trades
+        float('inf'): 3,  # acima: 3 trades (seu padrão original)
+    }
+
+    # 2. Ativos permitidos por nível de banca (tier system)
+    # Bloqueia pares voláteis enquanto banca é pequena demais
+    ASSET_TIERS = {
+        0: {
+            "min_balance": 0,
+            "symbols": ["EURUSD", "GBPUSD"],  # majors mais estáveis
+        },
+        1: {
+            "min_balance": 500,
+            "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"],
+        },
+        2: {
+            "min_balance": 1000,
+            "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF",
+                       "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "USDJPY"],
+        },
+        3: {
+            "min_balance": 2000,
+            "symbols": list(FXGOLD_ASSETS.keys()),  # tudo incluindo XAUUSD
+        },
+    }
+
+    # 3. Risco máximo ABSOLUTO por trade (em USD)
+    # Impede que banca pequena arrisque demais em um único trade
+    MAX_RISK_ABSOLUTE_USD = {
+        500:    5.0,    # até $500:   máx $5 de risco por trade
+        1500:   15.0,   # até $1500:  máx $15
+        3000:   30.0,   # até $3000:  máx $30
+        float('inf'): 100.0,  # acima: máx $100
+    }
+
+    # 4. Margem mínima livre obrigatória antes de abrir trade
+    # Garante buffer contra gaps e movimentos bruscos
+    MIN_FREE_MARGIN_PCT = {
+        500:    0.60,   # 60% livre obrigatório (só pode usar 40%)
+        1500:   0.40,   # 40% livre
+        3000:   0.25,   # 25% livre
+        float('inf'): 0.15,  # 15% livre
+    }
+
+    # 5. Proteção de fim de semana / gap
+    # Não abre novos trades próximo do fechamento de sexta ou na abertura de domingo
+    FRIDAY_NO_TRADE_AFTER_HOUR = 20   # UTC — não abre após 20h de sexta
+    SUNDAY_NO_TRADE_BEFORE_HOUR = 22  # UTC — não abre antes de 22h de domingo
+
+    # 6. ATR anômalo mais agressivo
+    # Se candle > 2.5x ATR, ignora sinal (era 3x no seu código original)
+    ATR_ANOMALY_MULT = 2.5
+
+    # 7. Cooldown extendido após loss em fase 500x
+    # Com banca pequena, 1h pode não ser suficiente para resetar
+    DYNAMIC_COOLDOWN = {
+        500:    7200,   # 2 horas
+        1500:   5400,   # 1.5 horas
+        float('inf'): 3600,  # 1h padrão
+    }
