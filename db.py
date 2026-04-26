@@ -1,4 +1,3 @@
-# db.py
 import json, os
 from utils import log
 
