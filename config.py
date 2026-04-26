@@ -1,7 +1,7 @@
 import os
 
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAG6sFwQ6nhuZrYXaqR6v5G2wmfQtZhuXE4")
+    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAFz3nzC0BJ7Fp7YKwDBIv_HiBX5Sg04TLg")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
 
     MODE = "FXGOLD"
