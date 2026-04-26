@@ -1,4 +1,3 @@
-# api.py
 import os
 from flask import Flask, jsonify, request, render_template_string
 from flask_cors import CORS
@@ -7,7 +6,6 @@ def create_api(bot):
     app = Flask(__name__)
     CORS(app)
 
-    # ── Rota do Dashboard (HTML) ────────────────────────────────
     @app.route("/")
     def index():
         try:
@@ -17,7 +15,6 @@ def create_api(bot):
         except FileNotFoundError:
             return "<h1>Dashboard não encontrado</h1><p>Coloque o arquivo dashboard.html na raiz do projeto.</p>", 404
 
-    # ── Status da conta e trades ativos ─────────────────────────
     @app.route("/api/status")
     def status():
         active = []
@@ -48,12 +45,10 @@ def create_api(bot):
             "paused": bot.is_paused(),
         })
 
-    # ── Sinais pendentes ────────────────────────────────────────
     @app.route("/api/pending")
     def pending():
         return jsonify(bot.pending_trades)
 
-    # ── Executar sinal pendente ─────────────────────────────────
     @app.route("/api/execute", methods=["POST"])
     def execute():
         data = request.get_json(force=True) or {}
@@ -65,7 +60,6 @@ def create_api(bot):
         ok, msg = bot.execute_pending(pid, amount)
         return jsonify({"ok": ok, "message": msg})
 
-    # ── Rejeitar sinal pendente ─────────────────────────────────
     @app.route("/api/reject", methods=["POST"])
     def reject():
         data = request.get_json(force=True) or {}
