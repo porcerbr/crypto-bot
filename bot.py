@@ -56,6 +56,7 @@ class TradingBot:
             "commission": plan["commission"],
             "opened_at": pend["created_at"],
             "wallet_before": self.balance,
+            "trailing_activated": False,   # trailing stop
         }
         self.balance -= plan["margin_required"]
         self.active_trades.append(trade)
@@ -84,13 +85,42 @@ class TradingBot:
                 if not res:
                     continue
                 cur = res["price"]
+                atr = res["atr"]
                 sl = t["sl"]
                 tp = t["tp"]
-                if t["dir"] == "BUY":
-                    if cur <= sl or cur >= tp:
+                entry = t["entry"]
+                direction = t["dir"]
+
+                # Trailing Stop
+                if Config.TRAILING_ACTIVATION > 0 and not t.get("trailing_activated", False):
+                    # Verifica se atingiu o percentual de ativação
+                    if direction == "BUY":
+                        progress = (cur - entry) / (tp - entry) if tp != entry else 0
+                        if progress >= Config.TRAILING_ACTIVATION:
+                            t["trailing_activated"] = True
+                    else:
+                        progress = (entry - cur) / (entry - tp) if entry != tp else 0
+                        if progress >= Config.TRAILING_ACTIVATION:
+                            t["trailing_activated"] = True
+
+                if t.get("trailing_activated"):
+                    if direction == "BUY":
+                        new_sl = cur - Config.ATR_MULT_TRAIL * atr
+                        if new_sl > sl:
+                            t["sl"] = round(new_sl, 5)
+                            self.send(f"🔁 Trailing Stop ajustado: {fmt(new_sl)}")
+                    else:
+                        new_sl = cur + Config.ATR_MULT_TRAIL * atr
+                        if new_sl < sl:
+                            t["sl"] = round(new_sl, 5)
+                            self.send(f"🔁 Trailing Stop ajustado: {fmt(new_sl)}")
+
+                # Verificar TP/SL
+                if direction == "BUY":
+                    if cur <= t["sl"] or cur >= tp:
                         self.close_trade(t, cur, "WIN" if cur >= tp else "LOSS")
                 else:
-                    if cur >= sl or cur <= tp:
+                    if cur >= t["sl"] or cur <= tp:
                         self.close_trade(t, cur, "WIN" if cur <= tp else "LOSS")
             except Exception as e:
                 log(f"Erro monitor: {e}")
@@ -134,6 +164,17 @@ class TradingBot:
             requests.post(url, json=payload, timeout=5)
         except Exception as e:
             log(f"[SEND] Erro: {e}")
+        self.send_push(text)
+
+    def send_push(self, text):
+        if Config.NTFY_TOPIC:
+            try:
+                requests.post(f"https://ntfy.sh/{Config.NTFY_TOPIC}",
+                              data=text.encode("utf-8"),
+                              headers={"Title": "Sniper Bot Signal"},
+                              timeout=5)
+            except Exception as e:
+                log(f"[PUSH] Erro: {e}")
 
     def send_pending_notification(self, pend):
         checks_str = "\n".join([f"{'✅' if c['ok'] else '❌'} {c['name']}" for c in pend["checks"]])
@@ -143,8 +184,10 @@ class TradingBot:
             f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)\n"
             f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}\n"
             f"------------------------------\n"
-            f"💰 Custo (0.01 lote): margem ${pend['min_lot_margin']:.2f}\n"
-            f"⚠️  Risco (0.01 lote): ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}% da banca)\n"
+            f"💰 Margem p/ 0.01 lote: ${pend['min_lot_margin']:.2f}\n"
+            f"⚠️  Risco c/ lote mínimo: ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}%)\n"
+            f"🎯 Lote sugerido (risco 2%): {pend['suggested_lot']} lote(s)\n"
+            f"   → Risco real: ${pend['suggested_risk_usd']:.2f} ({pend['suggested_risk_pct']:.1f}%)\n"
             f"------------------------------\n"
             f"{checks_str}\n"
             f"Para executar: /executar_{pend['pending_id']}_VALOR"
