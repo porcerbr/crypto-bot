@@ -56,3 +56,80 @@ def get_sl_tp_atr(entry, atr, direction, atr_sl_mult=1.5, atr_tp_mult=2.5):
         sl = round(entry + sl_dist, 5)
         tp = round(entry - tp_dist, 5)
     return sl, tp, sl_dist, tp_dist
+
+
+# ═══════════════════════════════════════════════════════════
+# NOVAS FUNÇÕES: SEGURANÇA DINÂMICA
+# ═══════════════════════════════════════════════════════════
+
+def get_dynamic_leverage(balance):
+    """
+    Retorna alavancagem baseada no capital atual.
+    Se USE_DYNAMIC_LEVERAGE=False, retorna DEFAULT_LEVERAGE.
+    """
+    if not Config.USE_DYNAMIC_LEVERAGE:
+        return Config.DEFAULT_LEVERAGE
+
+    for threshold, lev in sorted(Config.DYNAMIC_LEVERAGE_TABLE.items()):
+        if balance <= threshold:
+            return lev
+    return Config.DEFAULT_LEVERAGE
+
+def get_dynamic_max_trades(balance):
+    """Retorna máximo de trades ativos permitidos para o capital atual."""
+    for threshold, max_t in sorted(Config.DYNAMIC_MAX_TRADES.items()):
+        if balance <= threshold:
+            return max_t
+    return Config.MAX_TRADES
+
+def get_allowed_symbols(balance):
+    """Retorna lista de símbolos permitidos para o capital atual."""
+    allowed = []
+    for tier in sorted(Config.ASSET_TIERS.keys()):
+        if balance >= Config.ASSET_TIERS[tier]["min_balance"]:
+            allowed = Config.ASSET_TIERS[tier]["symbols"]
+    return allowed
+
+def get_max_risk_absolute(balance):
+    """Retorna risco máximo absoluto (USD) permitido por trade."""
+    for threshold, risk in sorted(Config.MAX_RISK_ABSOLUTE_USD.items()):
+        if balance <= threshold:
+            return risk
+    return 100.0
+
+def get_min_free_margin_pct(balance):
+    """Retorna % mínima de margem livre obrigatória."""
+    for threshold, pct in sorted(Config.MIN_FREE_MARGIN_PCT.items()):
+        if balance <= threshold:
+            return pct
+    return 0.15
+
+def get_dynamic_cooldown(balance):
+    """Retorna cooldown em segundos após loss, baseado no capital."""
+    for threshold, cd in sorted(Config.DYNAMIC_COOLDOWN.items()):
+        if balance <= threshold:
+            return cd
+    return Config.ASSET_COOLDOWN
+
+def is_weekend_gap_risk():
+    """
+    Retorna True se estiver em período de alto risco de gap:
+    - Sexta após 20h UTC
+    - Domingo antes de 22h UTC
+    """
+    now = datetime.utcnow()
+    dow = now.weekday()  # 0=Seg, 4=Sex, 5=Sab, 6=Dom
+    hour = now.hour
+
+    if dow == 4 and hour >= Config.FRIDAY_NO_TRADE_AFTER_HOUR:
+        return True
+    if dow == 5:  # Sábado
+        return True
+    if dow == 6 and hour < Config.SUNDAY_NO_TRADE_BEFORE_HOUR:
+        return True
+    return False
+
+def is_symbol_allowed(symbol, balance):
+    """Verifica se o símbolo é permitido para o capital atual."""
+    allowed = get_allowed_symbols(balance)
+    return symbol in allowed
