@@ -4,154 +4,813 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sniper Bot Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
-        body { background:#0b0f14; color:#c9d1d9; font-family: 'Segoe UI', sans-serif; padding:15px; margin:0; }
-        .header { display:flex; justify-content:space-between; align-items:center; }
-        .badge { padding:5px 12px; border-radius:20px; font-size:12px; font-weight:bold; }
-        .badge.live { background:#0e8c3a; color:#fff; }
-        .badge.paused { background:#da3633; color:#fff; }
-        .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:15px; margin:15px 0; }
-        .ticker { font-family: monospace; font-size: 14px; }
-        .green { color:#3fb950; }
-        .red { color:#f85149; }
-        .amber { color:#d29922; }
-        .btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:8px 16px; border-radius:5px; cursor:pointer; margin:3px; }
-        .btn.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
-        .btn.danger { background:#da3633; border-color:#da3633; color:#fff; }
-        .btn.copy { background:#30363d; border-color:#484f58; color:#c9d1d9; font-size:12px; padding:5px 10px; }
-        .flex { display:flex; gap:10px; align-items:center; }
-        .metric { font-size:22px; font-weight:bold; }
-        input { background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:8px 12px; border-radius:5px; width:80px; }
-        .copied { color:#3fb950; font-size:11px; margin-left:5px; display:none; }
-        .history-table { width:100%; border-collapse:collapse; font-size:12px; }
-        .history-table th, .history-table td { border-bottom:1px solid #30363d; padding:8px 6px; text-align:left; }
-        .history-table th { color:#8b949e; }
+        :root {
+            --bg: #0b0f14;
+            --bg-card: #111820;
+            --bg-hover: #161f2a;
+            --border: #1e2a36;
+            --border-light: #2a3b4d;
+            --text: #c9d1d9;
+            --text-muted: #6e7681;
+            --text-bright: #e6edf3;
+            --green: #3fb950;
+            --green-dim: #2ea043;
+            --red: #f85149;
+            --red-dim: #da3633;
+            --amber: #d29922;
+            --blue: #58a6ff;
+            --blue-dim: #1f6feb;
+            --purple: #a371f7;
+            --radius: 12px;
+            --shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 24px;
+            color: var(--text-bright);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header h1::before {
+            content: '⚡';
+            filter: drop-shadow(0 0 8px var(--amber));
+        }
+        .last-update {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: right;
+        }
+        .last-update span { color: var(--green); }
+
+        /* Badges */
+        .badge {
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 1px solid transparent;
+        }
+        .badge.live { background: rgba(46,160,67,0.15); color: var(--green); border-color: rgba(46,160,67,0.3); }
+        .badge.paused { background: rgba(218,54,51,0.15); color: var(--red); border-color: rgba(218,54,51,0.3); }
+        .badge.circuit { background: rgba(210,153,34,0.15); color: var(--amber); border-color: rgba(210,153,34,0.3); }
+
+        /* Grid */
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .card:hover { border-color: var(--border-light); }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .card-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .metric {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-bright);
+            font-variant-numeric: tabular-nums;
+        }
+        .metric.small { font-size: 20px; }
+        .metric.green { color: var(--green); }
+        .metric.red { color: var(--red); }
+        .metric.amber { color: var(--amber); }
+
+        /* Progress bars */
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.6s ease;
+        }
+        .progress-fill.green { background: var(--green); }
+        .progress-fill.red { background: var(--red); }
+        .progress-fill.amber { background: var(--amber); }
+        .progress-fill.blue { background: var(--blue); }
+
+        /* Sections */
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-bright);
+            margin: 28px 0 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Trade cards */
+        .trade-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+        .trade-card::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 3px;
+        }
+        .trade-card.buy::before { background: var(--green); }
+        .trade-card.sell::before { background: var(--red); }
+        .trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .trade-symbol {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--text-bright);
+        }
+        .trade-dir {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+        .trade-dir.buy { background: rgba(46,160,67,0.15); color: var(--green); }
+        .trade-dir.sell { background: rgba(218,54,51,0.15); color: var(--red); }
+
+        .trade-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        .trade-row div strong {
+            display: block;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Confluence score */
+        .score-bar {
+            display: flex;
+            gap: 3px;
+            margin: 8px 0;
+        }
+        .score-segment {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border);
+            transition: background 0.3s;
+        }
+        .score-segment.active { background: var(--green); }
+        .score-segment.inactive { background: var(--border); }
+
+        /* Buttons */
+        .btn {
+            background: var(--bg-hover);
+            border: 1px solid var(--border-light);
+            color: var(--text);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover { background: var(--border-light); transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn.primary { background: var(--blue-dim); border-color: var(--blue-dim); color: #fff; }
+        .btn.primary:hover { background: var(--blue); }
+        .btn.danger { background: var(--red-dim); border-color: var(--red-dim); color: #fff; }
+        .btn.danger:hover { background: var(--red); }
+        .btn.copy { padding: 5px 10px; font-size: 11px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Inputs */
+        input[type="number"] {
+            background: var(--bg);
+            border: 1px solid var(--border-light);
+            color: var(--text-bright);
+            padding: 8px 12px;
+            border-radius: 6px;
+            width: 100px;
+            font-size: 13px;
+            font-variant-numeric: tabular-nums;
+        }
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(88,166,255,0.1);
+        }
+
+        /* Tables */
+        .table-wrap { overflow-x: auto; }
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .history-table th {
+            text-align: left;
+            padding: 10px 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        .history-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+        .history-table tr:hover td { background: var(--bg-hover); }
+        .history-table .win { color: var(--green); font-weight: 600; }
+        .history-table .loss { color: var(--red); font-weight: 600; }
+
+        /* Chart container */
+        .chart-container {
+            position: relative;
+            height: 220px;
+            margin-top: 10px;
+        }
+
+        /* Toast */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-left: 3px solid var(--green);
+            padding: 12px 18px;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            font-size: 13px;
+            animation: slideIn 0.3s ease, fadeOut 0.5s ease 2.5s forwards;
+            max-width: 320px;
+        }
+        .toast.error { border-left-color: var(--red); }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes fadeOut {
+            to { opacity: 0; transform: translateX(20px); }
+        }
+
+        /* Empty state */
+        .empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+        .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.5; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            body { padding: 12px; }
+            .grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .metric { font-size: 22px; }
+            .trade-row { grid-template-columns: 1fr 1fr; }
+        }
+
+        /* Circuit breaker countdown */
+        .countdown {
+            font-size: 12px;
+            color: var(--amber);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Cooldown tags */
+        .cooldown-tag {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(210,153,34,0.1);
+            color: var(--amber);
+            border: 1px solid rgba(210,153,34,0.2);
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h2>⚡ Sniper Bot</h2>
-        <div id="status-badge" class="badge live">OPERANDO</div>
-    </div>
-
-    <div class="card">
-        <div class="flex">
-            <div><small>Saldo</small><br><span class="metric" id="balance">0</span></div>
-            <div><small>Win Rate</small><br><span class="metric" id="wr">0%</span></div>
-            <div><small>Wins/Losses</small><br><span id="wl">0W / 0L</span></div>
-            <div><small>Alav.</small><br><span id="leverage">500x</span></div>
+        <h1>Sniper Bot Dashboard</h1>
+        <div>
+            <div id="status-badge" class="badge live">Operando</div>
+            <div class="last-update">Último update: <span id="last-update">--:--:--</span></div>
         </div>
     </div>
 
-    <h3>🎯 Sinais Pendentes</h3>
-    <div id="pending-container">Nenhum sinal pendente.</div>
+    <!-- Métricas principais -->
+    <div class="grid-4">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Saldo</div>
+            </div>
+            <div class="metric" id="balance">$0.00</div>
+            <div class="progress-bar"><div class="progress-fill blue" id="balance-bar" style="width:0%"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Win Rate</div>
+            </div>
+            <div class="metric" id="wr">0%</div>
+            <div class="progress-bar"><div class="progress-fill green" id="wr-bar" style="width:0%"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Wins / Losses</div>
+            </div>
+            <div class="metric small" id="wl">0W / 0L</div>
+            <div class="progress-bar"><div class="progress-fill amber" id="wl-bar" style="width:50%"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Alavancagem</div>
+            </div>
+            <div class="metric" id="leverage">500x</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Dinâmica Tickmill</div>
+        </div>
+    </div>
 
-    <h3>📊 Trades Ativos</h3>
-    <div id="active-container">Nenhum trade ativo.</div>
+    <!-- Equity + Margin -->
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Curva de Equity</div>
+                <div style="font-size:11px;color:var(--text-muted)">Últimas 20 operações</div>
+            </div>
+            <div class="chart-container">
+                <canvas id="equityChart"></canvas>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Risco & Margem</div>
+            </div>
+            <div style="margin-bottom:14px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                    <span>Margin Level</span>
+                    <span id="margin-level-text">--%</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill green" id="margin-level-bar" style="width:0%"></div></div>
+            </div>
+            <div style="margin-bottom:14px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                    <span>Drawdown</span>
+                    <span id="drawdown-text">0%</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill amber" id="drawdown-bar" style="width:0%"></div></div>
+            </div>
+            <div id="circuit-breaker" style="display:none;margin-top:10px;padding:10px;border-radius:6px;background:rgba(210,153,34,0.08);border:1px solid rgba(210,153,34,0.2)">
+                <div style="font-size:12px;color:var(--amber);font-weight:600">⛔ Circuit Breaker Ativo</div>
+                <div class="countdown" id="countdown">Pausa: 00:00:00</div>
+            </div>
+        </div>
+    </div>
 
-    <h3>📜 Histórico Recente</h3>
-    <div id="history-container">Carregando histórico...</div>
+    <!-- Sinais Pendentes -->
+    <div class="section-title">🎯 Sinais Pendentes</div>
+    <div id="pending-container">
+        <div class="empty">
+            <div class="empty-icon">📡</div>
+            Nenhum sinal pendente no momento.
+        </div>
+    </div>
+
+    <!-- Trades Ativos -->
+    <div class="section-title">📊 Trades Ativos</div>
+    <div id="active-container">
+        <div class="empty">
+            <div class="empty-icon">📈</div>
+            Nenhum trade ativo.
+        </div>
+    </div>
+
+    <!-- Histórico -->
+    <div class="section-title">📜 Histórico Recente</div>
+    <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Ativo</th>
+                        <th>Direção</th>
+                        <th>Resultado</th>
+                        <th>P&L</th>
+                        <th>Equity</th>
+                    </tr>
+                </thead>
+                <tbody id="history-tbody">
+                    <tr><td colspan="6" class="empty" style="border:none">Carregando...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
 
     <script>
         const API = '/api';
+        let equityChart = null;
+        let equityData = [];
+        let lastBalance = 0;
+
+        function showToast(msg, type='success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + (type === 'error' ? 'error' : '');
+            toast.textContent = msg;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function formatMoney(v) {
+            return '$' + v.toFixed(2);
+        }
+
+        function updateLastUpdate() {
+            const now = new Date();
+            document.getElementById('last-update').textContent = now.toLocaleTimeString('pt-BR');
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Equity',
+                        data: [],
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88,166,255,0.08)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#58a6ff',
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            grid: { color: '#1e2a36' },
+                            ticks: { color: '#6e7681', font: { size: 10 } }
+                        }
+                    },
+                    interaction: { intersect: false }
+                }
+            });
+        }
+
+        function updateChart(history, currentBalance) {
+            if (!equityChart) initChart();
+            let eq = currentBalance;
+            const labels = [];
+            const data = [];
+            const hist = [...history].reverse();
+            for (let i = hist.length - 1; i >= 0; i--) {
+                eq -= hist[i].pnl;
+            }
+            eq = Math.max(eq, Config.INITIAL_BALANCE || 150);
+            for (let i = 0; i < hist.length; i++) {
+                eq += hist[i].pnl;
+                labels.push(i + 1);
+                data.push(eq);
+            }
+            data.push(currentBalance);
+            labels.push(labels.length + 1);
+            equityChart.data.labels = labels;
+            equityChart.data.datasets[0].data = data;
+            equityChart.update('none');
+        }
 
         async function fetchStatus() {
-            const r = await fetch(API + '/status');
-            const d = await r.json();
-            document.getElementById('balance').innerText = '$' + d.balance.toFixed(2);
-            document.getElementById('wr').innerText = d.winrate + '%';
-            document.getElementById('wl').innerText = d.wins + 'W / ' + d.losses + 'L';
-            document.getElementById('leverage').innerText = d.leverage + 'x';
-            document.getElementById('status-badge').className = d.paused ? 'badge paused' : 'badge live';
-            document.getElementById('status-badge').innerText = d.paused ? 'PAUSADO' : 'OPERANDO';
+            try {
+                const r = await fetch(API + '/status');
+                const d = await r.json();
 
-            // Trades ativos
-            const activeContainer = document.getElementById('active-container');
-            if (!d.active_trades || d.active_trades.length === 0) {
-                activeContainer.innerHTML = 'Nenhum trade ativo.';
-            } else {
-                activeContainer.innerHTML = d.active_trades.map(t => `
-                    <div class="card">
-                        <strong>${t.symbol} (${t.name})</strong> - ${t.dir}
-                        <br>Entrada: ${t.entry.toFixed(5)} | SL: ${t.sl.toFixed(5)} | TP: ${t.tp.toFixed(5)}
-                        <br>Lote: ${t.lot}
-                    </div>
-                `).join('');
+                document.getElementById('balance').textContent = formatMoney(d.balance);
+                document.getElementById('wr').textContent = d.winrate + '%';
+                document.getElementById('wl').textContent = d.wins + 'W / ' + d.losses + 'L';
+                document.getElementById('leverage').textContent = d.leverage + 'x';
+
+                // Barra de winrate
+                document.getElementById('wr-bar').style.width = Math.min(d.winrate, 100) + '%';
+                const total = d.wins + d.losses;
+                const winPct = total ? (d.wins / total * 100) : 50;
+                document.getElementById('wl-bar').style.width = winPct + '%';
+
+                // Badge status
+                const badge = document.getElementById('status-badge');
+                if (d.paused) {
+                    badge.className = 'badge paused';
+                    badge.textContent = 'Pausado';
+                } else {
+                    badge.className = 'badge live';
+                    badge.textContent = 'Operando';
+                }
+
+                // Circuit breaker
+                const cbDiv = document.getElementById('circuit-breaker');
+                if (d.paused && d.consecutive_losses >= 3) {
+                    cbDiv.style.display = 'block';
+                } else {
+                    cbDiv.style.display = 'none';
+                }
+
+                // Margin level (simulado: saldo / margem usada)
+                const usedMargin = d.active_trades ? d.active_trades.reduce((s,t)=>s+(t.margin_required||0),0) : 0;
+                const marginLevel = usedMargin > 0 ? (d.balance / usedMargin * 100) : 999;
+                document.getElementById('margin-level-text').textContent = marginLevel === 999 ? '∞' : marginLevel.toFixed(1) + '%';
+                const mlBar = document.getElementById('margin-level-bar');
+                const mlWidth = Math.min(marginLevel === 999 ? 100 : marginLevel, 100);
+                mlBar.style.width = mlWidth + '%';
+                mlBar.className = 'progress-fill ' + (marginLevel < 50 ? 'red' : marginLevel < 100 ? 'amber' : 'green');
+
+                // Drawdown simples
+                const peak = Math.max(lastBalance, d.balance, Config.INITIAL_BALANCE || 150);
+                const dd = peak > 0 ? ((peak - d.balance) / peak * 100) : 0;
+                document.getElementById('drawdown-text').textContent = dd.toFixed(1) + '%';
+                document.getElementById('drawdown-bar').style.width = Math.min(dd * 3, 100) + '%';
+
+                lastBalance = d.balance;
+
+                // Trades ativos
+                const activeContainer = document.getElementById('active-container');
+                if (!d.active_trades || d.active_trades.length === 0) {
+                    activeContainer.innerHTML = `
+                        <div class="empty">
+                            <div class="empty-icon">📈</div>
+                            Nenhum trade ativo.
+                        </div>`;
+                } else {
+                    activeContainer.innerHTML = d.active_trades.map(t => {
+                        const dirClass = t.dir === 'BUY' ? 'buy' : 'sell';
+                        const progress = t.tp !== t.entry ? Math.abs((t.pnl||0) / ((t.tp - t.entry) * (t.lot||0.01) * 100000)) * 100 : 0;
+                        return `
+                        <div class="trade-card ${dirClass}">
+                            <div class="trade-header">
+                                <div>
+                                    <span class="trade-symbol">${t.symbol} ${t.name ? '('+t.name+')' : ''}</span>
+                                    <span class="trade-dir ${dirClass}">${t.dir}</span>
+                                </div>
+                                <span style="font-size:12px;color:var(--text-muted)">${t.opened_at}</span>
+                            </div>
+                            <div class="trade-row">
+                                <div>Entrada <strong>${t.entry.toFixed(5)}</strong></div>
+                                <div>Atual <strong style="color:${(t.pnl||0)>=0?'var(--green)':'var(--red)'}">${t.pnl ? (t.pnl>=0?'+':'')+t.pnl.toFixed(2) : '--'}</strong></div>
+                                <div>SL <strong>${t.sl.toFixed(5)}</strong></div>
+                                <div>TP <strong>${t.tp.toFixed(5)}</strong></div>
+                                <div>Lote <strong>${t.lot}</strong></div>
+                                <div>Margem <strong>$${(t.margin_required||0).toFixed(2)}</strong></div>
+                            </div>
+                            <div style="margin-top:8px">
+                                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted)">
+                                    <span>Progresso para TP</span>
+                                    <span>${Math.min(progress,100).toFixed(1)}%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill ${progress>=50?'green':'blue'}" style="width:${Math.min(progress,100)}%"></div>
+                                </div>
+                            </div>
+                            ${t.trailing_activated ? '<div style="margin-top:6px;font-size:11px;color:var(--amber)">🔒 Trailing Stop ativo</div>' : ''}
+                        </div>`;
+                    }).join('');
+                }
+                updateLastUpdate();
+            } catch (e) {
+                console.error('fetchStatus error', e);
             }
         }
 
         async function fetchPending() {
-            const r = await fetch(API + '/pending');
-            const data = await r.json();
-            const container = document.getElementById('pending-container');
-            if (!data.length) { container.innerHTML = 'Nenhum sinal pendente.'; return; }
-            container.innerHTML = data.map(p => `
-                <div class="card">
-                    <strong>${p.symbol} (${p.name})</strong> - ${p.dir}
-                    <br>Entrada: ${p.entry.toFixed(5)} | 
-                    SL: ${p.sl.toFixed(5)} <button class="btn copy" onclick="copyText('${p.sl.toFixed(5)}', this)">📋 Copiar</button><span class="copied">✅ Copiado</span> | 
-                    TP: ${p.tp.toFixed(5)} <button class="btn copy" onclick="copyText('${p.tp.toFixed(5)}', this)">📋 Copiar</button><span class="copied">✅ Copiado</span>
-                    <br>Confluência: ${p.score}/${p.max_score} | RR: 1:${p.rr}
-                    <br><small>💰 Margem p/ 0.01 lote: $${p.min_lot_margin.toFixed(2)}</small>
-                    <br><small>⚠️  Risco c/ lote mínimo: $${p.risk_001_lot.toFixed(2)} (${p.risk_pct_001.toFixed(1)}%)</small>
-                    <br><small>🎯 Lote sugerido (risco 2%): <b>${p.suggested_lot}</b> lote(s)</small>
-                    <br><small>&nbsp;&nbsp;&nbsp; Risco real: $${p.suggested_risk_usd.toFixed(2)} (${p.suggested_risk_pct.toFixed(1)}%)</small>
-                    <br>Margem desejada ($): <input type="number" id="amt-${p.pending_id}" 
-                         value="${p.min_lot_margin.toFixed(0)}" 
-                         step="1" min="${p.min_lot_margin}">
-                    <button class="btn primary" onclick="execute(${p.pending_id})">✅ Executar</button>
-                    <button class="btn danger" onclick="reject(${p.pending_id})">❌ Rejeitar</button>
-                </div>
-            `).join('');
+            try {
+                const r = await fetch(API + '/pending');
+                const data = await r.json();
+                const container = document.getElementById('pending-container');
+                if (!data.length) {
+                    container.innerHTML = `
+                        <div class="empty">
+                            <div class="empty-icon">📡</div>
+                            Nenhum sinal pendente no momento.
+                        </div>`;
+                    return;
+                }
+                container.innerHTML = data.map(p => {
+                    const scorePct = (p.score / p.max_score) * 100;
+                    const segments = Array.from({length: p.max_score}, (_,i) =>
+                        `<div class="score-segment ${i < p.score ? 'active' : 'inactive'}"></div>`
+                    ).join('');
+                    return `
+                    <div class="trade-card ${p.dir === 'BUY' ? 'buy' : 'sell'}">
+                        <div class="trade-header">
+                            <div>
+                                <span class="trade-symbol">${p.symbol} ${p.name ? '('+p.name+')' : ''}</span>
+                                <span class="trade-dir ${p.dir === 'BUY' ? 'buy' : 'sell'}">${p.dir}</span>
+                            </div>
+                            <span style="font-size:11px;color:var(--text-muted)">#${p.pending_id}</span>
+                        </div>
+                        <div class="trade-row">
+                            <div>Entrada <strong>${p.entry.toFixed(5)}</strong></div>
+                            <div>SL <strong>${p.sl.toFixed(5)}</strong></div>
+                            <div>TP <strong>${p.tp.toFixed(5)}</strong></div>
+                            <div>RR <strong>1:${p.rr}</strong></div>
+                        </div>
+                        <div style="margin:10px 0">
+                            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px">
+                                <span>Confluência ${p.score}/${p.max_score}</span>
+                                <span>${scorePct.toFixed(0)}%</span>
+                            </div>
+                            <div class="score-bar">${segments}</div>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">
+                            💰 Margem p/ 0.01 lote: <strong style="color:var(--text)">$${p.min_lot_margin.toFixed(2)}</strong><br>
+                            ⚠️ Risco mínimo: $${p.risk_001_lot.toFixed(2)} (${p.risk_pct_001.toFixed(1)}%)<br>
+                            🎯 Lote sugerido: <strong style="color:var(--green)">${p.suggested_lot}</strong> lote(s)
+                            → Risco real: $${p.suggested_risk_usd.toFixed(2)} (${p.suggested_risk_pct.toFixed(1)}%)
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                            <span style="font-size:12px;color:var(--text-muted)">Margem ($):</span>
+                            <input type="number" id="amt-${p.pending_id}" value="${Math.ceil(p.min_lot_margin)}" step="1" min="${p.min_lot_margin.toFixed(0)}">
+                            <button class="btn primary" onclick="execute(${p.pending_id})">✅ Executar</button>
+                            <button class="btn danger" onclick="reject(${p.pending_id})">❌ Rejeitar</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                console.error('fetchPending error', e);
+            }
         }
 
         async function fetchHistory() {
-            const r = await fetch(API + '/history');
-            const data = await r.json();
-            const container = document.getElementById('history-container');
-            if (!data || data.length === 0) {
-                container.innerHTML = 'Nenhuma operação ainda.';
-                return;
+            try {
+                const r = await fetch(API + '/history');
+                const data = await r.json();
+                const tbody = document.getElementById('history-tbody');
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty" style="border:none">Nenhuma operação ainda.</td></tr>';
+                    return;
+                }
+                let runningEquity = lastBalance || Config.INITIAL_BALANCE || 150;
+                const rows = [];
+                for (let i = data.length - 1; i >= 0; i--) {
+                    const h = data[i];
+                    runningEquity -= h.pnl;
+                }
+                for (let i = 0; i < data.length; i++) {
+                    const h = data[i];
+                    runningEquity += h.pnl;
+                    const cls = h.result === 'WIN' ? 'win' : 'loss';
+                    const pnlStr = (h.pnl >= 0 ? '+' : '') + '$' + h.pnl.toFixed(2);
+                    rows.push(`<tr>
+                        <td style="color:var(--text-muted)">${h.closed_at}</td>
+                        <td><strong>${h.symbol}</strong></td>
+                        <td><span class="trade-dir ${h.dir==='BUY'?'buy':'sell'}" style="font-size:10px">${h.dir}</span></td>
+                        <td class="${cls}">${h.result}</td>
+                        <td class="${cls}">${pnlStr}</td>
+                        <td style="color:var(--text-muted)">$${runningEquity.toFixed(2)}</td>
+                    </tr>`);
+                }
+                tbody.innerHTML = rows.join('');
+                updateChart(data, lastBalance);
+            } catch (e) {
+                console.error('fetchHistory error', e);
             }
-            let html = '<table class="history-table"><tr><th>Data</th><th>Ativo</th><th>Dir</th><th>Resultado</th><th>P&L</th></tr>';
-            data.reverse().forEach(h => {
-                const cls = h.result === 'WIN' ? 'green' : 'red';
-                html += `<tr>
-                    <td>${h.closed_at}</td>
-                    <td>${h.symbol}</td>
-                    <td>${h.dir}</td>
-                    <td class="${cls}">${h.result}</td>
-                    <td class="${cls}">${h.pnl >= 0 ? '+' : ''}$${h.pnl.toFixed(2)}</td>
-                </tr>`;
-            });
-            html += '</table>';
-            container.innerHTML = html;
-        }
-
-        function copyText(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const span = btn.nextElementSibling;
-                span.style.display = 'inline';
-                setTimeout(() => { span.style.display = 'none'; }, 1500);
-            });
         }
 
         async function execute(pid) {
-            const amount = document.getElementById('amt-' + pid).value;
-            await fetch(API + '/execute', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ pending_id: pid, amount: parseFloat(amount) })
-            });
-            fetchPending();
-            fetchStatus();
+            const input = document.getElementById('amt-' + pid);
+            const amount = parseFloat(input.value);
+            if (!amount || amount <= 0) {
+                showToast('Margem inválida', 'error');
+                return;
+            }
+            try {
+                const r = await fetch(API + '/execute', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ pending_id: pid, amount: amount })
+                });
+                const res = await r.json();
+                if (res.ok) {
+                    showToast('Trade executado com sucesso!');
+                } else {
+                    showToast(res.message || 'Erro ao executar', 'error');
+                }
+                fetchPending();
+                fetchStatus();
+                fetchHistory();
+            } catch (e) {
+                showToast('Erro de conexão', 'error');
+            }
         }
 
         async function reject(pid) {
-            await fetch(API + '/reject', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ pending_id: pid })
-            });
-            fetchPending();
+            try {
+                await fetch(API + '/reject', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ pending_id: pid })
+                });
+                showToast('Sinal rejeitado');
+                fetchPending();
+            } catch (e) {
+                showToast('Erro de conexão', 'error');
+            }
+        }
+
+        // Countdown para circuit breaker
+        let countdownInterval;
+        function startCountdown(until) {
+            clearInterval(countdownInterval);
+            const el = document.getElementById('countdown');
+            countdownInterval = setInterval(() => {
+                const diff = until - Date.now()/1000;
+                if (diff <= 0) { clearInterval(countdownInterval); el.textContent = 'Retomando...'; return; }
+                const h = Math.floor(diff/3600), m = Math.floor((diff%3600)/60), s = Math.floor(diff%60);
+                el.textContent = `Pausa: ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            }, 1000);
         }
 
         setInterval(() => {
@@ -160,6 +819,7 @@
             fetchHistory();
         }, 3000);
 
+        initChart();
         fetchStatus();
         fetchPending();
         fetchHistory();
