@@ -10,6 +10,13 @@ def contract_size_for(symbol):
     return Config.CONTRACT_SIZES.get("FOREX", 100000)
 
 def calc_margin(symbol, price, leverage, lot):
+    """
+    Calcula margem necessária.
+    Se USE_FIXED_LEVERAGE, 'leverage' deve ser DEFAULT_LEVERAGE.
+    """
+    if Config.USE_FIXED_LEVERAGE:
+        leverage = Config.DEFAULT_LEVERAGE
+
     cs = contract_size_for(symbol)
     notional = lot * cs * price
     return round(notional / leverage, 2)
@@ -21,9 +28,7 @@ def commission_for(symbol, lot):
 
 def calc_lot_for_risk(symbol, entry, sl_price, balance, risk_pct=2.0, atr=None, atr_mult=2.0):
     """
-    Turtle-style position sizing:
-    - Se 'atr' fornecido: stop_distance = atr × atr_mult
-    - Se não: usa distância absoluta até o SL (modo legado)
+    Turtle-style position sizing.
     """
     risk_money = balance * risk_pct / 100.0
 
@@ -49,11 +54,17 @@ def calc_trade_plan(symbol, entry, leverage, balance, margin_usd):
     if margin_usd <= 0:
         return {"ok": False, "error": "Margem deve ser positiva."}
 
+    # Força alavancagem fixa se configurado
+    eff_lev = Config.DEFAULT_LEVERAGE if Config.USE_FIXED_LEVERAGE else min(leverage, max_leverage(symbol))
+
     cs = contract_size_for(symbol)
-    lot_est = margin_usd * leverage / (cs * entry)
+    lot_est = margin_usd * eff_lev / (cs * entry)
     lot_est = max(Config.MIN_LOT, math.floor(lot_est / Config.MIN_LOT) * Config.MIN_LOT)
 
-    eff_lev = min(leverage, max_leverage(symbol, lot_est))
+    if Config.USE_FIXED_LEVERAGE:
+        eff_lev = Config.DEFAULT_LEVERAGE
+    else:
+        eff_lev = min(leverage, max_leverage(symbol, lot_est))
 
     min_margin_min_lot = calc_margin(symbol, entry, eff_lev, Config.MIN_LOT)
     if margin_usd < min_margin_min_lot:
@@ -62,7 +73,10 @@ def calc_trade_plan(symbol, entry, leverage, balance, margin_usd):
     lot = margin_usd * eff_lev / (cs * entry)
     lot = max(Config.MIN_LOT, math.floor(lot / Config.MIN_LOT) * Config.MIN_LOT)
 
-    eff_lev = min(leverage, max_leverage(symbol, lot))
+    if Config.USE_FIXED_LEVERAGE:
+        eff_lev = Config.DEFAULT_LEVERAGE
+    else:
+        eff_lev = min(leverage, max_leverage(symbol, lot))
 
     from utils import get_sl_tp_pct
     sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
