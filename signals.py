@@ -2,12 +2,15 @@ import time
 from datetime import datetime
 from config import Config
 from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair
-from analysis import get_analysis
+from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
 
-def calc_confluence(res, direction):
+def calc_confluence(res, direction, mtf=None):
     checks = []
+    price = res["price"]
+
+    # Técnicos base
     if direction == "BUY":
         checks = [
             ("Preço > EMA200", res["price"] > res["ema200"]),
@@ -16,7 +19,7 @@ def calc_confluence(res, direction):
             ("RSI entre 40-65", 40 < res["rsi"] < 65),
             ("ADX > 25", res["adx"] > 25),
             ("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01),
-            ("Candle de força (fech > abert)", res.get("candle_bull", True)),
+            ("Candle de força", res.get("candle_bull", True)),
         ]
     else:
         checks = [
@@ -26,11 +29,142 @@ def calc_confluence(res, direction):
             ("RSI entre 35-60", 35 < res["rsi"] < 60),
             ("ADX > 25", res["adx"] > 25),
             ("Preço perto da banda superior", res["price"] > res["upper"] * 0.99),
-            ("Candle de força (fech < abert)", res.get("candle_bear", True)),
+            ("Candle de força", res.get("candle_bear", True)),
         ]
+
+    # SMC
+    fvg = res.get("fvg", {})
+    ob = res.get("ob", {})
+    sweep = res.get("sweep", {})
+
+    if direction == "BUY":
+        fvg_active = any(f.get("active") for f in fvg.get("bullish", []))
+        checks.append(("FVG Bullish ativo", fvg_active))
+        ob_active = any(o.get("active") for o in ob.get("bullish", []))
+        checks.append(("Order Block Bullish", ob_active))
+        checks.append(("Liquidity Sweep Bullish", sweep.get("bullish", False)))
+        checks.append(("Estrutura intacta (acima SL)", price > sweep.get("swing_low", 0)))
+    else:
+        fvg_active = any(f.get("active") for f in fvg.get("bearish", []))
+        checks.append(("FVG Bearish ativo", fvg_active))
+        ob_active = any(o.get("active") for o in ob.get("bearish", []))
+        checks.append(("Order Block Bearish", ob_active))
+        checks.append(("Liquidity Sweep Bearish", sweep.get("bearish", False)))
+        checks.append(("Estrutura intacta (abaixo SH)", price < sweep.get("swing_high", float('inf'))))
+
+    # MTF
+    if mtf:
+        checks.append(("MTF H4 alinhado", mtf.get("aligned", False)))
+        h4 = mtf.get("h4", {})
+        if h4:
+            if direction == "BUY":
+                checks.append(("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf'))))
+            else:
+                checks.append(("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0)))
+
     score = sum(1 for _, ok in checks if ok)
     passed = score >= Config.MIN_CONFLUENCE
     return score, len(checks), checks, passed, Config.MIN_CONFLUENCE
+
+def _get_smc_sl_tp(entry, direction, res, mtf, atr):
+    """
+    Retorna (sl, tp, rr, sl_source, tp_source) baseado em SMC.
+    sl_source/tp_source indicam o que definiu o nível ('ob', 'atr', 'liquidity', 'fvg').
+    """
+    sl = None
+    tp = None
+    sl_source = "atr"
+    tp_source = "atr"
+
+    ob = res.get("ob", {})
+    sweep = res.get("sweep", {})
+    fvg = res.get("fvg", {})
+
+    # ── SL: extremo do Order Block (mais preciso) ────────────────
+    if Config.USE_OB_FOR_SL:
+        if direction == "BUY":
+            obs = ob.get("bullish", [])
+            if obs:
+                # OB bullish: SL no low do OB
+                best_ob = min(obs, key=lambda x: abs(x["low"] - entry))
+                if best_ob["low"] < entry:
+                    sl = round(best_ob["low"] - 0.5 * atr, 5)  # buffer de 0.5 ATR
+                    sl_source = "ob"
+        else:
+            obs = ob.get("bearish", [])
+            if obs:
+                best_ob = min(obs, key=lambda x: abs(x["high"] - entry))
+                if best_ob["high"] > entry:
+                    sl = round(best_ob["high"] + 0.5 * atr, 5)
+                    sl_source = "ob"
+
+    # Se não achou OB adequado, usa ATR
+    if sl is None and atr and atr > 0:
+        if direction == "BUY":
+            sl = round(entry - Config.ATR_SL_MULT * atr, 5)
+        else:
+            sl = round(entry + Config.ATR_SL_MULT * atr, 5)
+
+    # ── TP: Liquidity Pool do H4 ou FVG ──────────────────────────
+    if Config.USE_LIQUIDITY_FOR_TP and mtf:
+        h4_sweep = mtf.get("h4", {}).get("sweep", {})
+        if direction == "BUY" and h4_sweep.get("swing_high"):
+            tp = round(h4_sweep["swing_high"], 5)
+            tp_source = "liquidity"
+        elif direction == "SELL" and h4_sweep.get("swing_low"):
+            tp = round(h4_sweep["swing_low"], 5)
+            tp_source = "liquidity"
+
+    # Fallback para FVG do H1 se não achou liquidity H4
+    if tp is None and Config.USE_FVG_FOR_TP:
+        if direction == "BUY":
+            fvgs = fvg.get("bullish", [])
+            if fvgs:
+                # Alvo no topo do FVG mais próximo acima do preço
+                valid = [f for f in fvgs if f["top"] > entry]
+                if valid:
+                    tp = round(max(f["top"] for f in valid), 5)
+                    tp_source = "fvg"
+        else:
+            fvgs = fvg.get("bearish", [])
+            if fvgs:
+                valid = [f for f in fvgs if f["bottom"] < entry]
+                if valid:
+                    tp = round(min(f["bottom"] for f in valid), 5)
+                    tp_source = "fvg"
+
+    # Fallback ATR
+    if tp is None and atr and atr > 0:
+        if direction == "BUY":
+            tp = round(entry + Config.ATR_TP_MULT * atr, 5)
+        else:
+            tp = round(entry - Config.ATR_TP_MULT * atr, 5)
+
+    # ── R:R dinâmico baseado em score SMC ────────────────────────
+    smc_checks = sum(1 for nm, ok in [
+        ("FVG", any(f.get("active") for f in (fvg.get("bullish" if direction=="BUY" else "bearish", [])))),
+        ("OB", any(o.get("active") for o in (ob.get("bullish" if direction=="BUY" else "bearish", [])))),
+        ("Sweep", sweep.get("bullish" if direction=="BUY" else "bearish", False)),
+        ("MTF", mtf.get("aligned", False) if mtf else False),
+    ] if ok)
+
+    rr = Config.TP_SL_RATIO_BASE + (smc_checks * Config.TP_SL_RATIO_STEP)
+    rr = min(rr, Config.MAX_TP_SL_RATIO)
+
+    # Se TP foi definido por SMC, recalcula RR real
+    if sl and tp and sl != entry:
+        dist_sl = abs(entry - sl)
+        dist_tp = abs(tp - entry)
+        rr_real = round(dist_tp / dist_sl, 2) if dist_sl > 0 else rr
+        # Se o SMC deu um RR melhor que o dinâmico, usa o SMC
+        if rr_real > rr:
+            rr = rr_real
+        else:
+            # Se o dinâmico é maior, ajusta TP para bater o RR dinâmico
+            tp = round(entry + rr * dist_sl, 5) if direction == "BUY" else round(entry - rr * dist_sl, 5)
+            tp_source = "rr_dynamic"
+
+    return sl, tp, rr, sl_source, tp_source
 
 def is_weekend():
     return datetime.utcnow().weekday() >= 5
@@ -39,10 +173,8 @@ def scan(bot):
     if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
         return
 
-    # ── FILTRO DE NOTÍCIAS ───────────────────────────────────────────
     if is_high_impact_news_window(minutes_before=15, minutes_after=30):
         return
-
     if is_weekend():
         return
 
@@ -54,43 +186,35 @@ def scan(bot):
         if time.time() - bot.asset_cooldown.get(sym, 0) < Config.ASSET_COOLDOWN:
             continue
 
-        res = get_analysis(sym, Config.TIMEFRAME)
-        if not res or res["cenario"] == "NEUTRO":
+        mtf = get_multi_timeframe(sym)
+        if not mtf or not mtf["h1"]:
+            continue
+
+        res = mtf["h1"]
+        if res.get("cenario") == "NEUTRO":
             continue
 
         direction = "BUY" if res["cenario"] == "ALTA" else "SELL"
-        sc, tot_c, checks, passed, min_sc = calc_confluence(res, direction)
+        sc, tot_c, checks, passed, min_sc = calc_confluence(res, direction, mtf)
         if not passed:
             continue
 
         entry = res["price"]
         atr = res.get("atr", 0)
 
-        # Alavancagem dinâmica (estimativa inicial)
+        # ── SL/TP com SMC ────────────────────────────────────────────
+        sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
+
+        if not sl or not tp:
+            log(f"[SMC] {sym}: SL/TP inválido, descartado")
+            continue
+
+        sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
+        tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
+
         eff_lev = max_leverage(sym, Config.MIN_LOT)
 
-        # SL/TP por ATR (preferencial) ou fallback por %
-        if atr and atr > 0:
-            sl, tp, sl_dist, tp_dist = get_sl_tp_atr(
-                entry, atr, direction,
-                Config.ATR_SL_MULT, Config.ATR_TP_MULT
-            )
-            sl_pct = round((sl_dist / entry) * 100, 2) if entry else 0
-            tp_pct = round((tp_dist / entry) * 100, 2) if entry else 0
-            rr = round(tp_dist / sl_dist, 2) if sl_dist else Config.TP_SL_RATIO
-        else:
-            from utils import get_sl_tp_pct
-            sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
-            rr = Config.TP_SL_RATIO + 0.15 * (sc - min_sc)
-            sl_pct, tp_pct = get_sl_tp_pct(eff_lev, rr)
-            if direction == "BUY":
-                sl = round(entry * (1 - sl_pct/100), 5)
-                tp = round(entry * (1 + tp_pct/100), 5)
-            else:
-                sl = round(entry * (1 + sl_pct/100), 5)
-                tp = round(entry * (1 - tp_pct/100), 5)
-
-        # ── TURTLE POSITION SIZING ───────────────────────────────────
+        # Turtle Position Sizing (agora com SL real do SMC)
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
             risk_pct=Config.ATR_RISK_PCT,
@@ -98,22 +222,25 @@ def scan(bot):
             atr_mult=Config.ATR_MULT_FOR_RISK
         )
 
-        # Margem para lote mínimo (informativo)
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
 
-        # Risco do lote mínimo (informativo)
         dist_sl = abs(entry - sl)
         cs_val = contract_size_for(sym)
         risk_001_lot = dist_sl * cs_val * 0.01
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
 
-        # ── FILTRO DE CORRELAÇÃO (antes de criar pending) ────────────
+        # Filtro de correlação
         est_risk_usd = suggested_risk_usd
         if is_jpy_pair(sym):
             est_risk_usd = est_risk_usd / 150.0
         ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
         if not ok_corr:
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
+            continue
+
+        # Validação de segurança: RR mínimo 1:1.5
+        if rr < 1.5:
+            log(f"[RR] {sym}: R:R {rr} muito baixo, descartado")
             continue
 
         pend = {
@@ -126,7 +253,7 @@ def scan(bot):
             "tp": tp,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
-            "rr": round(rr, 2),
+            "rr": rr,
             "score": sc,
             "max_score": tot_c,
             "checks": [{"name": nm, "ok": ok} for nm, ok in checks],
@@ -138,6 +265,10 @@ def scan(bot):
             "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
             "atr": atr,
+            "mtf_aligned": mtf.get("aligned", False),
+            "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
+            "sl_source": sl_src,
+            "tp_source": tp_src,
         }
         bot.add_pending(pend)
         break
