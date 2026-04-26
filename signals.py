@@ -3,7 +3,7 @@ from datetime import datetime
 from config import Config
 from utils import log, fmt, max_leverage, get_sl_tp_pct
 from analysis import get_analysis
-from risk import calc_margin, contract_size_for
+from risk import calc_margin, contract_size_for, calc_lot_for_risk
 
 def calc_confluence(res, direction):
     checks = []
@@ -32,14 +32,12 @@ def calc_confluence(res, direction):
     return score, len(checks), checks, passed, Config.MIN_CONFLUENCE
 
 def is_weekend():
-    """Retorna True se for sábado ou domingo (UTC)."""
-    return datetime.utcnow().weekday() >= 5   # 5 = sábado, 6 = domingo
+    return datetime.utcnow().weekday() >= 5
 
 def scan(bot):
     if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
         return
 
-    # Em finais de semana, apenas OURO
     if is_weekend():
         symbols = ["XAUUSD"]
     else:
@@ -73,7 +71,15 @@ def scan(bot):
             sl = round(entry * (1 + sl_pct/100), 5)
             tp = round(entry * (1 - tp_pct/100), 5)
 
+        # Margem para lote mínimo
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
+
+        # Lote sugerido pelo risco de 2% da banca
+        suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
+            sym, entry, sl, bot.balance, Config.RISK_PERCENT_PER_TRADE
+        )
+
+        # Risco do lote mínimo (só informativo)
         dist_sl = abs(entry - sl)
         cs_val = contract_size_for(sym)
         risk_001_lot = dist_sl * cs_val * 0.01
@@ -96,7 +102,10 @@ def scan(bot):
             "min_lot_margin": round(min_lot_margin, 2),
             "risk_001_lot": round(risk_001_lot, 2),
             "risk_pct_001": round(risk_pct_001, 2),
+            "suggested_lot": suggested_lot,
+            "suggested_risk_usd": suggested_risk_usd,
+            "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
         }
         bot.add_pending(pend)
-        break   # um sinal por varredura
+        break
