@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 from config import Config
-from utils import log, fmt, max_leverage, get_sl_tp_pct
+from utils import log, fmt, max_leverage, get_sl_tp_atr
 from analysis import get_analysis
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 
@@ -38,10 +38,11 @@ def scan(bot):
     if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
         return
 
+    # CORREÇÃO: Tickmill fecha Forex e Ouro no fim de semana
     if is_weekend():
-        symbols = ["XAUUSD"]
-    else:
-        symbols = list(Config.FXGOLD_ASSETS.keys())
+        return
+
+    symbols = list(Config.FXGOLD_ASSETS.keys())
 
     for sym in symbols:
         if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
@@ -58,28 +59,39 @@ def scan(bot):
         if not passed:
             continue
 
-        eff_lev = min(bot.leverage, max_leverage(sym))
-        base_sl, _ = get_sl_tp_pct(eff_lev)
-        rr = Config.TP_SL_RATIO + 0.15 * (sc - min_sc)
-        sl_pct, tp_pct = get_sl_tp_pct(eff_lev, rr)
         entry = res["price"]
+        atr = res.get("atr", 0)
 
-        if direction == "BUY":
-            sl = round(entry * (1 - sl_pct/100), 5)
-            tp = round(entry * (1 + tp_pct/100), 5)
+        # Alavancagem dinâmica (estimativa inicial)
+        eff_lev = max_leverage(sym, Config.MIN_LOT)
+
+        # CORREÇÃO: SL/TP preferencialmente por ATR
+        if atr and atr > 0:
+            sl, tp, sl_dist, tp_dist = get_sl_tp_atr(
+                entry, atr, direction,
+                Config.ATR_SL_MULT, Config.ATR_TP_MULT
+            )
+            sl_pct = round((sl_dist / entry) * 100, 2) if entry else 0
+            tp_pct = round((tp_dist / entry) * 100, 2) if entry else 0
+            rr = round(tp_dist / sl_dist, 2) if sl_dist else Config.TP_SL_RATIO
         else:
-            sl = round(entry * (1 + sl_pct/100), 5)
-            tp = round(entry * (1 - tp_pct/100), 5)
+            from utils import get_sl_tp_pct
+            sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
+            rr = Config.TP_SL_RATIO + 0.15 * (sc - min_sc)
+            sl_pct, tp_pct = get_sl_tp_pct(eff_lev, rr)
+            if direction == "BUY":
+                sl = round(entry * (1 - sl_pct/100), 5)
+                tp = round(entry * (1 + tp_pct/100), 5)
+            else:
+                sl = round(entry * (1 + sl_pct/100), 5)
+                tp = round(entry * (1 - tp_pct/100), 5)
 
-        # Margem para lote mínimo
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
 
-        # Lote sugerido pelo risco de 2% da banca
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance, Config.RISK_PERCENT_PER_TRADE
         )
 
-        # Risco do lote mínimo (só informativo)
         dist_sl = abs(entry - sl)
         cs_val = contract_size_for(sym)
         risk_001_lot = dist_sl * cs_val * 0.01
@@ -106,6 +118,7 @@ def scan(bot):
             "suggested_risk_usd": suggested_risk_usd,
             "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
+            "atr": atr,
         }
         bot.add_pending(pend)
         break
