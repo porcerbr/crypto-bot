@@ -24,6 +24,7 @@ class TradingBot:
         self.last_id = 0
         self.pending_counter = 0
         self._usdjpy_price = 0.0
+        self._current_leverage = Config.DEFAULT_LEVERAGE
 
     def next_pending_id(self):
         self.pending_counter += 1
@@ -97,9 +98,30 @@ class TradingBot:
         save_state(self)
 
     def execute_pending(self, pending_id, margin_usd):
+        """Versão com alavancagem dinâmica e proteções de segurança."""
+        from utils import (
+            get_dynamic_leverage, get_dynamic_max_trades, get_max_risk_absolute,
+            get_min_free_margin_pct, is_symbol_allowed, is_weekend_gap_risk,
+            get_allowed_symbols
+        )
+
+        # ── NOVO: Proteção de fim de semana ──────────────────────────
+        if is_weekend_gap_risk():
+            return False, "Proteção de fim de semana ativa — não abrindo novos trades"
+
+        # ── NOVO: Limite de trades por banca ─────────────────────────
+        max_trades = get_dynamic_max_trades(self.balance)
+        if len(self.active_trades) >= max_trades:
+            return False, f"Limite de {max_trades} trade(s) ativo(s) para banca atual"
+
         pend = next((p for p in self.pending_trades if p["pending_id"] == pending_id), None)
         if not pend:
             return False, "Sinal não encontrado"
+
+        # ── NOVO: Verifica se ativo é permitido para banca atual ─────
+        if not is_symbol_allowed(pend["symbol"], self.balance):
+            allowed = get_allowed_symbols(self.balance)
+            return False, f"{pend['symbol']} bloqueado para banca ${self.balance:.0f}. Permitidos: {', '.join(allowed)}"
 
         # ── Verificação de correlação na execução ─────────────────────
         est_risk = pend.get("suggested_risk_usd", 0)
@@ -107,11 +129,27 @@ class TradingBot:
         if not ok_corr:
             return False, f"Correlação: {msg_corr}"
 
-        plan = calc_trade_plan(pend["symbol"], pend["entry"], self.leverage, self.balance, margin_usd)
+        # ── NOVO: Alavancagem dinâmica ───────────────────────────────
+        eff_lev = get_dynamic_leverage(self.balance)
+        self._current_leverage = eff_lev
+
+        # ── NOVO: Risco absoluto máximo ──────────────────────────────
+        max_risk_usd = get_max_risk_absolute(self.balance)
+        if pend.get("suggested_risk_usd", 0) > max_risk_usd:
+            return False, f"Risco ${pend['suggested_risk_usd']:.2f} excede limite de ${max_risk_usd:.2f} para banca atual"
+
+        plan = calc_trade_plan(pend["symbol"], pend["entry"], eff_lev, self.balance, margin_usd)
         if not plan["ok"]:
             return False, plan["error"]
         if plan["margin_required"] > self.balance * 0.8:
             return False, "Margem excede 80% do saldo"
+
+        # ── NOVO: Margem livre mínima obrigatória ────────────────────
+        used = self._get_used_margin()
+        free_margin = self.balance - used - plan["margin_required"]
+        min_free_pct = get_min_free_margin_pct(self.balance)
+        if free_margin < self.balance * min_free_pct:
+            return False, f"Margem livre insuficiente. Necessário: {min_free_pct*100:.0f}% livre"
 
         ok, msg = self._check_margin_safety(plan["margin_required"])
         if not ok:
@@ -125,15 +163,19 @@ class TradingBot:
             "opened_at": pend["created_at"],
             "wallet_before": self.balance,
             "trailing_activated": False,
-            "effective_leverage": plan.get("leverage", self.leverage),
+            "effective_leverage": eff_lev,
         }
         self.balance -= plan["margin_required"]
         self.active_trades.append(trade)
         self.pending_trades.remove(pend)
-        self.send(f"✅ TRADE ABERTO — {pend['symbol']}\n"
-                  f"{pend['dir']} | Entrada: {fmt(pend['entry'])}\n"
-                  f"Lote: {plan['lot']:.2f} | Margem: ${plan['margin_required']:.2f} | Alav: {plan.get('leverage', self.leverage)}:1\n"
-                  f"SL: {fmt(plan['sl'])} | TP: {fmt(plan['tp'])}\n"
+        self.send(f"✅ TRADE ABERTO — {pend['symbol']}
+"
+                  f"{pend['dir']} | Entrada: {fmt(pend['entry'])}
+"
+                  f"Lote: {plan['lot']:.2f} | Margem: ${plan['margin_required']:.2f} | Alav: {eff_lev}:1
+"
+                  f"SL: {fmt(plan['sl'])} | TP: {fmt(plan['tp'])}
+"
                   f"Saldo restante: ${self.balance:.2f}")
         save_state(self)
         return True, "Trade executado"
@@ -192,6 +234,9 @@ class TradingBot:
                 log(f"Erro monitor: {e}")
 
     def close_trade(self, trade, exit_price, result):
+        """Versão com cooldown dinâmico baseado no capital."""
+        from utils import get_dynamic_cooldown
+
         margin = trade["margin_required"]
         lot = trade["lot"]
         entry = trade["entry"]
@@ -225,12 +270,18 @@ class TradingBot:
         else:
             self.losses += 1
             self.consecutive_losses += 1
-            self.asset_cooldown[symbol] = time.time()
+
+            # ── NOVO: Cooldown dinâmico após loss ──────────────────────
+            cooldown = get_dynamic_cooldown(self.balance)
+            self.asset_cooldown[symbol] = time.time() + cooldown
+
             if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                 self.paused_until = time.time() + Config.PAUSE_DURATION
                 self.send("⛔ CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
         self.active_trades.remove(trade)
-        self.send(f"🏁 Trade fechado: {symbol} — {result}\nP&L: ${profit:.2f}\nSaldo: ${self.balance:.2f}")
+        self.send(f"🏁 Trade fechado: {symbol} — {result}
+P&L: ${profit:.2f}
+Saldo: ${self.balance:.2f}")
         save_state(self)
 
     def send(self, text):
@@ -253,19 +304,39 @@ class TradingBot:
                 log(f"[PUSH] Erro: {e}")
 
     def send_pending_notification(self, pend):
-        checks_str = "\n".join([f"{'✅' if c['ok'] else '❌'} {c['name']}" for c in pend["checks"]])
+        checks_str = "
+".join([f"{'✅' if c['ok'] else '❌'} {c['name']}" for c in pend["checks"]])
         msg = (
-            f"🎯 SINAL PENDENTE — {pend['symbol']} ({pend['name']})\n"
-            f"{pend['dir']} | Entrada: {fmt(pend['entry'])}\n"
-            f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)\n"
-            f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}\n"
-            f"------------------------------\n"
-            f"💰 Margem p/ 0.01 lote: ${pend['min_lot_margin']:.2f}\n"
-            f"⚠️  Risco c/ lote mínimo: ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}%)\n"
-            f"🎯 Lote sugerido (risco {Config.ATR_RISK_PCT}%): {pend['suggested_lot']} lote(s)\n"
-            f"   → Risco real: ${pend['suggested_risk_usd']:.2f} ({pend['suggested_risk_pct']:.1f}%)\n"
-            f"------------------------------\n"
-            f"{checks_str}\n"
+            f"🎯 SINAL PENDENTE — {pend['symbol']} ({pend['name']})
+"
+            f"{pend['dir']} | Entrada: {fmt(pend['entry'])}
+"
+            f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)
+"
+            f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}
+"
+            f"------------------------------
+"
+            f"💰 Margem p/ 0.01 lote: ${pend['min_lot_margin']:.2f}
+"
+            f"⚠️  Risco c/ lote mínimo: ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}%)
+"
+            f"🎯 Lote sugerido (risco {Config.ATR_RISK_PCT}%): {pend['suggested_lot']} lote(s)
+"
+            f"   → Risco real: ${pend['suggested_risk_usd']:.2f} ({pend['suggested_risk_pct']:.1f}%)
+"
+            f"------------------------------
+"
+            f"{checks_str}
+"
             f"Para executar: /executar_{pend['pending_id']}_VALOR"
         )
         self.send(msg)
+
+    # ── NOVO: Retorna alavancagem efetiva atual ──────────────────────
+    def get_current_leverage(self):
+        """Retorna alavancagem efetiva atual (dinâmica ou fixa)."""
+        from utils import get_dynamic_leverage
+        if Config.USE_DYNAMIC_LEVERAGE:
+            return get_dynamic_leverage(self.balance)
+        return self.leverage
