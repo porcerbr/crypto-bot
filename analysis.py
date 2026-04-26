@@ -3,12 +3,23 @@ import yfinance as yf
 from config import Config
 from utils import log, asset_name
 
+# Mapa de símbolos para o Yahoo Finance
+SYMBOL_MAP = Config.YAHOO_SYMBOLS
+
+def _to_yahoo(symbol):
+    """Converte símbolo interno para o ticker do Yahoo Finance."""
+    return SYMBOL_MAP.get(symbol, symbol)   # fallback: usa o próprio símbolo
+
 def get_analysis(symbol, timeframe=None):
     timeframe = timeframe or Config.TIMEFRAME
     period, interval = Config.TIMEFRAMES.get(timeframe, ("60d", "1h"))
+    yf_symbol = _to_yahoo(symbol)
+
     try:
-        df = yf.Ticker(symbol).history(period=period, interval=interval)
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period=period, interval=interval)
         if df.empty or len(df) < 30:
+            log(f"[ANÁLISE] Dados insuficientes para {symbol} ({yf_symbol})")
             return None
         closes = df["Close"]
         highs = df["High"]
@@ -82,7 +93,7 @@ def get_analysis(symbol, timeframe=None):
         t_sell = float(lows.tail(5).min())
 
         return {
-            "symbol": symbol,
+            "symbol": symbol,          # mantemos o símbolo original para exibição
             "name": asset_name(symbol),
             "price": price,
             "cenario": cen,
@@ -104,5 +115,5 @@ def get_analysis(symbol, timeframe=None):
             "candle_bear": candle_bear,
         }
     except Exception as e:
-        log(f"[ANÁLISE] Erro {symbol}: {e}")
+        log(f"[ANÁLISE] Erro {symbol} ({yf_symbol}): {e}")
         return None
