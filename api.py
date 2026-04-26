@@ -67,4 +67,8 @@ def create_api(bot):
         ok = bot.reject_pending(pid)
         return jsonify({"ok": ok})
 
+    @app.route("/api/history")
+    def history():
+        return jsonify(bot.history[-20:])
+
     return app
