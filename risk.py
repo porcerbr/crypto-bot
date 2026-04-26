@@ -1,15 +1,21 @@
-# risk.py
 import math
 from config import Config
-from utils import asset_cat, contract_size_for, max_leverage, get_sl_tp_pct
+from utils import max_leverage
+
+def contract_size_for(symbol):
+    if symbol in Config.CONTRACT_SIZES_SPECIFIC:
+        return Config.CONTRACT_SIZES_SPECIFIC[symbol]
+    if symbol == "XAUUSD":
+        return Config.CONTRACT_SIZES["COMMODITIES"]
+    return Config.CONTRACT_SIZES.get("FOREX", 100000)
 
 def calc_margin(symbol, price, leverage, lot):
     cs = contract_size_for(symbol)
-    notional = lot * cs * price  # simplificado para ativos USD
+    notional = lot * cs * price
     return round(notional / leverage, 2)
 
 def commission_for(symbol, lot):
-    cat = asset_cat(symbol)
+    cat = "COMMODITIES" if symbol == "XAUUSD" else "FOREX"
     rate = Config.COMMISSION_PER_LOT.get(cat, 0.0)
     return round(rate * lot, 2)
 
@@ -21,21 +27,22 @@ def calc_trade_plan(symbol, entry, leverage, balance, margin_usd):
     if margin_usd <= 0:
         return {"ok": False, "error": "Margem deve ser positiva."}
 
-    # Lote necessário para usar exatamente essa margem
-    min_margin = calc_margin(symbol, entry, eff_lev, Config.MIN_LOT)
-    if margin_usd < min_margin:
-        return {"ok": False, "error": f"Margem mínima para 0.01 lote: ${min_margin:.2f}"}
+    min_margin_min_lot = calc_margin(symbol, entry, eff_lev, Config.MIN_LOT)
+    if margin_usd < min_margin_min_lot:
+        return {"ok": False, "error": f"Margem mínima para 0.01 lote: ${min_margin_min_lot:.2f}"}
 
-    lot = round(margin_usd / (contract_size_for(symbol) * entry) * eff_lev, 2)
-    lot = max(Config.MIN_LOT, math.floor(lot / 0.01) * 0.01)
+    cs = contract_size_for(symbol)
+    lot = margin_usd * eff_lev / (cs * entry)
+    lot = max(Config.MIN_LOT, math.floor(lot / Config.MIN_LOT) * Config.MIN_LOT)
 
+    from utils import get_sl_tp_pct
     sl_pct, tp_pct = get_sl_tp_pct(eff_lev)
     sl = round(entry * (1 - sl_pct/100), 5)
     tp = round(entry * (1 + tp_pct/100), 5)
 
     margin_required = calc_margin(symbol, entry, eff_lev, lot)
     commission = commission_for(symbol, lot)
-    profit = (tp - entry) * contract_size_for(symbol) * lot - commission
+    profit = (tp - entry) * cs * lot - commission
 
     return {
         "ok": True,
