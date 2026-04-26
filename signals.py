@@ -6,6 +6,39 @@ from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
 
+
+def _is_safe_to_trade(bot, symbol):
+    """
+    Verificações de segurança consolidadas.
+    Retorna (True, "") se seguro, ou (False, "motivo") se bloqueado.
+    """
+    from utils import (
+        get_dynamic_max_trades, is_symbol_allowed, is_weekend_gap_risk,
+        get_allowed_symbols, get_dynamic_cooldown
+    )
+
+    # 1. Verifica limite de trades ativos por banca
+    max_trades = get_dynamic_max_trades(bot.balance)
+    if len(bot.active_trades) >= max_trades:
+        return False, f"Limite de {max_trades} trade(s) ativo(s)"
+
+    # 2. Verifica se ativo é permitido para banca atual
+    if not is_symbol_allowed(symbol, bot.balance):
+        allowed = get_allowed_symbols(bot.balance)
+        return False, f"Ativo bloqueado. Permitidos: {', '.join(allowed)}"
+
+    # 3. Proteção de fim de semana / gap
+    if is_weekend_gap_risk():
+        return False, "Proteção de fim de semana/gap ativa"
+
+    # 4. Cooldown dinâmico
+    cooldown = get_dynamic_cooldown(bot.balance)
+    if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
+        return False, f"Cooldown ativo ({cooldown//60}min)"
+
+    return True, ""
+
+
 def calc_confluence(res, direction, mtf=None):
     checks = []
     price = res["price"]
@@ -170,7 +203,14 @@ def is_weekend():
     return datetime.utcnow().weekday() >= 5
 
 def scan(bot):
-    if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
+    # ── Verificações globais ─────────────────────────────────────
+    if bot.is_paused():
+        return
+
+    # NOVO: Verifica limite de trades por banca antes de tudo
+    from utils import get_dynamic_max_trades
+    max_trades = get_dynamic_max_trades(bot.balance)
+    if len(bot.active_trades) >= max_trades:
         return
 
     if is_high_impact_news_window(minutes_before=15, minutes_after=30):
@@ -181,9 +221,14 @@ def scan(bot):
     symbols = list(Config.FXGOLD_ASSETS.keys())
 
     for sym in symbols:
-        if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
+        # Verificações de segurança
+        safe, reason = _is_safe_to_trade(bot, sym)
+        if not safe:
+            if reason and "Cooldown" not in reason:  # não loga cooldown toda hora
+                log(f"[SAFETY] {sym}: {reason}")
             continue
-        if time.time() - bot.asset_cooldown.get(sym, 0) < Config.ASSET_COOLDOWN:
+
+        if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
             continue
 
         mtf = get_multi_timeframe(sym)
@@ -212,9 +257,11 @@ def scan(bot):
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
         tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
 
-        eff_lev = max_leverage(sym, Config.MIN_LOT)
+        # ── NOVO: Alavancagem dinâmica ───────────────────────────────
+        from utils import get_dynamic_leverage
+        eff_lev = get_dynamic_leverage(bot.balance)
 
-        # Turtle Position Sizing (agora com SL real do SMC)
+        # Turtle Position Sizing com CAP de risco
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
             risk_pct=Config.ATR_RISK_PCT,
