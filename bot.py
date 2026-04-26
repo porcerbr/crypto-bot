@@ -45,13 +45,13 @@ class TradingBot:
         total_required = used + additional_margin
         free_margin = self.balance - total_required
         if free_margin < 0:
-            return False, f"Margem insuficiente. Necessário: ${total_required:.2f}"
+            return False, "Margem insuficiente. Necessario: $" + str(round(total_required, 2))
         if total_required > 0:
             margin_level = (self.balance / total_required) * 100
             if margin_level < Config.STOP_OUT_PCT:
-                return False, f"Stop out iminente (nível {margin_level:.1f}%)"
+                return False, "Stop out iminente (nivel " + str(round(margin_level, 1)) + "%)"
             if margin_level < Config.MARGIN_CALL_PCT:
-                log(f"[AVISO] Margin call próximo (nível {margin_level:.1f}%)")
+                log("[AVISO] Margin call proximo (nivel " + str(round(margin_level, 1)) + "%)")
         return True, ""
 
     def _update_usdjpy(self):
@@ -61,35 +61,26 @@ class TradingBot:
             if res:
                 self._usdjpy_price = res["price"]
         except Exception as e:
-            log(f"[USDJPY] Erro ao atualizar: {e}")
+            log("[USDJPY] Erro ao atualizar: " + str(e))
 
-    # ── NOVO: Filtro de correlação (regra 3-5-7) ──────────────────────
     def check_correlation_exposure(self, symbol, additional_risk_usd=0.0):
-        """
-        Verifica se adicionar 'symbol' ultrapassa o limite de risco
-        correlacionado (MAX_CORRELATED_RISK_PCT).
-        """
         for group_name, symbols in Config.CORRELATION_GROUPS.items():
             if symbol not in symbols:
                 continue
-
             total_risk_usd = 0.0
             for t in self.active_trades:
                 if t["symbol"] in symbols:
                     dist = abs(t["entry"] - t["sl"])
                     cs = contract_size_for(t["symbol"])
                     risk = t["lot"] * dist * cs
-                    # Estimativa JPY → USD (USDJPY ~150)
                     if is_jpy_pair(t["symbol"]):
                         risk = risk / 150.0
                     total_risk_usd += risk
-
             total_risk_usd += additional_risk_usd
-
             if self.balance > 0:
                 corr_pct = (total_risk_usd / self.balance) * 100
                 if corr_pct >= Config.MAX_CORRELATED_RISK_PCT:
-                    return False, f"{group_name} {corr_pct:.1f}%"
+                    return False, group_name + " " + str(round(corr_pct, 1)) + "%"
         return True, ""
 
     def add_pending(self, pend):
@@ -98,45 +89,38 @@ class TradingBot:
         save_state(self)
 
     def execute_pending(self, pending_id, margin_usd):
-        """Versão com alavancagem dinâmica e proteções de segurança."""
         from utils import (
             get_dynamic_leverage, get_dynamic_max_trades, get_max_risk_absolute,
             get_min_free_margin_pct, is_symbol_allowed, is_weekend_gap_risk,
             get_allowed_symbols
         )
 
-        # ── NOVO: Proteção de fim de semana ──────────────────────────
         if is_weekend_gap_risk():
-            return False, "Proteção de fim de semana ativa — não abrindo novos trades"
+            return False, "Protecao de fim de semana ativa — nao abrindo novos trades"
 
-        # ── NOVO: Limite de trades por banca ─────────────────────────
         max_trades = get_dynamic_max_trades(self.balance)
         if len(self.active_trades) >= max_trades:
-            return False, f"Limite de {max_trades} trade(s) ativo(s) para banca atual"
+            return False, "Limite de " + str(max_trades) + " trade(s) ativo(s) para banca atual"
 
         pend = next((p for p in self.pending_trades if p["pending_id"] == pending_id), None)
         if not pend:
-            return False, "Sinal não encontrado"
+            return False, "Sinal nao encontrado"
 
-        # ── NOVO: Verifica se ativo é permitido para banca atual ─────
         if not is_symbol_allowed(pend["symbol"], self.balance):
             allowed = get_allowed_symbols(self.balance)
-            return False, f"{pend['symbol']} bloqueado para banca ${self.balance:.0f}. Permitidos: {', '.join(allowed)}"
+            return False, pend["symbol"] + " bloqueado para banca $" + str(round(self.balance, 0)) + ". Permitidos: " + ", ".join(allowed)
 
-        # ── Verificação de correlação na execução ─────────────────────
         est_risk = pend.get("suggested_risk_usd", 0)
         ok_corr, msg_corr = self.check_correlation_exposure(pend["symbol"], est_risk)
         if not ok_corr:
-            return False, f"Correlação: {msg_corr}"
+            return False, "Correlacao: " + msg_corr
 
-        # ── NOVO: Alavancagem dinâmica ───────────────────────────────
         eff_lev = get_dynamic_leverage(self.balance)
         self._current_leverage = eff_lev
 
-        # ── NOVO: Risco absoluto máximo ──────────────────────────────
         max_risk_usd = get_max_risk_absolute(self.balance)
         if pend.get("suggested_risk_usd", 0) > max_risk_usd:
-            return False, f"Risco ${pend['suggested_risk_usd']:.2f} excede limite de ${max_risk_usd:.2f} para banca atual"
+            return False, "Risco $" + str(round(pend["suggested_risk_usd"], 2)) + " excede limite de $" + str(round(max_risk_usd, 2)) + " para banca atual"
 
         plan = calc_trade_plan(pend["symbol"], pend["entry"], eff_lev, self.balance, margin_usd)
         if not plan["ok"]:
@@ -144,12 +128,11 @@ class TradingBot:
         if plan["margin_required"] > self.balance * 0.8:
             return False, "Margem excede 80% do saldo"
 
-        # ── NOVO: Margem livre mínima obrigatória ────────────────────
         used = self._get_used_margin()
         free_margin = self.balance - used - plan["margin_required"]
         min_free_pct = get_min_free_margin_pct(self.balance)
         if free_margin < self.balance * min_free_pct:
-            return False, f"Margem livre insuficiente. Necessário: {min_free_pct*100:.0f}% livre"
+            return False, "Margem livre insuficiente. Necessario: " + str(round(min_free_pct*100, 0)) + "% livre"
 
         ok, msg = self._check_margin_safety(plan["margin_required"])
         if not ok:
@@ -168,15 +151,16 @@ class TradingBot:
         self.balance -= plan["margin_required"]
         self.active_trades.append(trade)
         self.pending_trades.remove(pend)
-        self.send(f"✅ TRADE ABERTO — {pend['symbol']}
-"
-                  f"{pend['dir']} | Entrada: {fmt(pend['entry'])}
-"
-                  f"Lote: {plan['lot']:.2f} | Margem: ${plan['margin_required']:.2f} | Alav: {eff_lev}:1
-"
-                  f"SL: {fmt(plan['sl'])} | TP: {fmt(plan['tp'])}
-"
-                  f"Saldo restante: ${self.balance:.2f}")
+
+        msg_lines = [
+            "TRADE ABERTO — " + pend["symbol"],
+            pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
+            "Lote: " + str(round(plan["lot"], 2)) + " | Margem: $" + str(round(plan["margin_required"], 2)) + " | Alav: " + str(eff_lev) + ":1",
+            "SL: " + fmt(plan["sl"]) + " | TP: " + fmt(plan["tp"]),
+            "Saldo restante: $" + str(round(self.balance, 2))
+        ]
+        self.send(chr(10).join(msg_lines))
+
         save_state(self)
         return True, "Trade executado"
 
@@ -217,12 +201,12 @@ class TradingBot:
                         new_sl = cur - Config.ATR_MULT_TRAIL * atr
                         if new_sl > sl:
                             t["sl"] = round(new_sl, 5)
-                            self.send(f"🔁 Trailing Stop ajustado: {fmt(new_sl)}")
+                            self.send("Trailing Stop ajustado: " + fmt(new_sl))
                     else:
                         new_sl = cur + Config.ATR_MULT_TRAIL * atr
                         if new_sl < sl:
                             t["sl"] = round(new_sl, 5)
-                            self.send(f"🔁 Trailing Stop ajustado: {fmt(new_sl)}")
+                            self.send("Trailing Stop ajustado: " + fmt(new_sl))
 
                 if direction == "BUY":
                     if cur <= t["sl"] or cur >= tp:
@@ -231,10 +215,9 @@ class TradingBot:
                     if cur >= t["sl"] or cur <= tp:
                         self.close_trade(t, cur, "WIN" if cur <= tp else "LOSS")
             except Exception as e:
-                log(f"Erro monitor: {e}")
+                log("Erro monitor: " + str(e))
 
     def close_trade(self, trade, exit_price, result):
-        """Versão com cooldown dinâmico baseado no capital."""
         from utils import get_dynamic_cooldown
 
         margin = trade["margin_required"]
@@ -270,72 +253,59 @@ class TradingBot:
         else:
             self.losses += 1
             self.consecutive_losses += 1
-
-            # ── NOVO: Cooldown dinâmico após loss ──────────────────────
             cooldown = get_dynamic_cooldown(self.balance)
             self.asset_cooldown[symbol] = time.time() + cooldown
-
             if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                 self.paused_until = time.time() + Config.PAUSE_DURATION
-                self.send("⛔ CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
+                self.send("CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
         self.active_trades.remove(trade)
-        self.send(f"🏁 Trade fechado: {symbol} — {result}
-P&L: ${profit:.2f}
-Saldo: ${self.balance:.2f}")
+        msg = "Trade fechado: " + symbol + " — " + result + chr(10) + "P&L: $" + str(round(profit, 2)) + chr(10) + "Saldo: $" + str(round(self.balance, 2))
+        self.send(msg)
         save_state(self)
 
     def send(self, text):
-        url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
+        url = "https://api.telegram.org/bot" + Config.BOT_TOKEN + "/sendMessage"
         payload = {"chat_id": Config.CHAT_ID, "text": text}
         try:
             requests.post(url, json=payload, timeout=5)
         except Exception as e:
-            log(f"[SEND] Erro: {e}")
+            log("[SEND] Erro: " + str(e))
         self.send_push(text)
 
     def send_push(self, text):
         if Config.NTFY_TOPIC:
             try:
-                requests.post(f"https://ntfy.sh/{Config.NTFY_TOPIC}",
+                requests.post("https://ntfy.sh/" + Config.NTFY_TOPIC,
                               data=text.encode("utf-8"),
                               headers={"Title": "Sniper Bot Signal"},
                               timeout=5)
             except Exception as e:
-                log(f"[PUSH] Erro: {e}")
+                log("[PUSH] Erro: " + str(e))
 
     def send_pending_notification(self, pend):
-        checks_str = "
-".join([f"{'✅' if c['ok'] else '❌'} {c['name']}" for c in pend["checks"]])
-        msg = (
-            f"🎯 SINAL PENDENTE — {pend['symbol']} ({pend['name']})
-"
-            f"{pend['dir']} | Entrada: {fmt(pend['entry'])}
-"
-            f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)
-"
-            f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}
-"
-            f"------------------------------
-"
-            f"💰 Margem p/ 0.01 lote: ${pend['min_lot_margin']:.2f}
-"
-            f"⚠️  Risco c/ lote mínimo: ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}%)
-"
-            f"🎯 Lote sugerido (risco {Config.ATR_RISK_PCT}%): {pend['suggested_lot']} lote(s)
-"
-            f"   → Risco real: ${pend['suggested_risk_usd']:.2f} ({pend['suggested_risk_pct']:.1f}%)
-"
-            f"------------------------------
-"
-            f"{checks_str}
-"
-            f"Para executar: /executar_{pend['pending_id']}_VALOR"
-        )
-        self.send(msg)
+        checks_lines = []
+        for c in pend["checks"]:
+            icon = "OK" if c["ok"] else "X"
+            checks_lines.append(icon + " " + c["name"])
+        checks_str = chr(10).join(checks_lines)
 
-    # ── NOVO: Retorna alavancagem efetiva atual ──────────────────────
+        lines = [
+            "SINAL PENDENTE — " + pend["symbol"] + " (" + pend["name"] + ")",
+            pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
+            "SL: " + fmt(pend["sl"]) + " (" + str(pend["sl_pct"]) + "%) | TP: " + fmt(pend["tp"]) + " (+" + str(pend["tp_pct"]) + "%)",
+            "RR: 1:" + str(pend["rr"]) + " | Score: " + str(pend["score"]) + "/" + str(pend["max_score"]),
+            "------------------------------",
+            "Margem p/ 0.01 lote: $" + str(round(pend["min_lot_margin"], 2)),
+            "Risco c/ lote minimo: $" + str(round(pend["risk_001_lot"], 2)) + " (" + str(round(pend["risk_pct_001"], 1)) + "%)",
+            "Lote sugerido (risco " + str(Config.ATR_RISK_PCT) + "%): " + str(pend["suggested_lot"]) + " lote(s)",
+            "   -> Risco real: $" + str(round(pend["suggested_risk_usd"], 2)) + " (" + str(round(pend["suggested_risk_pct"], 1)) + "%)",
+            "------------------------------",
+            checks_str,
+            "Para executar: /executar_" + str(pend["pending_id"]) + "_VALOR"
+        ]
+        self.send(chr(10).join(lines))
+
     def get_current_leverage(self):
-        """Retorna alavancagem efetiva atual (dinâmica ou fixa)."""
         from utils import get_dynamic_leverage
         if Config.USE_DYNAMIC_LEVERAGE:
             return get_dynamic_leverage(self.balance)
