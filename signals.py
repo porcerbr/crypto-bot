@@ -1,9 +1,10 @@
 import time
 from datetime import datetime
 from config import Config
-from utils import log, fmt, max_leverage, get_sl_tp_atr
+from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair
 from analysis import get_analysis
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
+from news_filter import is_high_impact_news_window
 
 def calc_confluence(res, direction):
     checks = []
@@ -38,7 +39,10 @@ def scan(bot):
     if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
         return
 
-    # CORREÇÃO: Tickmill fecha Forex e Ouro no fim de semana
+    # ── FILTRO DE NOTÍCIAS ───────────────────────────────────────────
+    if is_high_impact_news_window(minutes_before=15, minutes_after=30):
+        return
+
     if is_weekend():
         return
 
@@ -65,7 +69,7 @@ def scan(bot):
         # Alavancagem dinâmica (estimativa inicial)
         eff_lev = max_leverage(sym, Config.MIN_LOT)
 
-        # CORREÇÃO: SL/TP preferencialmente por ATR
+        # SL/TP por ATR (preferencial) ou fallback por %
         if atr and atr > 0:
             sl, tp, sl_dist, tp_dist = get_sl_tp_atr(
                 entry, atr, direction,
@@ -86,16 +90,31 @@ def scan(bot):
                 sl = round(entry * (1 + sl_pct/100), 5)
                 tp = round(entry * (1 - tp_pct/100), 5)
 
-        min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
-
+        # ── TURTLE POSITION SIZING ───────────────────────────────────
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
-            sym, entry, sl, bot.balance, Config.RISK_PERCENT_PER_TRADE
+            sym, entry, sl, bot.balance,
+            risk_pct=Config.ATR_RISK_PCT,
+            atr=atr,
+            atr_mult=Config.ATR_MULT_FOR_RISK
         )
 
+        # Margem para lote mínimo (informativo)
+        min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
+
+        # Risco do lote mínimo (informativo)
         dist_sl = abs(entry - sl)
         cs_val = contract_size_for(sym)
         risk_001_lot = dist_sl * cs_val * 0.01
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
+
+        # ── FILTRO DE CORRELAÇÃO (antes de criar pending) ────────────
+        est_risk_usd = suggested_risk_usd
+        if is_jpy_pair(sym):
+            est_risk_usd = est_risk_usd / 150.0
+        ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
+        if not ok_corr:
+            log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
+            continue
 
         pend = {
             "pending_id": bot.next_pending_id(),
