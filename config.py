@@ -14,6 +14,11 @@ class Config:
         "GBPJPY": "GBP/JPY", "XAUUSD": "Ouro"
     }
 
+    # ── ALAVANCAGEM FIXA ─────────────────────────────────
+    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "500"))
+    USE_FIXED_LEVERAGE = True      # True = sempre usa DEFAULT_LEVERAGE
+                                   # False = usa dinâmica da Tickmill
+
     # ── SMC & Multi-Timeframe ────────────────────────────
     MTF_CONFIRM_TIMEFRAME = "4h"
     MTF_MIN_CONFLUENCE = 5
@@ -23,17 +28,17 @@ class Config:
 
     # ── R:R Dinâmico baseado em Score SMC ────────────────
     TP_SL_RATIO_BASE = 2.5
-    TP_SL_RATIO_STEP = 0.5        # +0.5 R:R por cada SMC check extra
-    MAX_TP_SL_RATIO = 4.5         # teto de R:R
-    USE_OB_FOR_SL = True          # usar extremo do OB como SL quando disponível
-    USE_LIQUIDITY_FOR_TP = True   # usar swing H4 como TP quando disponível
-    USE_FVG_FOR_TP = True         # usar FVG H4 como TP parcial/alvo
+    TP_SL_RATIO_STEP = 0.5
+    MAX_TP_SL_RATIO = 4.5
+    USE_OB_FOR_SL = True
+    USE_LIQUIDITY_FOR_TP = True
+    USE_FVG_FOR_TP = True
 
     # ── Turtle Position Sizing ───────────────────────────
     ATR_RISK_PCT = 1.0
     ATR_MULT_FOR_RISK = 2.0
 
-    # Fallback porcentagem (quando SMC não disponível)
+    # Fallback porcentagem
     SL_TP_BASE_MULTIPLIER = 400.0
     SL_MAX_PCT = 4.0
     SL_MIN_PCT = 0.5
@@ -45,7 +50,6 @@ class Config:
     MIN_CONFLUENCE = 6
 
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "150"))
-    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "500"))
     RISK_PERCENT_PER_TRADE = 2.0
 
     # ── Correlação (regra 3-5-7) ─────────────────────────
@@ -107,4 +111,3 @@ class Config:
     ATR_MULT_TRAIL = 1.5
 
     NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
-    
