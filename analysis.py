@@ -1,14 +1,13 @@
 import pandas as pd
 import yfinance as yf
+from datetime import datetime, timedelta
 from config import Config
 from utils import log, asset_name
 
-# Mapa de símbolos para o Yahoo Finance
 SYMBOL_MAP = Config.YAHOO_SYMBOLS
 
 def _to_yahoo(symbol):
-    """Converte símbolo interno para o ticker do Yahoo Finance."""
-    return SYMBOL_MAP.get(symbol, symbol)   # fallback: usa o próprio símbolo
+    return SYMBOL_MAP.get(symbol, symbol)
 
 def get_analysis(symbol, timeframe=None):
     timeframe = timeframe or Config.TIMEFRAME
@@ -21,6 +20,29 @@ def get_analysis(symbol, timeframe=None):
         if df.empty or len(df) < 30:
             log(f"[ANÁLISE] Dados insuficientes para {symbol} ({yf_symbol})")
             return None
+
+        # ── Verificação de qualidade ─────────────────────────
+        # Último candle completo?
+        last_time = df.index[-1]
+        now_utc = datetime.utcnow()
+        # Para H1, o candle deve ter timestamp anterior à hora cheia atual
+        if interval == "1h":
+            expected = now_utc.replace(minute=0, second=0, microsecond=0)
+            if last_time >= expected:
+                log(f"[ANÁLISE] {symbol}: último candle ainda não fechado, ignorando.")
+                return None
+        # Spread anormal? (último candle com range muito maior que ATR recente)
+        tr_temp = pd.concat([
+            df["High"] - df["Low"],
+            (df["High"] - df["Close"].shift()).abs(),
+            (df["Low"] - df["Close"].shift()).abs()
+        ], axis=1).max(axis=1)
+        atr_temp = tr_temp.rolling(14).mean().iloc[-1]
+        last_range = df["High"].iloc[-1] - df["Low"].iloc[-1]
+        if atr_temp > 0 and last_range > 3 * atr_temp:
+            log(f"[ANÁLISE] {symbol}: candle anômalo (range > 3x ATR), ignorando.")
+            return None
+
         closes = df["Close"]
         highs = df["High"]
         lows = df["Low"]
@@ -55,7 +77,7 @@ def get_analysis(symbol, timeframe=None):
         macd_bull = macd_line.iloc[-1] > signal_line.iloc[-1]
         macd_bear = macd_line.iloc[-1] < signal_line.iloc[-1]
 
-        # ATR
+        # ATR (já calculado para verificação, mas refazemos para o período total)
         tr = pd.concat([
             highs - lows,
             (highs - closes.shift()).abs(),
@@ -105,14 +127,14 @@ def get_analysis(symbol, timeframe=None):
             "ema200": float(ema200),
             "upper": float(upper),
             "lower": float(lower),
-            "macd_bull": bool(macd_bull),      # <-- Conversão explícita
-            "macd_bear": bool(macd_bear),      # <--
+            "macd_bull": bool(macd_bull),
+            "macd_bear": bool(macd_bear),
             "macd_hist": float(macd_hist),
             "t_buy": t_buy,
             "t_sell": t_sell,
             "change_pct": round(chg, 2),
-            "candle_bull": bool(candle_bull),  # <--
-            "candle_bear": bool(candle_bear),  # <--
+            "candle_bull": bool(candle_bull),
+            "candle_bear": bool(candle_bear),
         }
     except Exception as e:
         log(f"[ANÁLISE] Erro {symbol} ({yf_symbol}): {e}")
