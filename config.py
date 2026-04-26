@@ -16,13 +16,17 @@ class Config:
         "GBPJPY": "GBP/JPY", "XAUUSD": "Ouro"
     }
 
-    # SL/TP para H1
-    SL_TP_BASE_MULTIPLIER = 400.0   # SL = 400 / alavancagem
+    # Fallback porcentagem (quando ATR indisponível)
+    SL_TP_BASE_MULTIPLIER = 400.0
     SL_MAX_PCT = 4.0
     SL_MIN_PCT = 0.5
     TP_SL_RATIO = 2.5
 
-    # Confluência elevada para win rate ≥55%
+    # ATR-based SL/TP (preferencial na Tickmill)
+    ATR_SL_MULT = 1.5
+    ATR_TP_MULT = 2.5
+
+    # Confluência
     MIN_CONFLUENCE = 6
 
     # Banca e risco
@@ -36,6 +40,10 @@ class Config:
     SCAN_INTERVAL = 60
     PAUSE_DURATION = 3600
     MAX_CONSECUTIVE_LOSSES = 3
+
+    # Tickmill Margin / Stop Out
+    MARGIN_CALL_PCT = 100.0
+    STOP_OUT_PCT = 30.0
 
     # Yahoo Finance – período H1
     TIMEFRAMES = {
@@ -55,12 +63,12 @@ class Config:
         "XAUUSD": 100,
     }
     MAX_LEVERAGE = {
-        "FOREX": 500,
-        "XAUUSD": 500,
+        "FOREX": 1000,
+        "XAUUSD": 1000,
     }
     MIN_LOT = 0.01
 
-# Mapeamento de símbolos internos -> Yahoo Finance
+    # Mapeamento Yahoo Finance — XAUUSD agora é spot proxy
     YAHOO_SYMBOLS = {
         "EURUSD": "EURUSD=X",
         "GBPUSD": "GBPUSD=X",
@@ -72,12 +80,13 @@ class Config:
         "EURGBP": "EURGBP=X",
         "EURJPY": "EURJPY=X",
         "GBPJPY": "GBPJPY=X",
-        "XAUUSD": "GC=F",
+        "XAUUSD": "XAUUSD=X",
     }
 
-        # Trailing Stop
-    TRAILING_ACTIVATION = 0.5   # ativa após 50% do caminho até o TP
-    ATR_MULT_TRAIL = 1.5        # distância do stop móvel em ATR
+    # Trailing Stop
+    TRAILING_ACTIVATION = 0.5
+    ATR_MULT_TRAIL = 1.5
 
-        # Notificação push (ntfy.sh)
+    # Notificação push
     NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+    
