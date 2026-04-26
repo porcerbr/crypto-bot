@@ -1,11 +1,10 @@
-# bot.py
-import time, threading, requests, json
+import time
+import requests
 from datetime import datetime
 from config import Config
-from utils import log, fmt, asset_name, max_leverage, get_sl_tp_pct
-from analysis import get_analysis
-from risk import calc_trade_plan
-from db import save_state, load_state
+from utils import log, fmt
+from risk import calc_trade_plan, contract_size_for
+from db import save_state
 
 class TradingBot:
     def __init__(self):
@@ -21,7 +20,7 @@ class TradingBot:
         self.pending_trades = []
         self.history = []
         self.asset_cooldown = {}
-        self.signals_feed = []  # últimos sinais enviados
+        self.signals_feed = []
         self.last_id = 0
         self.pending_counter = 0
 
@@ -79,24 +78,28 @@ class TradingBot:
 
     def monitor_trades(self):
         for t in self.active_trades[:]:
-            res = get_analysis(t["symbol"], self.timeframe)
-            if not res:
-                continue
-            cur = res["price"]
-            sl = t["sl"]
-            tp = t["tp"]
-            if t["dir"] == "BUY":
-                if cur <= sl or cur >= tp:
-                    self.close_trade(t, cur, "WIN" if cur >= tp else "LOSS")
-            else:
-                if cur >= sl or cur <= tp:
-                    self.close_trade(t, cur, "WIN" if cur <= tp else "LOSS")
+            try:
+                from analysis import get_analysis
+                res = get_analysis(t["symbol"], self.timeframe)
+                if not res:
+                    continue
+                cur = res["price"]
+                sl = t["sl"]
+                tp = t["tp"]
+                if t["dir"] == "BUY":
+                    if cur <= sl or cur >= tp:
+                        self.close_trade(t, cur, "WIN" if cur >= tp else "LOSS")
+                else:
+                    if cur >= sl or cur <= tp:
+                        self.close_trade(t, cur, "WIN" if cur <= tp else "LOSS")
+            except Exception as e:
+                log(f"Erro monitor: {e}")
 
     def close_trade(self, trade, exit_price, result):
         margin = trade["margin_required"]
         lot = trade["lot"]
         entry = trade["entry"]
-        cs = Config.CONTRACT_SIZES.get(trade.get("cat", "CRYPTO"), 1)
+        cs = contract_size_for(trade["symbol"])
         if trade["dir"] == "BUY":
             profit = (exit_price - entry) * cs * lot - trade.get("commission", 0)
         else:
@@ -134,10 +137,16 @@ class TradingBot:
 
     def send_pending_notification(self, pend):
         checks_str = "\n".join([f"{'✅' if c['ok'] else '❌'} {c['name']}" for c in pend["checks"]])
-        msg = (f"🎯 SINAL PENDENTE — {pend['symbol']} ({pend['name']})\n"
-               f"{pend['dir']} | Entrada: {fmt(pend['entry'])}\n"
-               f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)\n"
-               f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}\n"
-               f"{checks_str}\n"
-               f"/executar_{pend['pending_id']}_valor  (ex: /executar_{pend['pending_id']}_100)")
+        msg = (
+            f"🎯 SINAL PENDENTE — {pend['symbol']} ({pend['name']})\n"
+            f"{pend['dir']} | Entrada: {fmt(pend['entry'])}\n"
+            f"SL: {fmt(pend['sl'])} ({pend['sl_pct']}%) | TP: {fmt(pend['tp'])} (+{pend['tp_pct']}%)\n"
+            f"RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}\n"
+            f"------------------------------\n"
+            f"💰 Custo (0.01 lote): margem ${pend['min_lot_margin']:.2f}\n"
+            f"⚠️  Risco (0.01 lote): ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}% da banca)\n"
+            f"------------------------------\n"
+            f"{checks_str}\n"
+            f"Para executar: /executar_{pend['pending_id']}_VALOR"
+        )
         self.send(msg)
