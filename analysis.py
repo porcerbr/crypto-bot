@@ -1,4 +1,3 @@
-# analysis.py
 import pandas as pd
 import yfinance as yf
 from config import Config
@@ -6,7 +5,7 @@ from utils import log, asset_name
 
 def get_analysis(symbol, timeframe=None):
     timeframe = timeframe or Config.TIMEFRAME
-    period, interval = Config.TIMEFRAMES.get(timeframe, ("5d", "15m"))
+    period, interval = Config.TIMEFRAMES.get(timeframe, ("60d", "1h"))
     try:
         df = yf.Ticker(symbol).history(period=period, interval=interval)
         if df.empty or len(df) < 30:
@@ -14,6 +13,7 @@ def get_analysis(symbol, timeframe=None):
         closes = df["Close"]
         highs = df["High"]
         lows = df["Low"]
+        opens = df["Open"]
 
         # EMAs
         ema9   = closes.ewm(span=9, adjust=False).mean().iloc[-1]
@@ -64,7 +64,10 @@ def get_analysis(symbol, timeframe=None):
         adx = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
 
         price = float(closes.iloc[-1])
-        chg = ((closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100) if len(closes) >= 10 else 0.0
+        if len(closes) >= 10:
+            chg = (closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100
+        else:
+            chg = 0.0
 
         cen = "NEUTRO"
         if price > ema200 and ema9 > ema21:
@@ -72,7 +75,9 @@ def get_analysis(symbol, timeframe=None):
         elif price < ema200 and ema9 < ema21:
             cen = "BAIXA"
 
-        # Gatilhos de entrada (rompimento)
+        candle_bull = float(closes.iloc[-1]) > float(opens.iloc[-1])
+        candle_bear = not candle_bull
+
         t_buy = float(highs.tail(5).max())
         t_sell = float(lows.tail(5).min())
 
@@ -95,6 +100,8 @@ def get_analysis(symbol, timeframe=None):
             "t_buy": t_buy,
             "t_sell": t_sell,
             "change_pct": round(chg, 2),
+            "candle_bull": candle_bull,
+            "candle_bear": candle_bear,
         }
     except Exception as e:
         log(f"[ANÁLISE] Erro {symbol}: {e}")
