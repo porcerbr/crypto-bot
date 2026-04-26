@@ -14,26 +14,39 @@ class Config:
         "GBPJPY": "GBP/JPY", "XAUUSD": "Ouro"
     }
 
-    # ── Turtle Position Sizing ───────────────────────────
-    ATR_RISK_PCT = 1.0          # % da conta arriscada por trade (Turtle = 1%)
-    ATR_MULT_FOR_RISK = 2.0     # Stop distance = 2 × ATR
+    # ── SMC & Multi-Timeframe ────────────────────────────
+    MTF_CONFIRM_TIMEFRAME = "4h"
+    MTF_MIN_CONFLUENCE = 5
+    FVG_LOOKBACK = 20
+    OB_LOOKBACK = 15
+    LIQUIDITY_SWING_LOOKBACK = 10
 
-    # ── Fallback porcentagem (quando ATR indisponível) ───
+    # ── R:R Dinâmico baseado em Score SMC ────────────────
+    TP_SL_RATIO_BASE = 2.5
+    TP_SL_RATIO_STEP = 0.5        # +0.5 R:R por cada SMC check extra
+    MAX_TP_SL_RATIO = 4.5         # teto de R:R
+    USE_OB_FOR_SL = True          # usar extremo do OB como SL quando disponível
+    USE_LIQUIDITY_FOR_TP = True   # usar swing H4 como TP quando disponível
+    USE_FVG_FOR_TP = True         # usar FVG H4 como TP parcial/alvo
+
+    # ── Turtle Position Sizing ───────────────────────────
+    ATR_RISK_PCT = 1.0
+    ATR_MULT_FOR_RISK = 2.0
+
+    # Fallback porcentagem (quando SMC não disponível)
     SL_TP_BASE_MULTIPLIER = 400.0
     SL_MAX_PCT = 4.0
     SL_MIN_PCT = 0.5
     TP_SL_RATIO = 2.5
 
-    # ATR-based SL/TP
     ATR_SL_MULT = 1.5
     ATR_TP_MULT = 2.5
 
     MIN_CONFLUENCE = 6
 
-    # ── Banca e risco ────────────────────────────────────
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "150"))
     DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "500"))
-    RISK_PERCENT_PER_TRADE = 2.0   # legado — agora usamos ATR_RISK_PCT
+    RISK_PERCENT_PER_TRADE = 2.0
 
     # ── Correlação (regra 3-5-7) ─────────────────────────
     CORRELATION_GROUPS = {
@@ -43,24 +56,22 @@ class Config:
         "STERLING":  ["GBPUSD", "EURGBP", "GBPJPY"],
         "YEN":       ["USDJPY", "EURJPY", "GBPJPY"],
     }
-    MAX_CORRELATED_RISK_PCT = 7.0   # máximo de risco em grupo correlacionado
+    MAX_CORRELATED_RISK_PCT = 7.0
 
-    # ── Operacional ──────────────────────────────────────
     MAX_TRADES = 3
     ASSET_COOLDOWN = 3600
     SCAN_INTERVAL = 60
     PAUSE_DURATION = 3600
     MAX_CONSECUTIVE_LOSSES = 3
 
-    # Tickmill Margin / Stop Out
     MARGIN_CALL_PCT = 100.0
     STOP_OUT_PCT = 30.0
 
     TIMEFRAMES = {
         "1h": ("60d", "1h"),
+        "4h": ("120d", "1h"),
     }
 
-    # Comissões e contratos
     COMMISSION_PER_LOT = {
         "FOREX": 6.0,
         "COMMODITIES": 6.0,
@@ -92,8 +103,8 @@ class Config:
         "XAUUSD": "XAUUSD=X",
     }
 
-    # Trailing Stop
     TRAILING_ACTIVATION = 0.5
     ATR_MULT_TRAIL = 1.5
 
     NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+    
