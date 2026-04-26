@@ -31,11 +31,20 @@ def calc_confluence(res, direction):
     passed = score >= Config.MIN_CONFLUENCE
     return score, len(checks), checks, passed, Config.MIN_CONFLUENCE
 
+def is_weekend():
+    """Retorna True se for sábado ou domingo (UTC)."""
+    return datetime.utcnow().weekday() >= 5   # 5 = sábado, 6 = domingo
+
 def scan(bot):
     if bot.is_paused() or len(bot.active_trades) >= Config.MAX_TRADES:
         return
 
-    symbols = list(Config.FXGOLD_ASSETS.keys())
+    # Em finais de semana, apenas OURO
+    if is_weekend():
+        symbols = ["XAUUSD"]
+    else:
+        symbols = list(Config.FXGOLD_ASSETS.keys())
+
     for sym in symbols:
         if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
             continue
