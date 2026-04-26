@@ -59,3 +59,18 @@ class Config:
         "XAUUSD": 500,
     }
     MIN_LOT = 0.01
+
+# Mapeamento de símbolos internos -> Yahoo Finance
+    YAHOO_SYMBOLS = {
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X",
+        "USDJPY": "USDJPY=X",
+        "AUDUSD": "AUDUSD=X",
+        "USDCAD": "USDCAD=X",
+        "USDCHF": "USDCHF=X",
+        "NZDUSD": "NZDUSD=X",
+        "EURGBP": "EURGBP=X",
+        "EURJPY": "EURJPY=X",
+        "GBPJPY": "GBPJPY=X",
+        "XAUUSD": "GC=F",
+    }
