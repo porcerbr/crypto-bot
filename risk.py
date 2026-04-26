@@ -12,9 +12,10 @@ def contract_size_for(symbol):
 def calc_margin(symbol, price, leverage, lot):
     """
     Calcula margem necessária.
-    Se USE_FIXED_LEVERAGE, 'leverage' deve ser DEFAULT_LEVERAGE.
+    Se USE_DYNAMIC_LEVERAGE=True, 'leverage' já vem da função dinâmica.
+    Se USE_FIXED_LEVERAGE=True (e dynamic=False), usa DEFAULT_LEVERAGE.
     """
-    if Config.USE_FIXED_LEVERAGE:
+    if Config.USE_FIXED_LEVERAGE and not Config.USE_DYNAMIC_LEVERAGE:
         leverage = Config.DEFAULT_LEVERAGE
 
     cs = contract_size_for(symbol)
@@ -28,9 +29,15 @@ def commission_for(symbol, lot):
 
 def calc_lot_for_risk(symbol, entry, sl_price, balance, risk_pct=2.0, atr=None, atr_mult=2.0):
     """
-    Turtle-style position sizing.
+    Turtle-style position sizing com CAP de risco absoluto.
     """
+    from utils import get_max_risk_absolute
+
     risk_money = balance * risk_pct / 100.0
+
+    # ── NOVO: Cap de risco absoluto por banca ────────────────────
+    max_risk_abs = get_max_risk_absolute(balance)
+    risk_money = min(risk_money, max_risk_abs)
 
     if atr and atr > 0:
         stop_distance = atr * atr_mult
@@ -48,20 +55,33 @@ def calc_lot_for_risk(symbol, entry, sl_price, balance, risk_pct=2.0, atr=None, 
     return round(lot, 2), round(real_risk, 2), round(risk_pct_real, 1)
 
 def calc_trade_plan(symbol, entry, leverage, balance, margin_usd):
+    """
+    Plano de trade com alavancagem dinâmica e proteções.
+    """
+    from utils import get_dynamic_leverage
+
     entry = float(entry)
     margin_usd = float(margin_usd)
 
     if margin_usd <= 0:
         return {"ok": False, "error": "Margem deve ser positiva."}
 
-    # Força alavancagem fixa se configurado
-    eff_lev = Config.DEFAULT_LEVERAGE if Config.USE_FIXED_LEVERAGE else min(leverage, max_leverage(symbol))
+    # ── Alavancagem efetiva ──────────────────────────────────────
+    if Config.USE_DYNAMIC_LEVERAGE:
+        eff_lev = get_dynamic_leverage(balance)
+    elif Config.USE_FIXED_LEVERAGE:
+        eff_lev = Config.DEFAULT_LEVERAGE
+    else:
+        eff_lev = min(leverage, max_leverage(symbol))
 
     cs = contract_size_for(symbol)
     lot_est = margin_usd * eff_lev / (cs * entry)
     lot_est = max(Config.MIN_LOT, math.floor(lot_est / Config.MIN_LOT) * Config.MIN_LOT)
 
-    if Config.USE_FIXED_LEVERAGE:
+    # Recalcula alavancagem se necessário
+    if Config.USE_DYNAMIC_LEVERAGE:
+        eff_lev = get_dynamic_leverage(balance)
+    elif Config.USE_FIXED_LEVERAGE:
         eff_lev = Config.DEFAULT_LEVERAGE
     else:
         eff_lev = min(leverage, max_leverage(symbol, lot_est))
@@ -73,7 +93,10 @@ def calc_trade_plan(symbol, entry, leverage, balance, margin_usd):
     lot = margin_usd * eff_lev / (cs * entry)
     lot = max(Config.MIN_LOT, math.floor(lot / Config.MIN_LOT) * Config.MIN_LOT)
 
-    if Config.USE_FIXED_LEVERAGE:
+    # Alavancagem final
+    if Config.USE_DYNAMIC_LEVERAGE:
+        eff_lev = get_dynamic_leverage(balance)
+    elif Config.USE_FIXED_LEVERAGE:
         eff_lev = Config.DEFAULT_LEVERAGE
     else:
         eff_lev = min(leverage, max_leverage(symbol, lot))
