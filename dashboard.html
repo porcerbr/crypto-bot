@@ -14,6 +14,7 @@
         .ticker { font-family: monospace; font-size: 14px; }
         .green { color:#3fb950; }
         .red { color:#f85149; }
+        .amber { color:#d29922; }
         .btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:8px 16px; border-radius:5px; cursor:pointer; margin:3px; }
         .btn.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
         .btn.danger { background:#da3633; border-color:#da3633; color:#fff; }
@@ -22,6 +23,9 @@
         .metric { font-size:22px; font-weight:bold; }
         input { background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:8px 12px; border-radius:5px; width:80px; }
         .copied { color:#3fb950; font-size:11px; margin-left:5px; display:none; }
+        .history-table { width:100%; border-collapse:collapse; font-size:12px; }
+        .history-table th, .history-table td { border-bottom:1px solid #30363d; padding:8px 6px; text-align:left; }
+        .history-table th { color:#8b949e; }
     </style>
 </head>
 <body>
@@ -45,6 +49,9 @@
     <h3>📊 Trades Ativos</h3>
     <div id="active-container">Nenhum trade ativo.</div>
 
+    <h3>📜 Histórico Recente</h3>
+    <div id="history-container">Carregando histórico...</div>
+
     <script>
         const API = '/api';
 
@@ -57,6 +64,20 @@
             document.getElementById('leverage').innerText = d.leverage + 'x';
             document.getElementById('status-badge').className = d.paused ? 'badge paused' : 'badge live';
             document.getElementById('status-badge').innerText = d.paused ? 'PAUSADO' : 'OPERANDO';
+
+            // Trades ativos
+            const activeContainer = document.getElementById('active-container');
+            if (!d.active_trades || d.active_trades.length === 0) {
+                activeContainer.innerHTML = 'Nenhum trade ativo.';
+            } else {
+                activeContainer.innerHTML = d.active_trades.map(t => `
+                    <div class="card">
+                        <strong>${t.symbol} (${t.name})</strong> - ${t.dir}
+                        <br>Entrada: ${t.entry.toFixed(5)} | SL: ${t.sl.toFixed(5)} | TP: ${t.tp.toFixed(5)}
+                        <br>Lote: ${t.lot}
+                    </div>
+                `).join('');
+            }
         }
 
         async function fetchPending() {
@@ -72,7 +93,9 @@
                     TP: ${p.tp.toFixed(5)} <button class="btn copy" onclick="copyText('${p.tp.toFixed(5)}', this)">📋 Copiar</button><span class="copied">✅ Copiado</span>
                     <br>Confluência: ${p.score}/${p.max_score} | RR: 1:${p.rr}
                     <br><small>💰 Margem p/ 0.01 lote: $${p.min_lot_margin.toFixed(2)}</small>
-                    <br><small>⚠️  Risco c/ 0.01 lote: $${p.risk_001_lot.toFixed(2)} (${p.risk_pct_001.toFixed(1)}%)</small>
+                    <br><small>⚠️  Risco c/ lote mínimo: $${p.risk_001_lot.toFixed(2)} (${p.risk_pct_001.toFixed(1)}%)</small>
+                    <br><small>🎯 Lote sugerido (risco 2%): <b>${p.suggested_lot}</b> lote(s)</small>
+                    <br><small>&nbsp;&nbsp;&nbsp; Risco real: $${p.suggested_risk_usd.toFixed(2)} (${p.suggested_risk_pct.toFixed(1)}%)</small>
                     <br>Margem desejada ($): <input type="number" id="amt-${p.pending_id}" 
                          value="${p.min_lot_margin.toFixed(0)}" 
                          step="1" min="${p.min_lot_margin}">
@@ -80,6 +103,29 @@
                     <button class="btn danger" onclick="reject(${p.pending_id})">❌ Rejeitar</button>
                 </div>
             `).join('');
+        }
+
+        async function fetchHistory() {
+            const r = await fetch(API + '/history');
+            const data = await r.json();
+            const container = document.getElementById('history-container');
+            if (!data || data.length === 0) {
+                container.innerHTML = 'Nenhuma operação ainda.';
+                return;
+            }
+            let html = '<table class="history-table"><tr><th>Data</th><th>Ativo</th><th>Dir</th><th>Resultado</th><th>P&L</th></tr>';
+            data.reverse().forEach(h => {
+                const cls = h.result === 'WIN' ? 'green' : 'red';
+                html += `<tr>
+                    <td>${h.closed_at}</td>
+                    <td>${h.symbol}</td>
+                    <td>${h.dir}</td>
+                    <td class="${cls}">${h.result}</td>
+                    <td class="${cls}">${h.pnl >= 0 ? '+' : ''}$${h.pnl.toFixed(2)}</td>
+                </tr>`;
+            });
+            html += '</table>';
+            container.innerHTML = html;
         }
 
         function copyText(text, btn) {
@@ -108,8 +154,15 @@
             fetchPending();
         }
 
-        setInterval(() => { fetchStatus(); fetchPending(); }, 3000);
-        fetchStatus(); fetchPending();
+        setInterval(() => {
+            fetchStatus();
+            fetchPending();
+            fetchHistory();
+        }, 3000);
+
+        fetchStatus();
+        fetchPending();
+        fetchHistory();
     </script>
 </body>
 </html>
