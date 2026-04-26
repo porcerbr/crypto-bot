@@ -24,7 +24,9 @@ def get_analysis(symbol, timeframe=None):
         # ── Verificação de qualidade ─────────────────────────
         # Último candle completo?
         last_time = df.index[-1]
-        now_utc = datetime.utcnow()
+        now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)   # torna offset-aware
+        if interval == "1h":
+            expected = now_utc.replace(minute=0, second=0, microsecond=0)
         # Para H1, o candle deve ter timestamp anterior à hora cheia atual
         if interval == "1h":
             expected = now_utc.replace(minute=0, second=0, microsecond=0)
