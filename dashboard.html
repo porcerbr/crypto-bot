@@ -17,9 +17,11 @@
         .btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:8px 16px; border-radius:5px; cursor:pointer; margin:3px; }
         .btn.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
         .btn.danger { background:#da3633; border-color:#da3633; color:#fff; }
+        .btn.copy { background:#30363d; border-color:#484f58; color:#c9d1d9; font-size:12px; padding:5px 10px; }
         .flex { display:flex; gap:10px; align-items:center; }
         .metric { font-size:22px; font-weight:bold; }
         input { background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:8px 12px; border-radius:5px; width:80px; }
+        .copied { color:#3fb950; font-size:11px; margin-left:5px; display:none; }
     </style>
 </head>
 <body>
@@ -45,6 +47,7 @@
 
     <script>
         const API = '/api';
+
         async function fetchStatus() {
             const r = await fetch(API + '/status');
             const d = await r.json();
@@ -55,6 +58,7 @@
             document.getElementById('status-badge').className = d.paused ? 'badge paused' : 'badge live';
             document.getElementById('status-badge').innerText = d.paused ? 'PAUSADO' : 'OPERANDO';
         }
+
         async function fetchPending() {
             const r = await fetch(API + '/pending');
             const data = await r.json();
@@ -63,7 +67,9 @@
             container.innerHTML = data.map(p => `
                 <div class="card">
                     <strong>${p.symbol} (${p.name})</strong> - ${p.dir}
-                    <br>Entrada: ${p.entry.toFixed(5)} | SL: ${p.sl.toFixed(5)} | TP: ${p.tp.toFixed(5)}
+                    <br>Entrada: ${p.entry.toFixed(5)} | 
+                    SL: ${p.sl.toFixed(5)} <button class="btn copy" onclick="copyText('${p.sl.toFixed(5)}', this)">📋 Copiar</button><span class="copied">✅ Copiado</span> | 
+                    TP: ${p.tp.toFixed(5)} <button class="btn copy" onclick="copyText('${p.tp.toFixed(5)}', this)">📋 Copiar</button><span class="copied">✅ Copiado</span>
                     <br>Confluência: ${p.score}/${p.max_score} | RR: 1:${p.rr}
                     <br><small>💰 Margem p/ 0.01 lote: $${p.min_lot_margin.toFixed(2)}</small>
                     <br><small>⚠️  Risco c/ 0.01 lote: $${p.risk_001_lot.toFixed(2)} (${p.risk_pct_001.toFixed(1)}%)</small>
@@ -75,6 +81,15 @@
                 </div>
             `).join('');
         }
+
+        function copyText(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const span = btn.nextElementSibling;
+                span.style.display = 'inline';
+                setTimeout(() => { span.style.display = 'none'; }, 1500);
+            });
+        }
+
         async function execute(pid) {
             const amount = document.getElementById('amt-' + pid).value;
             await fetch(API + '/execute', {
@@ -84,6 +99,7 @@
             fetchPending();
             fetchStatus();
         }
+
         async function reject(pid) {
             await fetch(API + '/reject', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -91,6 +107,7 @@
             });
             fetchPending();
         }
+
         setInterval(() => { fetchStatus(); fetchPending(); }, 3000);
         fetchStatus(); fetchPending();
     </script>
