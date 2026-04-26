@@ -93,7 +93,7 @@ def get_analysis(symbol, timeframe=None):
         t_sell = float(lows.tail(5).min())
 
         return {
-            "symbol": symbol,          # mantemos o símbolo original para exibição
+            "symbol": symbol,
             "name": asset_name(symbol),
             "price": price,
             "cenario": cen,
@@ -105,14 +105,14 @@ def get_analysis(symbol, timeframe=None):
             "ema200": float(ema200),
             "upper": float(upper),
             "lower": float(lower),
-            "macd_bull": macd_bull,
-            "macd_bear": macd_bear,
-            "macd_hist": macd_hist,
+            "macd_bull": bool(macd_bull),      # <-- Conversão explícita
+            "macd_bear": bool(macd_bear),      # <--
+            "macd_hist": float(macd_hist),
             "t_buy": t_buy,
             "t_sell": t_sell,
             "change_pct": round(chg, 2),
-            "candle_bull": candle_bull,
-            "candle_bear": candle_bear,
+            "candle_bull": bool(candle_bull),  # <--
+            "candle_bear": bool(candle_bear),  # <--
         }
     except Exception as e:
         log(f"[ANÁLISE] Erro {symbol} ({yf_symbol}): {e}")
