@@ -195,6 +195,7 @@ def _calc_indicators(df):
         "macd_hist": float(macd_hist), "change_pct": round(chg, 2),
         "candle_bull": bool(candle_bull), "candle_bear": bool(candle_bear),
         "t_buy": t_buy, "t_sell": t_sell,
+        "cenario": cen,
     }
 
 def get_analysis(symbol, timeframe=None):
@@ -217,6 +218,7 @@ def get_analysis(symbol, timeframe=None):
                 log(f"[ANÁLISE] {symbol}: último candle ainda não fechado, ignorando.")
                 return None
 
+        # ── NOVO: ATR anômalo mais agressivo ─────────────────────────
         tr_temp = pd.concat([
             df["High"] - df["Low"],
             (df["High"] - df["Close"].shift()).abs(),
@@ -224,8 +226,17 @@ def get_analysis(symbol, timeframe=None):
         ], axis=1).max(axis=1)
         atr_temp = tr_temp.rolling(14).mean().iloc[-1]
         last_range = df["High"].iloc[-1] - df["Low"].iloc[-1]
-        if atr_temp > 0 and last_range > 3 * atr_temp:
-            log(f"[ANÁLISE] {symbol}: candle anômalo (range > 3x ATR), ignorando.")
+
+        # Usa o multiplicador da config (padrão 2.5, mais agressivo que 3.0)
+        atr_mult = getattr(Config, 'ATR_ANOMALY_MULT', 2.5)
+        if atr_temp > 0 and last_range > atr_mult * atr_temp:
+            log(f"[ANÁLISE] {symbol}: candle anômalo (range > {atr_mult}x ATR), ignorando.")
+            return None
+
+        # ── NOVO: Rejeita candle com body muito pequeno (indecisão) ─
+        last_body = abs(df["Close"].iloc[-1] - df["Open"].iloc[-1])
+        if atr_temp > 0 and last_body < 0.1 * atr_temp:
+            log(f"[ANÁLISE] {symbol}: candle de indecisão (body < 10% ATR), ignorando.")
             return None
 
         indicators = _calc_indicators(df)
@@ -280,4 +291,3 @@ def get_multi_timeframe(symbol):
         log(f"[MTF] Erro H4 {symbol}: {e}")
 
     return mtf
-                    
