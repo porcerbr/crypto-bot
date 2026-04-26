@@ -40,9 +40,6 @@ class TradingBot:
         return sum(t.get("margin_required", 0) for t in self.active_trades)
 
     def _check_margin_safety(self, additional_margin):
-        """
-        Verifica Margin Call 100% e Stop Out 30% da Tickmill.
-        """
         used = self._get_used_margin()
         total_required = used + additional_margin
         free_margin = self.balance - total_required
@@ -65,6 +62,35 @@ class TradingBot:
         except Exception as e:
             log(f"[USDJPY] Erro ao atualizar: {e}")
 
+    # ── NOVO: Filtro de correlação (regra 3-5-7) ──────────────────────
+    def check_correlation_exposure(self, symbol, additional_risk_usd=0.0):
+        """
+        Verifica se adicionar 'symbol' ultrapassa o limite de risco
+        correlacionado (MAX_CORRELATED_RISK_PCT).
+        """
+        for group_name, symbols in Config.CORRELATION_GROUPS.items():
+            if symbol not in symbols:
+                continue
+
+            total_risk_usd = 0.0
+            for t in self.active_trades:
+                if t["symbol"] in symbols:
+                    dist = abs(t["entry"] - t["sl"])
+                    cs = contract_size_for(t["symbol"])
+                    risk = t["lot"] * dist * cs
+                    # Estimativa JPY → USD (USDJPY ~150)
+                    if is_jpy_pair(t["symbol"]):
+                        risk = risk / 150.0
+                    total_risk_usd += risk
+
+            total_risk_usd += additional_risk_usd
+
+            if self.balance > 0:
+                corr_pct = (total_risk_usd / self.balance) * 100
+                if corr_pct >= Config.MAX_CORRELATED_RISK_PCT:
+                    return False, f"{group_name} {corr_pct:.1f}%"
+        return True, ""
+
     def add_pending(self, pend):
         self.pending_trades.append(pend)
         self.send_pending_notification(pend)
@@ -75,13 +101,18 @@ class TradingBot:
         if not pend:
             return False, "Sinal não encontrado"
 
+        # ── Verificação de correlação na execução ─────────────────────
+        est_risk = pend.get("suggested_risk_usd", 0)
+        ok_corr, msg_corr = self.check_correlation_exposure(pend["symbol"], est_risk)
+        if not ok_corr:
+            return False, f"Correlação: {msg_corr}"
+
         plan = calc_trade_plan(pend["symbol"], pend["entry"], self.leverage, self.balance, margin_usd)
         if not plan["ok"]:
             return False, plan["error"]
         if plan["margin_required"] > self.balance * 0.8:
             return False, "Margem excede 80% do saldo"
 
-        # CORREÇÃO: verifica margem livre (Margin Call / Stop Out Tickmill)
         ok, msg = self._check_margin_safety(plan["margin_required"])
         if not ok:
             return False, msg
@@ -129,7 +160,6 @@ class TradingBot:
                 entry = t["entry"]
                 direction = t["dir"]
 
-                # Trailing Stop
                 if Config.TRAILING_ACTIVATION > 0 and not t.get("trailing_activated", False):
                     if direction == "BUY":
                         progress = (cur - entry) / (tp - entry) if tp != entry else 0
@@ -152,7 +182,6 @@ class TradingBot:
                             t["sl"] = round(new_sl, 5)
                             self.send(f"🔁 Trailing Stop ajustado: {fmt(new_sl)}")
 
-                # Verificar TP/SL
                 if direction == "BUY":
                     if cur <= t["sl"] or cur >= tp:
                         self.close_trade(t, cur, "WIN" if cur >= tp else "LOSS")
@@ -169,13 +198,11 @@ class TradingBot:
         symbol = trade["symbol"]
         cs = contract_size_for(symbol)
 
-        # Cálculo bruto na moeda de cotação
         if trade["dir"] == "BUY":
             profit_raw = (exit_price - entry) * cs * lot - trade.get("commission", 0)
         else:
             profit_raw = (entry - exit_price) * cs * lot - trade.get("commission", 0)
 
-        # CORREÇÃO: converte JPY para USD
         if is_jpy_pair(symbol):
             if self._usdjpy_price <= 0:
                 self._update_usdjpy()
@@ -235,7 +262,7 @@ class TradingBot:
             f"------------------------------\n"
             f"💰 Margem p/ 0.01 lote: ${pend['min_lot_margin']:.2f}\n"
             f"⚠️  Risco c/ lote mínimo: ${pend['risk_001_lot']:.2f} ({pend['risk_pct_001']:.1f}%)\n"
-            f"🎯 Lote sugerido (risco 2%): {pend['suggested_lot']} lote(s)\n"
+            f"🎯 Lote sugerido (risco {Config.ATR_RISK_PCT}%): {pend['suggested_lot']} lote(s)\n"
             f"   → Risco real: ${pend['suggested_risk_usd']:.2f} ({pend['suggested_risk_pct']:.1f}%)\n"
             f"------------------------------\n"
             f"{checks_str}\n"
