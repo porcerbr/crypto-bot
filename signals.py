@@ -1,7 +1,8 @@
 import time
+import random
 from datetime import datetime
 from config import Config
-from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair
+from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair, is_good_session
 from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
@@ -35,6 +36,10 @@ def _is_safe_to_trade(bot, symbol):
     cooldown = get_dynamic_cooldown(bot.balance)
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
+
+    # 5. Filtro de sessão — só opera na janela de liquidez do par
+    if not is_good_session(symbol):
+        return False, "Fora da sessão principal"
 
     return True, ""
 
@@ -219,6 +224,7 @@ def scan(bot):
         return
 
     symbols = list(Config.FXGOLD_ASSETS.keys())
+    random.shuffle(symbols)  # evita viés para o mesmo par toda vez
 
     for sym in symbols:
         # Verificações de segurança
@@ -311,6 +317,7 @@ def scan(bot):
             "suggested_risk_usd": suggested_risk_usd,
             "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
+            "created_ts": time.time(),   # timestamp Unix para controle de expiração
             "atr": atr,
             "mtf_aligned": mtf.get("aligned", False),
             "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
