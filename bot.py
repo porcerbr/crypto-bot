@@ -317,6 +317,7 @@ class TradingBot:
             pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
             "SL: " + fmt(pend["sl"]) + " (" + str(pend["sl_pct"]) + "%) | TP: " + fmt(pend["tp"]) + " (+" + str(pend["tp_pct"]) + "%)",
             "RR: 1:" + str(pend["rr"]) + " | Score: " + str(pend["score"]) + "/" + str(pend["max_score"]),
+            "🤖 IA: " + pend.get("ai_reason", "—"),
             "------------------------------",
             "Margem p/ 0.01 lote: $" + str(round(pend["min_lot_margin"], 2)),
             "Risco c/ lote minimo: $" + str(round(pend["risk_001_lot"], 2)) + " (" + str(round(pend["risk_pct_001"], 1)) + "%)",
