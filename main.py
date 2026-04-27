@@ -135,11 +135,11 @@ def send_error_notification(bot, error_msg, traceback_str=""):
 def bot_loop(bot):
     last_heartbeat = 0
     last_daily_report = None
+    last_weekly_learning  = 0   # controla aprendizado semanal (Sonnet)
+    last_monthly_analysis = 0   # controla análise estratégica mensal (Opus)
 
     while True:
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-
+        now = datetime.utcnow()
 
         # ── HEARTBEAT ──────────────────────────────────────────────
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
@@ -156,6 +156,50 @@ def bot_loop(bot):
                 last_daily_report = now.date()
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
+
+        # ── APRENDIZADO SEMANAL (Sonnet) ───────────────────────────
+        WEEK_SECS = 7 * 24 * 3600
+        if time.time() - last_weekly_learning >= WEEK_SECS:
+            try:
+                from ai_validator import weekly_learning
+                result = weekly_learning(bot)
+                if result:
+                    bot.send(
+                        f"🧠 APRENDIZADO SEMANAL (Sonnet)\n"
+                        f"——————————————————\n"
+                        f"{result.get('last_suggestion', '')}\n\n"
+                        f"Min confluence: {result['min_confluence']} | "
+                        f"Min ADX: {result['min_adx']} | "
+                        f"Min RR: {result['min_rr']}\n"
+                        f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
+                    )
+                last_weekly_learning = time.time()
+            except Exception as e:
+                log(f"[SONNET] Erro no aprendizado semanal: {e}")
+
+        # ── ANÁLISE ESTRATÉGICA MENSAL (Opus) ─────────────────────
+        MONTH_SECS = 30 * 24 * 3600
+        if time.time() - last_monthly_analysis >= MONTH_SECS:
+            try:
+                from ai_validator import monthly_deep_analysis
+                result = monthly_deep_analysis(bot)
+                if result:
+                    regime_pairs = result.get("regime_pairs", {})
+                    regime_txt   = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
+                    avoid_hours  = result.get("avoid_hours_utc", [])
+                    bot.send(
+                        f"🔮 ANÁLISE ESTRATÉGICA MENSAL (Opus)\n"
+                        f"——————————————————\n"
+                        f"{result.get('opus_summary', '')}\n\n"
+                        f"Regime geral: {result.get('market_regime','?').upper()}\n"
+                        f"Viés: {result.get('strategy_bias','?').upper()}\n"
+                        f"Sessões favoritas: {', '.join(result.get('favored_sessions', [])) or '—'}\n"
+                        f"Horas a evitar (UTC): {avoid_hours or 'nenhuma'}\n\n"
+                        f"Regime por par:\n{regime_txt}"
+                    )
+                last_monthly_analysis = time.time()
+            except Exception as e:
+                log(f"[OPUS] Erro na análise mensal: {e}")
 
         # ── LOOP PRINCIPAL ─────────────────────────────────────────
         if not bot.is_paused():
@@ -197,12 +241,6 @@ def main():
 
     # Carrega estado salvo
     state_loaded = load_state(bot)
-
-    # ── NOVO: define apenas os símbolos que o bot pode operar ──
-    from analysis import set_active_symbols
-    from utils import get_allowed_symbols
-    set_active_symbols(get_allowed_symbols(bot.balance))
-    # ───────────────────────────────────────────────────────────
 
     # Notificação de inicialização
     if STARTUP_NOTIFICATION:
