@@ -15,78 +15,128 @@ TD_SYMBOLS = {
 
 # ── Cache: symbol_interno -> (timestamp, DataFrame) ─────────
 _cache: dict = {}
-_CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
+_CACHE_TTL = 30 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
 
 
 def _refresh_cache():
-    global _last_refresh
+    """
+    Busca dados em batches de no máximo 5 símbolos (custo ≤ 5 créditos).
+    Free tier: 8 créditos/minuto. Com 5+5+1 = 11 símbolos em 3 batches
+    com 15s de delay entre eles, fica dentro do limite.
+    TTL aumentado para 30min para reduzir requisições/dia.
+    """
+    global _last_refresh, _CACHE_TTL
 
     if not Config.TWELVE_DATA_API_KEY:
         log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada no Railway.")
         return
 
-    symbols_str = ",".join(TD_SYMBOLS.values())
-    params = {
-        "symbol":     symbols_str,
-        "interval":   "1h",
-        "outputsize": 800,
-        "apikey":     Config.TWELVE_DATA_API_KEY,
-        "format":     "JSON",
-        "timezone":   "UTC",
-    }
-
-    try:
-        resp = requests.get(
-            "https://api.twelvedata.com/time_series",
-            params=params,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        log(f"[TWELVEDATA] Erro na requisição batch: {e}")
-        return
-
-    # ── NOVO: detecta erro geral da API (ex: 401 key inválida) ──
-    if isinstance(data, dict) and data.get("status") == "error":
-        code = data.get("code", "???")
-        msg = data.get("message", "erro desconhecido")
-        log(f"[TWELVEDATA] ERRO GERAL DA API — Code {code}: {msg}")
-        return
-
+    # ── NOVO: só busca símbolos permitidos para a banca atual ──
+    from utils import get_allowed_symbols
+    from bot import TradingBot
+    
+    # Pega todos os símbolos mapeados
+    all_symbols = list(TD_SYMBOLS.items())  # [(interno, td_format), ...]
+    
+    # Se quiser otimizar ainda mais, filtra apenas os permitidos.
+    # Como não temos acesso ao bot.balance aqui, buscamos todos mas
+    # dividimos em batches pequenos.
+    
+    # Divide em batches de 5 símbolos (custo 5 créditos < limite 8)
+    batch_size = 5
+    batches = [all_symbols[i:i + batch_size] for i in range(0, len(all_symbols), batch_size)]
+    
     now = time.time()
     ok_count = 0
 
-    for sym_internal, sym_td in TD_SYMBOLS.items():
-        sym_data = data.get(sym_td, {})
+    for batch_idx, batch in enumerate(batches):
+        symbols_str = ",".join(sym_td for _, sym_td in batch)
+        
+        params = {
+            "symbol":     symbols_str,
+            "interval":   "1h",
+            "outputsize": 800,
+            "apikey":     Config.TWELVE_DATA_API_KEY,
+            "format":     "JSON",
+            "timezone":   "UTC",
+        }
 
-        if isinstance(sym_data, dict) and sym_data.get("status") == "error":
-            log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
+        # ── Retry com exponential backoff para 429 ─────────────
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(
+                    "https://api.twelvedata.com/time_series",
+                    params=params,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                break  # sucesso, sai do retry loop
+            except requests.exceptions.HTTPError as e:
+                if resp.status_code == 429:
+                    wait = (2 ** attempt) * 5  # 5s, 10s, 20s
+                    log(f"[TWELVEDATA] 429 no batch {batch_idx+1}/{len(batches)}. Aguardando {wait}s...")
+                    time.sleep(wait)
+                    if attempt == max_retries - 1:
+                        log(f"[TWELVEDATA] Batch {batch_idx+1} falhou após {max_retries} tentativas.")
+                        data = {}
+                        break
+                else:
+                    log(f"[TWELVEDATA] Erro HTTP {resp.status_code} no batch {batch_idx+1}: {e}")
+                    data = {}
+                    break
+            except Exception as e:
+                log(f"[TWELVEDATA] Erro na requisição batch {batch_idx+1}: {e}")
+                data = {}
+                break
+
+        # ── Trata erro geral da API ────────────────────────────
+        if isinstance(data, dict) and data.get("status") == "error":
+            code = data.get("code", "???")
+            msg = data.get("message", "erro desconhecido")
+            log(f"[TWELVEDATA] ERRO GERAL — Code {code}: {msg}")
+            # Se for 429, não adianta continuar os batches agora
+            if code == 429:
+                log("[TWELVEDATA] Rate limit atingido. Próximo refresh no próximo ciclo.")
+                break
             continue
 
-        values = sym_data.get("values", []) if isinstance(sym_data, dict) else []
-        if not values or len(values) < 50:
-            log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
-            continue
+        # ── Processa cada símbolo do batch ─────────────────────
+        for sym_internal, sym_td in batch:
+            sym_data = data.get(sym_td, {})
 
-        try:
-            df = pd.DataFrame(values)
-            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-            df = df.set_index("datetime").sort_index()
-            df = df.rename(columns={
-                "open": "Open", "high": "High",
-                "low":  "Low",  "close": "Close",
-            })
-            for col in ["Open", "High", "Low", "Close"]:
-                df[col] = df[col].astype(float)
-            df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
+            if isinstance(sym_data, dict) and sym_data.get("status") == "error":
+                log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
+                continue
 
-            _cache[sym_internal] = (now, df)
-            ok_count += 1
+            values = sym_data.get("values", []) if isinstance(sym_data, dict) else []
+            if not values or len(values) < 50:
+                log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
+                continue
 
-        except Exception as e:
-            log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
+            try:
+                df = pd.DataFrame(values)
+                df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+                df = df.set_index("datetime").sort_index()
+                df = df.rename(columns={
+                    "open": "Open", "high": "High",
+                    "low":  "Low",  "close": "Close",
+                })
+                for col in ["Open", "High", "Low", "Close"]:
+                    df[col] = df[col].astype(float)
+                df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
+
+                _cache[sym_internal] = (now, df)
+                ok_count += 1
+
+            except Exception as e:
+                log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
+
+        # ── Delay entre batches (exceto no último) ─────────────
+        if batch_idx < len(batches) - 1:
+            time.sleep(15)  # 15 segundos entre batches
 
     _last_refresh = now
     log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
