@@ -137,7 +137,9 @@ def bot_loop(bot):
     last_daily_report = None
 
     while True:
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+
 
         # ── HEARTBEAT ──────────────────────────────────────────────
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
