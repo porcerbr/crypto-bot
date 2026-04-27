@@ -133,3 +133,54 @@ def is_symbol_allowed(symbol, balance):
     """Verifica se o símbolo é permitido para o capital atual."""
     allowed = get_allowed_symbols(balance)
     return symbol in allowed
+
+
+# ═══════════════════════════════════════════════════════════
+# FILTRO DE SESSÃO
+# ═══════════════════════════════════════════════════════════
+# Cada par tem liquidez máxima em janelas específicas.
+# Sinais fora da sessão principal têm WR significativamente menor.
+#
+#   London:      07–16 UTC
+#   New York:    12–21 UTC
+#   Overlap:     12–16 UTC  (maior volume, melhor para EUR/GBP)
+#   Ásia:        00–09 UTC  (melhor para JPY, AUD, NZD)
+#
+# Formato: lista de (hora_inicio, hora_fim) em UTC.
+# Para janelas que cruzam meia-noite, usa dois intervalos.
+
+_SESSION_WINDOWS: dict[str, list[tuple[int, int]]] = {
+    "EURUSD": [(7, 20)],          # Londres + NY
+    "GBPUSD": [(7, 20)],          # Londres + NY
+    "EURGBP": [(7, 18)],          # Principalmente Londres
+    "EURJPY": [(7, 20)],          # Londres + NY
+    "GBPJPY": [(7, 20)],          # Londres + NY
+    "USDJPY": [(0, 9), (12, 16)], # Ásia + overlap London-NY
+    "USDCAD": [(12, 21)],         # NY (dados canadenses saem 13-15 UTC)
+    "USDCHF": [(7, 20)],          # Londres + NY
+    "AUDUSD": [(22, 24), (0, 14)],# Sydney + Ásia + Londres
+    "NZDUSD": [(21, 24), (0, 13)],# Sydney + Ásia + início Londres
+    "XAUUSD": [(7, 21)],          # Londres + NY (ouro segue ambas)
+}
+
+
+def is_good_session(symbol: str) -> bool:
+    """
+    Retorna True se o horário atual (UTC) está dentro da janela
+    de liquidez principal do par.
+    Fora da sessão, a probabilidade de fake breakouts aumenta.
+    """
+    windows = _SESSION_WINDOWS.get(symbol)
+    if not windows:
+        return True  # símbolo desconhecido: não bloqueia
+
+    hour = datetime.utcnow().hour
+    for start, end in windows:
+        if start < end:
+            if start <= hour < end:
+                return True
+        else:
+            # intervalo que cruza meia-noite (ex: 22-24 não existe, usamos 22-0)
+            if hour >= start or hour < end:
+                return True
+    return False
