@@ -15,56 +15,66 @@ TD_SYMBOLS = {
 
 # ── Cache: symbol_interno -> (timestamp, DataFrame) ─────────
 _cache: dict = {}
-_CACHE_TTL = 30 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
+_CACHE_TTL = 30 * 60   # 30 min → ~48 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
+_active_symbols: set = set()  # NOVO: só busca estes símbolos (se vazio, busca todos)
+
+
+def set_active_symbols(symbols):
+    """Define quais símbolos o bot deve buscar na API. Se vazio, busca todos."""
+    global _active_symbols
+    _active_symbols = set(symbols) & set(TD_SYMBOLS.keys())
+    log(f"[TWELVEDATA] Símbolos ativos definidos: {sorted(_active_symbols) if _active_symbols else 'TODOS'}")
 
 
 def _refresh_cache():
     """
-    Busca dados em batches de no máximo 5 símbolos (custo ≤ 5 créditos).
-    Free tier: 8 créditos/minuto. Com 5+5+1 = 11 símbolos em 3 batches
-    com 15s de delay entre eles, fica dentro do limite.
-    TTL aumentado para 30min para reduzir requisições/dia.
+    Busca dados em batches de no máximo 3 símbolos.
+    Free tier: 8 créditos/minuto. Com delay de 65s entre batches,
+    nunca ultrapassamos o limite, mesmo com retries.
+    Com TTL de 30 min: ~48 refreshes/dia, dentro do free tier de 800/dia.
     """
-    global _last_refresh, _CACHE_TTL
+    global _last_refresh
 
     if not Config.TWELVE_DATA_API_KEY:
         log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada no Railway.")
         return
 
-    # ── NOVO: só busca símbolos permitidos para a banca atual ──
-    from utils import get_allowed_symbols
-    from bot import TradingBot
-    
-    # Pega todos os símbolos mapeados
-    all_symbols = list(TD_SYMBOLS.items())  # [(interno, td_format), ...]
-    
-    # Se quiser otimizar ainda mais, filtra apenas os permitidos.
-    # Como não temos acesso ao bot.balance aqui, buscamos todos mas
-    # dividimos em batches pequenos.
-    
-    # Divide em batches de 5 símbolos (custo 5 créditos < limite 8)
-    batch_size = 5
-    batches = [all_symbols[i:i + batch_size] for i in range(0, len(all_symbols), batch_size)]
-    
+    # ── NOVO: usa apenas símbolos ativos (economiza créditos) ──
+    if _active_symbols:
+        symbols_to_fetch = {k: v for k, v in TD_SYMBOLS.items() if k in _active_symbols}
+    else:
+        symbols_to_fetch = TD_SYMBOLS
+
+    if not symbols_to_fetch:
+        log("[TWELVEDATA] Nenhum símbolo ativo para buscar.")
+        return
+
+    all_items = list(symbols_to_fetch.items())
+    batch_size = 3  # máximo 3 créditos por requisição (limite é 8/min)
+    batches = [all_items[i:i + batch_size] for i in range(0, len(all_items), batch_size)]
+
     now = time.time()
     ok_count = 0
+    hit_429 = False
 
     for batch_idx, batch in enumerate(batches):
+        if hit_429:
+            break
+
         symbols_str = ",".join(sym_td for _, sym_td in batch)
-        
         params = {
             "symbol":     symbols_str,
             "interval":   "1h",
-            "outputsize": 800,
+            "outputsize": 800,     # ~33 dias H1 — EMA200 bem convergida
             "apikey":     Config.TWELVE_DATA_API_KEY,
             "format":     "JSON",
             "timezone":   "UTC",
         }
 
-        # ── Retry com exponential backoff para 429 ─────────────
-        max_retries = 3
-        for attempt in range(max_retries):
+        # ── Retry com exponential backoff ──────────────────────
+        data = {}
+        for attempt in range(3):
             try:
                 resp = requests.get(
                     "https://api.twelvedata.com/time_series",
@@ -73,32 +83,30 @@ def _refresh_cache():
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                break  # sucesso, sai do retry loop
+                break
             except requests.exceptions.HTTPError as e:
                 if resp.status_code == 429:
-                    wait = (2 ** attempt) * 5  # 5s, 10s, 20s
+                    wait = (2 ** attempt) * 10  # 10s, 20s, 40s
                     log(f"[TWELVEDATA] 429 no batch {batch_idx+1}/{len(batches)}. Aguardando {wait}s...")
                     time.sleep(wait)
-                    if attempt == max_retries - 1:
-                        log(f"[TWELVEDATA] Batch {batch_idx+1} falhou após {max_retries} tentativas.")
-                        data = {}
-                        break
+                    if attempt == 2:
+                        log(f"[TWELVEDATA] Batch {batch_idx+1} abandonado após 3 retries.")
+                        hit_429 = True
                 else:
-                    log(f"[TWELVEDATA] Erro HTTP {resp.status_code} no batch {batch_idx+1}: {e}")
-                    data = {}
+                    log(f"[TWELVEDATA] Erro HTTP {resp.status_code}: {e}")
                     break
             except Exception as e:
                 log(f"[TWELVEDATA] Erro na requisição batch {batch_idx+1}: {e}")
-                data = {}
                 break
 
         # ── Trata erro geral da API ────────────────────────────
         if isinstance(data, dict) and data.get("status") == "error":
             code = data.get("code", "???")
             msg = data.get("message", "erro desconhecido")
-            log(f"[TWELVEDATA] ERRO GERAL — Code {code}: {msg}")
-            # Se for 429, não adianta continuar os batches agora
+            log(f"[TWELVEDATA] ERRO GERAL DA API — Code {code}: {msg}")
             if code == 429:
+                hit_429 = True
+                _last_refresh = now  # evita refresh imediato
                 log("[TWELVEDATA] Rate limit atingido. Próximo refresh no próximo ciclo.")
                 break
             continue
@@ -134,13 +142,14 @@ def _refresh_cache():
             except Exception as e:
                 log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
 
-        # ── Delay entre batches (exceto no último) ─────────────
-        if batch_idx < len(batches) - 1:
-            time.sleep(15)  # 15 segundos entre batches
+        # ── NOVO: espera 65s entre batches (respeita limite/min) ─
+        if batch_idx < len(batches) - 1 and not hit_429:
+            time.sleep(65)
 
     _last_refresh = now
-    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
-    
+    total = len(symbols_to_fetch)
+    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{total} pares OK")
+
 
 def _get_df(symbol: str):
     """
