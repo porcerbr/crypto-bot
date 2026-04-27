@@ -20,11 +20,6 @@ _last_refresh: float = 0.0
 
 
 def _refresh_cache():
-    """
-    Busca todos os 11 pares em UMA chamada batch.
-    Custo: 11 créditos por refresh.
-    Com TTL de 20 min: ~72 refreshes/dia, dentro do free tier de 800/dia.
-    """
     global _last_refresh
 
     if not Config.TWELVE_DATA_API_KEY:
@@ -35,7 +30,7 @@ def _refresh_cache():
     params = {
         "symbol":     symbols_str,
         "interval":   "1h",
-        "outputsize": 800,     # ~33 dias H1 — EMA200 bem convergida
+        "outputsize": 800,
         "apikey":     Config.TWELVE_DATA_API_KEY,
         "format":     "JSON",
         "timezone":   "UTC",
@@ -53,17 +48,24 @@ def _refresh_cache():
         log(f"[TWELVEDATA] Erro na requisição batch: {e}")
         return
 
+    # ── NOVO: detecta erro geral da API (ex: 401 key inválida) ──
+    if isinstance(data, dict) and data.get("status") == "error":
+        code = data.get("code", "???")
+        msg = data.get("message", "erro desconhecido")
+        log(f"[TWELVEDATA] ERRO GERAL DA API — Code {code}: {msg}")
+        return
+
     now = time.time()
     ok_count = 0
 
     for sym_internal, sym_td in TD_SYMBOLS.items():
         sym_data = data.get(sym_td, {})
 
-        if sym_data.get("status") == "error":
+        if isinstance(sym_data, dict) and sym_data.get("status") == "error":
             log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
             continue
 
-        values = sym_data.get("values", [])
+        values = sym_data.get("values", []) if isinstance(sym_data, dict) else []
         if not values or len(values) < 50:
             log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
             continue
@@ -88,7 +90,7 @@ def _refresh_cache():
 
     _last_refresh = now
     log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
-
+    
 
 def _get_df(symbol: str):
     """
