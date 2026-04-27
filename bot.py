@@ -172,6 +172,29 @@ class TradingBot:
             return True
         return False
 
+    def expire_pending_signals(self, max_age_seconds: int = 7200):
+        """
+        Remove sinais pendentes mais antigos que max_age_seconds (padrão: 2h).
+        Sinais H1 gerados há mais de 2h são baseados em contexto de mercado
+        desatualizado — manter aumenta o risco de entrar em momento errado.
+        """
+        now = time.time()
+        expired = [
+            p for p in self.pending_trades
+            if now - p.get("created_ts", now) > max_age_seconds
+        ]
+        for p in expired:
+            self.pending_trades.remove(p)
+            msg = (
+                f"⏱ Sinal expirado — {p['symbol']} {p['dir']}\n"
+                f"Gerado às {p['created_at']} | Expirado após {max_age_seconds // 60}min\n"
+                f"Entrada era: {fmt(p['entry'])}"
+            )
+            self.send(msg)
+            log(f"[EXPIRY] Sinal {p['pending_id']} ({p['symbol']}) expirado")
+        if expired:
+            save_state(self)
+
     def monitor_trades(self):
         for t in self.active_trades[:]:
             try:
