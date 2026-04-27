@@ -158,6 +158,7 @@ def bot_loop(bot):
         # ── LOOP PRINCIPAL ─────────────────────────────────────────
         if not bot.is_paused():
             try:
+                bot.expire_pending_signals(max_age_seconds=7200)  # expira sinais com +2h
                 scan(bot)
                 bot.monitor_trades()
             except Exception as e:
@@ -189,7 +190,7 @@ def bot_loop(bot):
 
 
 def main():
-    log("Iniciando Sniper Bot v2 (Yahoo Finance, Forex+Ouro H1)")
+    log("Iniciando Sniper Bot v2 (Twelve Data, Forex+Ouro H1)")
     bot = TradingBot()
 
     # Carrega estado salvo
