@@ -4,10 +4,15 @@ class Config:
     BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAFz3nzC0BJ7Fp7YKwDBIv_HiBX5Sg04TLg")
     CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
 
-    # ── Twelve Data (substitui yfinance) ─────────────────────
-    # Crie sua chave grátis em: https://twelvedata.com/
-    # Adicione no Railway em: Variables → TWELVE_DATA_API_KEY
+    # ── Twelve Data ───────────────────────────────────────────
+    # Chave grátis em: https://twelvedata.com/
+    # Railway → Variables → TWELVE_DATA_API_KEY
     TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+
+    # ── Google Gemini (IA de validação e aprendizado — GRÁTIS) ───
+    # Chave grátis em: https://aistudio.google.com/apikey
+    # Railway → Variables → GEMINI_API_KEY
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
     MODE = "FXGOLD"
     TIMEFRAME = "1h"
@@ -52,7 +57,7 @@ class Config:
     ATR_SL_MULT = 1.5
     ATR_TP_MULT = 2.5
 
-    MIN_CONFLUENCE = 7  # era 6 — aumentado após correção do FVG e candle de força
+    MIN_CONFLUENCE = 6
 
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "150"))
     RISK_PERCENT_PER_TRADE = 2.0
@@ -69,7 +74,7 @@ class Config:
 
     MAX_TRADES = 3
     ASSET_COOLDOWN = 3600
-    SCAN_INTERVAL = 60      # Scans a cada 60s, mas dados só atualizam a cada 20min (cache)
+    SCAN_INTERVAL = 60
     PAUSE_DURATION = 3600
     MAX_CONSECUTIVE_LOSSES = 3
 
@@ -77,7 +82,7 @@ class Config:
     STOP_OUT_PCT = 30.0
 
     TIMEFRAMES = {
-        "1h": ("90d", "1h"),   # 90d → ~900 candles H1, garante EMA200 convergida
+        "1h": ("60d", "1h"),
         "4h": ("120d", "1h"),
     }
 
@@ -98,7 +103,19 @@ class Config:
     }
     MIN_LOT = 0.01
 
-    # Mapeamento Twelve Data: definido em analysis.py (TD_SYMBOLS)
+    YAHOO_SYMBOLS = {
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X",
+        "USDJPY": "USDJPY=X",
+        "AUDUSD": "AUDUSD=X",
+        "USDCAD": "USDCAD=X",
+        "USDCHF": "USDCHF=X",
+        "NZDUSD": "NZDUSD=X",
+        "EURGBP": "EURGBP=X",
+        "EURJPY": "EURJPY=X",
+        "GBPJPY": "GBPJPY=X",
+        "XAUUSD": "XAUUSD=X",
+    }
 
     TRAILING_ACTIVATION = 0.5
     ATR_MULT_TRAIL = 1.5
