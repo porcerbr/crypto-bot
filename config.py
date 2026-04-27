@@ -7,7 +7,7 @@ class Config:
     # ── Twelve Data (substitui yfinance) ─────────────────────
     # Crie sua chave grátis em: https://twelvedata.com/
     # Adicione no Railway em: Variables → TWELVE_DATA_API_KEY
-    TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "b0c5b7aa2b1e430b83d14c4fe0db3cfd")
+    TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 
     MODE = "FXGOLD"
     TIMEFRAME = "1h"
