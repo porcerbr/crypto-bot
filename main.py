@@ -196,6 +196,12 @@ def main():
     # Carrega estado salvo
     state_loaded = load_state(bot)
 
+    # ── NOVO: define apenas os símbolos que o bot pode operar ──
+    from analysis import set_active_symbols
+    from utils import get_allowed_symbols
+    set_active_symbols(get_allowed_symbols(bot.balance))
+    # ───────────────────────────────────────────────────────────
+
     # Notificação de inicialização
     if STARTUP_NOTIFICATION:
         try:
