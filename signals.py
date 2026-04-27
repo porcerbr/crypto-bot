@@ -41,6 +41,12 @@ def _is_safe_to_trade(bot, symbol):
     if not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
+    # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
+    from ai_validator import load_ai_params
+    avoid_hours = load_ai_params().get("avoid_hours_utc", [])
+    if avoid_hours and datetime.utcnow().hour in avoid_hours:
+        return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
+
     return True, ""
 
 
@@ -291,9 +297,31 @@ def scan(bot):
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
             continue
 
-        # Validação de segurança: RR mínimo 1:1.5
-        if rr < 1.5:
-            log(f"[RR] {sym}: R:R {rr} muito baixo, descartado")
+        # Validação de segurança: RR mínimo dinâmico (padrão 1.5, ajustável pela IA)
+        from ai_validator import load_ai_params, validate_signal
+        ai_params  = load_ai_params()
+        min_rr     = ai_params.get("min_rr", 1.5)
+
+        # Ajuste de confluência pelo viés estratégico do Opus
+        base_conf  = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
+        bias       = ai_params.get("strategy_bias", "balanced")
+        if bias == "conservative":
+            effective_min_conf = base_conf + 1    # mais restritivo
+        elif bias == "aggressive":
+            effective_min_conf = max(base_conf - 1, 6)  # mais permissivo (mín 6)
+        else:
+            effective_min_conf = base_conf
+
+        if sc < effective_min_conf:
+            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} (bias={bias}), descartado")
+            continue
+        if rr < min_rr:
+            log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
+            continue
+
+        # Pares bloqueados pela IA (baseado em aprendizado)
+        if sym in ai_params.get("blocked_pairs", []):
+            log(f"[AI] {sym} bloqueado por aprendizado — WR histórico muito baixo")
             continue
 
         pend = {
@@ -317,12 +345,22 @@ def scan(bot):
             "suggested_risk_usd": suggested_risk_usd,
             "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
-            "created_ts": time.time(),   # timestamp Unix para controle de expiração
+            "created_ts": time.time(),
             "atr": atr,
             "mtf_aligned": mtf.get("aligned", False),
             "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
             "sl_source": sl_src,
             "tp_source": tp_src,
         }
+
+        # ── Validação por IA ─────────────────────────────────────────
+        # Claude avalia o contexto completo antes de enviar ao Telegram
+        approved, ai_reason = validate_signal(pend, mtf, bot)
+        if not approved:
+            log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
+            bot.next_pending_id()  # descarta o ID reservado
+            continue
+
+        pend["ai_reason"] = ai_reason  # salva o motivo para exibição
         bot.add_pending(pend)
         break
