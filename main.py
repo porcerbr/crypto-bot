@@ -3,7 +3,7 @@ import threading
 import requests
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from config import Config
 from utils import log
 from db import load_state, save_state, append_log, save_metrics, calculate_metrics
@@ -45,28 +45,18 @@ def send_startup_notification(bot):
     append_log("startup", {"balance": bot.balance, "winrate": wr})
 
 
-def send_heartbeat(bot, regime_info: dict = None, ai_params: dict = None):
+def send_heartbeat(bot):
     """Envia heartbeat periódico confirmando que o bot está vivo."""
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-    regime_info = regime_info or {}
-    live_regime = regime_info.get("live_regime", "neutral")
-    avg_adx     = regime_info.get("avg_adx", 0)
-    eff_conf    = regime_info.get("effective_conf", 7)
-
-    regime_emoji = {"ranging": "〰️", "trending": "📈", "neutral": "➡️", "volatile": "⚡"}.get(live_regime, "➡️")
-
     msg = (
         "💓 HEARTBEAT — Bot operando normalmente\n"
-        "——————————————————\n"
+        "------------------------------\n"
         "💰 Saldo: $" + str(round(bot.balance, 2)) + "\n"
         "📊 WR: " + str(wr) + "% | " + str(bot.wins) + "W / " + str(bot.losses) + "L\n"
         "📈 Ativos: " + str(len(bot.active_trades)) + " | Pendentes: " + str(len(bot.pending_trades)) + "\n"
-        "⚡ Alav: " + str(bot.get_current_leverage()) + "x\n"
-        "——————————————————\n"
-        f"{regime_emoji} Regime: {live_regime.upper()} (ADX médio={avg_adx})\n"
-        f"🎯 Confluência mínima atual: {eff_conf}/11"
+        "⚡ Alav: " + str(bot.get_current_leverage()) + "x"
     )
 
     bot.send(msg)
@@ -86,7 +76,7 @@ def send_daily_report(bot):
     day_wins = 0
     day_losses = 0
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for h in bot.history:
         # Parse do formato "dd/mm HH:MM"
         try:
@@ -142,80 +132,17 @@ def send_error_notification(bot, error_msg, traceback_str=""):
     append_log("error", {"message": error_msg, "traceback": traceback_str})
 
 
-def _send_confluence_report(bot):
-    """Gera e envia relatório de confluência de todos os pares."""
-    from signals import get_confluence_snapshot
-    from ai_validator import load_ai_params
-
-    bot.send("⏳ Calculando confluência de todos os pares...")
-
-    try:
-        snapshot   = get_confluence_snapshot()
-        ai_params  = load_ai_params()
-        min_conf   = ai_params.get("live_confluence", 7)
-        live_regime= ai_params.get("live_regime", "neutral")
-
-        lines = [
-            f"📊 CONFLUÊNCIA ATUAL — {datetime.utcnow().strftime('%d/%m %H:%M')} UTC",
-            f"Regime: {live_regime.upper()} | Mínimo para sinal: {min_conf}/11",
-            "——————————————————",
-        ]
-
-        for item in snapshot:
-            score = item["best_score"]
-            total = item["total"]
-            direc = item["best_dir"]
-            sym   = item["symbol"]
-
-            # Barra visual de progresso
-            filled  = "🟢" * score
-            empty   = "⚪" * (total - score)
-            bar     = filled + empty
-
-            # Emoji de status
-            if score >= min_conf:
-                status = "🔥 SINAL"
-            elif score >= min_conf - 2:
-                status = "⚡ QUASE"
-            elif score >= min_conf - 4:
-                status = "👀 WATCH"
-            else:
-                status = "💤"
-
-            h4  = "✅" if item["h4_aligned"] else "❌"
-            lines.append(
-                f"{status} {sym} {direc} {score}/{total}\n"
-                f"  {bar}\n"
-                f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
-            )
-
-        lines.append("——————————————————")
-        lines.append("Use /confluencia a qualquer momento para atualizar.")
-        bot.send("\n".join(lines))
-
-    except Exception as e:
-        bot.send(f"❌ Erro ao gerar relatório: {e}")
-        log(f"[CONFLUENCIA] Erro: {e}")
-
-
 def bot_loop(bot):
     last_heartbeat = 0
     last_daily_report = None
-    last_weekly_learning  = 0   # controla aprendizado semanal (Sonnet)
-    last_monthly_analysis = 0   # controla análise estratégica mensal (Opus)
 
     while True:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # ── HEARTBEAT ──────────────────────────────────────────────
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
-                # Detecta regime de mercado em tempo real (sem API)
-                from ai_validator import check_live_regime, load_ai_params
-                regime_info = check_live_regime(bot)
-                ai_p        = load_ai_params()
-
-                send_heartbeat(bot, regime_info, ai_p)
+                send_heartbeat(bot)
                 last_heartbeat = time.time()
             except Exception as e:
                 log(f"[HEARTBEAT] Erro: {e}")
@@ -228,61 +155,11 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
 
-        # ── APRENDIZADO SEMANAL (Sonnet) ───────────────────────────
-        WEEK_SECS = 7 * 24 * 3600
-        if time.time() - last_weekly_learning >= WEEK_SECS:
-            try:
-                from ai_validator import weekly_learning
-                result = weekly_learning(bot)
-                if result:
-                    bot.send(
-                        f"🧠 APRENDIZADO SEMANAL (Sonnet)\n"
-                        f"——————————————————\n"
-                        f"{result.get('last_suggestion', '')}\n\n"
-                        f"Min confluence: {result['min_confluence']} | "
-                        f"Min ADX: {result['min_adx']} | "
-                        f"Min RR: {result['min_rr']}\n"
-                        f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
-                    )
-                last_weekly_learning = time.time()
-            except Exception as e:
-                log(f"[SONNET] Erro no aprendizado semanal: {e}")
-
-        # ── ANÁLISE ESTRATÉGICA MENSAL (Opus) ─────────────────────
-        MONTH_SECS = 30 * 24 * 3600
-        if time.time() - last_monthly_analysis >= MONTH_SECS:
-            try:
-                from ai_validator import monthly_deep_analysis
-                result = monthly_deep_analysis(bot)
-                if result:
-                    regime_pairs = result.get("regime_pairs", {})
-                    regime_txt   = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
-                    avoid_hours  = result.get("avoid_hours_utc", [])
-                    bot.send(
-                        f"🔮 ANÁLISE ESTRATÉGICA MENSAL (Opus)\n"
-                        f"——————————————————\n"
-                        f"{result.get('opus_summary', '')}\n\n"
-                        f"Regime geral: {result.get('market_regime','?').upper()}\n"
-                        f"Viés: {result.get('strategy_bias','?').upper()}\n"
-                        f"Sessões favoritas: {', '.join(result.get('favored_sessions', [])) or '—'}\n"
-                        f"Horas a evitar (UTC): {avoid_hours or 'nenhuma'}\n\n"
-                        f"Regime por par:\n{regime_txt}"
-                    )
-                last_monthly_analysis = time.time()
-            except Exception as e:
-                log(f"[OPUS] Erro na análise mensal: {e}")
-
         # ── LOOP PRINCIPAL ─────────────────────────────────────────
         if not bot.is_paused():
             try:
-                bot.expire_pending_signals(max_age_seconds=7200)
                 scan(bot)
                 bot.monitor_trades()
-
-                # Alerta de quase sinal (a cada ciclo, com cooldown interno de 2h)
-                from signals import check_near_signals
-                check_near_signals(bot)
-
             except Exception as e:
                 error_msg = str(e)
                 tb = traceback.format_exc()
@@ -298,17 +175,12 @@ def bot_loop(bot):
                 for u in resp["result"]:
                     if "message" in u and "text" in u["message"]:
                         txt = u["message"]["text"].strip()
-
                         if txt.startswith("/executar_"):
                             parts = txt.split("_")
                             if len(parts) >= 3:
-                                pid    = int(parts[1])
+                                pid = int(parts[1])
                                 amount = float(parts[2])
                                 bot.execute_pending(pid, amount)
-
-                        elif txt in ("/confluencia", "/confluência"):
-                            _send_confluence_report(bot)
-
                     bot.last_id = u["update_id"]
         except Exception:
             pass
@@ -317,7 +189,7 @@ def bot_loop(bot):
 
 
 def main():
-    log("Iniciando Sniper Bot v2 (Twelve Data, Forex+Ouro H1)")
+    log("Iniciando Sniper Bot v2 (Yahoo Finance, Forex+Ouro H1)")
     bot = TradingBot()
 
     # Carrega estado salvo
@@ -348,4 +220,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                
