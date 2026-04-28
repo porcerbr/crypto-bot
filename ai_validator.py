@@ -312,6 +312,24 @@ def weekly_learning(bot) -> dict | None:
     recent_wr = round(sum(1 for h in recent if h["result"] == "WIN") / max(len(recent), 1) * 100, 1)
     params    = load_ai_params()
 
+    # ── Feedback loop: WR por faixa de confiança da IA ───────────
+    conf_stats: dict = {}
+    for h in history:
+        c = h.get("ai_confidence", 0)
+        if c == 0:
+            continue  # trade sem dado de confiança (anterior à feature)
+        bucket = f"{(c // 2) * 2}-{(c // 2) * 2 + 1}"  # ex: "8-9", "6-7"
+        if bucket not in conf_stats:
+            conf_stats[bucket] = {"wins": 0, "total": 0}
+        conf_stats[bucket]["total"] += 1
+        if h["result"] == "WIN":
+            conf_stats[bucket]["wins"] += 1
+
+    conf_summary = []
+    for bucket, s in sorted(conf_stats.items()):
+        bwr = round(s["wins"] / s["total"] * 100)
+        conf_summary.append(f"Confiança {bucket}/10: WR {bwr}% ({s['total']} trades)")
+
     user_msg = f"""
 === RELATÓRIO SEMANAL ===
 
@@ -321,6 +339,9 @@ WR últimos 30 trades: {recent_wr}%
 Por par:
 {chr(10).join(pair_summary)}
 
+WR por confiança da IA (feedback loop):
+{chr(10).join(conf_summary) if conf_summary else 'dados insuficientes ainda'}
+
 Parâmetros atuais:
   min_confluence={params['min_confluence']} | min_adx={params['min_adx']}
   min_rr={params['min_rr']} | session_strictness={params['session_strictness']}
@@ -329,7 +350,7 @@ Parâmetros atuais:
 Contexto estratégico: {params.get('opus_summary') or 'ainda não disponível'}
 
 Últimos 15 trades:
-{[(h['symbol'], h['dir'], h['result'], f"PnL=${h['pnl']}", f"ADX={h.get('adx',0)}") for h in history[-15:]]}
+{[(h['symbol'], h['dir'], h['result'], f"PnL=${h['pnl']}", f"ADX={h.get('adx',0)}", f"conf={h.get('ai_confidence',0)}") for h in history[-15:]]}
 """.strip()
 
     log("[AI] Aprendizado semanal iniciado...")
@@ -481,3 +502,98 @@ Análise anterior: {params.get('opus_summary') or 'primeira análise'}
     save_ai_params(params)
     log(f"[AI] Análise mensal concluída: regime={params['market_regime']} | bias={params['strategy_bias']}")
     return params
+
+
+# ═══════════════════════════════════════════════════════════
+# ITEM 3 — DETECÇÃO DE REGIME EM TEMPO REAL (sem API)
+# ═══════════════════════════════════════════════════════════
+
+# Thresholds de ADX para classificar regime
+_ADX_RANGING  = 18   # abaixo = mercado lateral → mais restritivo
+_ADX_TRENDING = 25   # acima  = tendência clara → pode relaxar 1 ponto
+
+
+def check_live_regime(bot) -> dict:
+    """
+    Roda a cada heartbeat (1h) sem chamar nenhuma API.
+    Calcula o ADX médio dos trades ativos + cache de análise recente
+    e ajusta min_confluence localmente em ai_params.json.
+
+    Lógica:
+      ADX médio < 18  → regime "ranging"   → min_confluence +1 (mais restritivo)
+      ADX médio > 25  → regime "trending"  → min_confluence -1 (mais permissivo, mín 6)
+      Entre 18-25     → regime "neutral"   → mantém o valor base do Sonnet
+
+    Retorna dict com regime detectado e confluence ajustada.
+    """
+    from analysis import _cache   # acessa o cache do Twelve Data diretamente
+
+    if not _cache:
+        return {"live_regime": "neutral", "confluence_adj": 0}
+
+    # Calcula ADX médio dos últimos candles de todos os pares em cache
+    adx_values = []
+    for sym, (_, df) in _cache.items():
+        try:
+            if len(df) < 15:
+                continue
+            highs  = df["High"]
+            lows   = df["Low"]
+            closes = df["Close"]
+            import pandas as pd
+            tr = pd.concat([
+                highs - lows,
+                (highs - closes.shift()).abs(),
+                (lows  - closes.shift()).abs(),
+            ], axis=1).max(axis=1)
+            up_move  = highs.diff()
+            dn_move  = -lows.diff()
+            plus_dm  = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
+            minus_dm = dn_move.where((dn_move > up_move) & (dn_move > 0), 0.0)
+            atr_s    = tr.ewm(alpha=1/14, adjust=False).mean()
+            plus_di  = 100 * plus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
+            minus_di = 100 * minus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
+            dx       = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
+            adx      = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
+            if adx > 0:
+                adx_values.append(adx)
+        except Exception:
+            continue
+
+    if not adx_values:
+        return {"live_regime": "neutral", "confluence_adj": 0}
+
+    avg_adx = round(sum(adx_values) / len(adx_values), 1)
+    params  = load_ai_params()
+    base_conf = params.get("min_confluence", 7)
+
+    if avg_adx < _ADX_RANGING:
+        live_regime    = "ranging"
+        confluence_adj = +1       # mais restritivo em mercado lateral
+    elif avg_adx > _ADX_TRENDING:
+        live_regime    = "trending"
+        confluence_adj = -1       # mais permissivo em tendência clara
+    else:
+        live_regime    = "neutral"
+        confluence_adj = 0
+
+    effective_conf = max(6, min(9, base_conf + confluence_adj))
+
+    # Salva regime live (separado do regime mensal do Opus)
+    prev_regime = params.get("live_regime", "neutral")
+    params["live_regime"]       = live_regime
+    params["live_adx_avg"]      = avg_adx
+    params["live_confluence"]   = effective_conf
+    save_ai_params(params)
+
+    # Loga só se o regime mudou
+    if live_regime != prev_regime:
+        log(f"[REGIME] Mudança detectada: {prev_regime} → {live_regime} "
+            f"(ADX médio={avg_adx}) | confluence={base_conf} → {effective_conf}")
+
+    return {
+        "live_regime":    live_regime,
+        "avg_adx":        avg_adx,
+        "confluence_adj": confluence_adj,
+        "effective_conf": effective_conf,
+    }
