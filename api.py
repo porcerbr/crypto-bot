@@ -19,17 +19,64 @@ def create_api(bot):
     def status():
         active = []
         for t in bot.active_trades:
+            sym = t["symbol"]
+            entry = t["entry"]
+            sl    = t["sl"]
+            tp    = t["tp"]
+            lot   = t.get("lot", 0.01)
+            direc = t["dir"]
+            margin = t.get("margin_required", 0)
+
+            # Preço atual do cache (sem chamar API externa)
+            try:
+                from analysis import _cache
+                cur_price = float(_cache[sym][1]["Close"].iloc[-1]) if sym in _cache else entry
+            except Exception:
+                cur_price = entry
+
+            # P&L em dólares (pip value para forex = lot * 10 USD por pip)
+            pip_factor = 0.01 if (sym.endswith("JPY") or sym == "XAUUSD") else 0.0001
+            pip_value  = lot * (0.01 / pip_factor)   # USD por pip
+            if direc == "BUY":
+                pnl_pips = (cur_price - entry) / pip_factor
+            else:
+                pnl_pips = (entry - cur_price) / pip_factor
+            pnl_usd = round(pnl_pips * pip_value, 2)
+
+            # % sobre margem usada
+            pnl_pct = round(pnl_usd / margin * 100, 1) if margin > 0 else 0
+
+            # Distância até SL e TP em pips
+            sl_dist_pips = round(abs(cur_price - sl) / pip_factor, 1)
+            tp_dist_pips = round(abs(tp - cur_price) / pip_factor, 1)
+
+            # Progresso para TP (0-100%)
+            total_range = abs(tp - entry)
+            moved       = abs(cur_price - entry)
+            tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0
+
             active.append({
-                "symbol": t["symbol"],
-                "name": t.get("name", ""),
-                "dir": t["dir"],
-                "entry": t["entry"],
-                "sl": t["sl"],
-                "tp": t["tp"],
-                "lot": t.get("lot", 0),
-                "pnl": t.get("pnl", 0),
-                "opened_at": t.get("opened_at", ""),
+                "symbol":           sym,
+                "name":             t.get("name", ""),
+                "dir":              direc,
+                "entry":            entry,
+                "sl":               sl,
+                "tp":               tp,
+                "lot":              lot,
+                "margin_required":  margin,
+                "current_price":    cur_price,
+                "pnl":              pnl_usd,
+                "pnl_pct":         pnl_pct,
+                "pnl_pips":        round(pnl_pips, 1),
+                "sl_dist_pips":    sl_dist_pips,
+                "tp_dist_pips":    tp_dist_pips,
+                "tp_progress":     tp_progress,
+                "opened_at":        t.get("opened_at", ""),
                 "effective_leverage": t.get("effective_leverage", bot.leverage),
+                "trailing_activated": t.get("trailing_activated", False),
+                "score":            t.get("score", 0),
+                "rr":               t.get("rr", 0),
+                "ai_confidence":    t.get("ai_confidence", 0),
             })
         total = bot.wins + bot.losses
         wr = round(bot.wins / total * 100, 1) if total > 0 else 0
