@@ -45,18 +45,28 @@ def send_startup_notification(bot):
     append_log("startup", {"balance": bot.balance, "winrate": wr})
 
 
-def send_heartbeat(bot):
+def send_heartbeat(bot, regime_info: dict = None, ai_params: dict = None):
     """Envia heartbeat periódico confirmando que o bot está vivo."""
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
+    regime_info = regime_info or {}
+    live_regime = regime_info.get("live_regime", "neutral")
+    avg_adx     = regime_info.get("avg_adx", 0)
+    eff_conf    = regime_info.get("effective_conf", 7)
+
+    regime_emoji = {"ranging": "〰️", "trending": "📈", "neutral": "➡️", "volatile": "⚡"}.get(live_regime, "➡️")
+
     msg = (
         "💓 HEARTBEAT — Bot operando normalmente\n"
-        "------------------------------\n"
+        "——————————————————\n"
         "💰 Saldo: $" + str(round(bot.balance, 2)) + "\n"
         "📊 WR: " + str(wr) + "% | " + str(bot.wins) + "W / " + str(bot.losses) + "L\n"
         "📈 Ativos: " + str(len(bot.active_trades)) + " | Pendentes: " + str(len(bot.pending_trades)) + "\n"
-        "⚡ Alav: " + str(bot.get_current_leverage()) + "x"
+        "⚡ Alav: " + str(bot.get_current_leverage()) + "x\n"
+        "——————————————————\n"
+        f"{regime_emoji} Regime: {live_regime.upper()} (ADX médio={avg_adx})\n"
+        f"🎯 Confluência mínima atual: {eff_conf}/11"
     )
 
     bot.send(msg)
@@ -144,7 +154,12 @@ def bot_loop(bot):
         # ── HEARTBEAT ──────────────────────────────────────────────
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
-                send_heartbeat(bot)
+                # Detecta regime de mercado em tempo real (sem API)
+                from ai_validator import check_live_regime, load_ai_params
+                regime_info = check_live_regime(bot)
+                ai_p        = load_ai_params()
+
+                send_heartbeat(bot, regime_info, ai_p)
                 last_heartbeat = time.time()
             except Exception as e:
                 log(f"[HEARTBEAT] Erro: {e}")
