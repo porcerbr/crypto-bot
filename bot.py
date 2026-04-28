@@ -159,7 +159,7 @@ class TradingBot:
             "TRADE ABERTO — " + pend["symbol"],
             pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
             "Lote: " + str(round(plan["lot"], 2)) + " | Margem: $" + str(round(plan["margin_required"], 2)) + " | Alav: " + str(eff_lev) + ":1",
-            "SL: " + fmt(plan["sl"]) + " | TP: " + fmt(plan["tp"]),
+            "SL: " + fmt(pend["sl"]) + " | TP: " + fmt(pend["tp"]),
             "Saldo restante: $" + str(round(self.balance, 2))
         ]
         self.send(chr(10).join(msg_lines))
@@ -317,24 +317,38 @@ class TradingBot:
     def send_pending_notification(self, pend):
         checks_lines = []
         for c in pend["checks"]:
-            icon = "OK" if c["ok"] else "X"
+            icon = "✅" if c["ok"] else "❌"
             checks_lines.append(icon + " " + c["name"])
         checks_str = chr(10).join(checks_lines)
 
+        sl_pips = pend.get("sl_pips", "?")
+        tp_pips = pend.get("tp_pips", "?")
+        direc   = pend["dir"]
+        sl_dir  = "−" if direc == "BUY" else "+"
+        tp_dir  = "+" if direc == "BUY" else "−"
+
         lines = [
-            "SINAL PENDENTE — " + pend["symbol"] + " (" + pend["name"] + ")",
-            pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
-            "SL: " + fmt(pend["sl"]) + " (" + str(pend["sl_pct"]) + "%) | TP: " + fmt(pend["tp"]) + " (+" + str(pend["tp_pct"]) + "%)",
-            "RR: 1:" + str(pend["rr"]) + " | Score: " + str(pend["score"]) + "/" + str(pend["max_score"]),
+            "🎯 SINAL PENDENTE — " + pend["symbol"] + " (" + pend["name"] + ")",
+            "——————————————————",
+            "📌 Direção: " + direc,
+            "📍 Entrada:  " + fmt(pend["entry"]),
+            "🛑 SL:       " + fmt(pend["sl"]) + "  (" + sl_dir + str(sl_pips) + " pips)",
+            "🎯 TP:       " + fmt(pend["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
+            "📊 RR: 1:" + str(pend["rr"]) + " | Score: " + str(pend["score"]) + "/" + str(pend["max_score"]),
             "🤖 IA: " + pend.get("ai_reason", "—"),
-            "------------------------------",
-            "Margem p/ 0.01 lote: $" + str(round(pend["min_lot_margin"], 2)),
-            "Risco c/ lote minimo: $" + str(round(pend["risk_001_lot"], 2)) + " (" + str(round(pend["risk_pct_001"], 1)) + "%)",
-            "Lote sugerido (risco " + str(Config.ATR_RISK_PCT) + "%): " + str(pend["suggested_lot"]) + " lote(s)",
-            "   -> Risco real: $" + str(round(pend["suggested_risk_usd"], 2)) + " (" + str(round(pend["suggested_risk_pct"], 1)) + "%)",
-            "------------------------------",
+            "——————————————————",
+            "⚠️ Se der erro de SL/TP inválido:",
+            "   Preço mudou — use a distância em pips",
+            "   como referência e ajuste no broker.",
+            "——————————————————",
+            "💰 Margem p/ 0.01 lote: $" + str(round(pend["min_lot_margin"], 2)),
+            "💸 Risco c/ lote mínimo: $" + str(round(pend["risk_001_lot"], 2)) + " (" + str(round(pend["risk_pct_001"], 1)) + "%)",
+            "📦 Lote sugerido (" + str(Config.ATR_RISK_PCT) + "% risco): " + str(pend["suggested_lot"]) + " lote(s)",
+            "   → Risco real: $" + str(round(pend["suggested_risk_usd"], 2)) + " (" + str(round(pend["suggested_risk_pct"], 1)) + "%)",
+            "——————————————————",
             checks_str,
-            "Para executar: /executar_" + str(pend["pending_id"]) + "_VALOR"
+            "——————————————————",
+            "▶️ Para executar: /executar_" + str(pend["pending_id"]) + "_VALOR",
         ]
         self.send(chr(10).join(lines))
 
