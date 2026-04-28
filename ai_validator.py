@@ -147,15 +147,18 @@ def _call_gemini(
             if attempt == 0:
                 time.sleep(5)
 
+        except requests.exceptions.ConnectionError as e:
+            # Falha de rede: DNS, SSL, proxy Railway — tenta de novo uma vez
+            log(f"[AI] Gemini conexão falhou (tentativa {attempt+1}/2): {str(e)[:80]}")
+            if attempt == 0:
+                time.sleep(10)
+
         except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response else 0
+            status = e.response.status_code if e.response is not None else 0
             if status == 429:
-                # Rate limit atingido mesmo com controle preventivo
-                # Espera 65s para garantir que a janela resetou completamente
                 log("[AI] Gemini 429 — aguardando 65s para janela resetar")
-                _call_times.clear()  # reseta o tracker local
+                _call_times.clear()
                 time.sleep(65)
-                # Tenta uma última vez após espera longa
                 if attempt == 0:
                     continue
                 return None
@@ -163,12 +166,17 @@ def _call_gemini(
                 log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/2)")
                 if attempt == 0:
                     time.sleep(5)
+            elif status == 0:
+                # response é None — erro de baixo nível capturado como HTTPError
+                log(f"[AI] Gemini sem resposta (tentativa {attempt+1}/2): {str(e)[:80]}")
+                if attempt == 0:
+                    time.sleep(10)
             else:
-                log(f"[AI] Erro Gemini HTTP {status}")
+                log(f"[AI] Gemini HTTP {status}: {str(e)[:80]}")
                 return None
 
         except Exception as e:
-            log(f"[AI] Erro Gemini: {e}")
+            log(f"[AI] Gemini erro inesperado: {type(e).__name__}: {str(e)[:80]}")
             return None
 
     log("[AI] Gemini falhou após 2 tentativas — usando fallback")
