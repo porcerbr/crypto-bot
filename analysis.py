@@ -15,24 +15,15 @@ TD_SYMBOLS = {
 
 # ── Cache: symbol_interno -> (timestamp, DataFrame) ─────────
 _cache: dict = {}
-_CACHE_TTL = 30 * 60   # 30 min → ~48 refreshes/dia (< 800 créditos free tier)
+_CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
-_active_symbols: set = set()  # NOVO: só busca estes símbolos (se vazio, busca todos)
-
-
-def set_active_symbols(symbols):
-    """Define quais símbolos o bot deve buscar na API. Se vazio, busca todos."""
-    global _active_symbols
-    _active_symbols = set(symbols) & set(TD_SYMBOLS.keys())
-    log(f"[TWELVEDATA] Símbolos ativos definidos: {sorted(_active_symbols) if _active_symbols else 'TODOS'}")
 
 
 def _refresh_cache():
     """
-    Busca dados em batches de no máximo 3 símbolos.
-    Free tier: 8 créditos/minuto. Com delay de 65s entre batches,
-    nunca ultrapassamos o limite, mesmo com retries.
-    Com TTL de 30 min: ~48 refreshes/dia, dentro do free tier de 800/dia.
+    Busca todos os 11 pares em UMA chamada batch.
+    Custo: 11 créditos por refresh.
+    Com TTL de 20 min: ~72 refreshes/dia, dentro do free tier de 800/dia.
     """
     global _last_refresh
 
@@ -40,115 +31,76 @@ def _refresh_cache():
         log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada no Railway.")
         return
 
-    # ── NOVO: usa apenas símbolos ativos (economiza créditos) ──
-    if _active_symbols:
-        symbols_to_fetch = {k: v for k, v in TD_SYMBOLS.items() if k in _active_symbols}
-    else:
-        symbols_to_fetch = TD_SYMBOLS
-
-    if not symbols_to_fetch:
-        log("[TWELVEDATA] Nenhum símbolo ativo para buscar.")
-        return
-
-    all_items = list(symbols_to_fetch.items())
-    batch_size = 3  # máximo 3 créditos por requisição (limite é 8/min)
-    batches = [all_items[i:i + batch_size] for i in range(0, len(all_items), batch_size)]
-
-    now = time.time()
+    # Free tier: 8 créditos/minuto, 1 crédito por símbolo.
+    # 11 símbolos em 1 chamada = 11 créditos → excede o limite.
+    # Solução: 2 batches (8 + 3) com 61s de intervalo.
+    items    = list(TD_SYMBOLS.items())
+    batches  = [items[:8], items[8:]]   # [8 pares, 3 pares]
+    now      = time.time()
     ok_count = 0
-    hit_429 = False
+    merged   = {}
 
     for batch_idx, batch in enumerate(batches):
-        if hit_429:
-            break
+        if batch_idx > 0:
+            log("[TWELVEDATA] Aguardando 61s entre batches (limite free tier)...")
+            time.sleep(61)
 
         symbols_str = ",".join(sym_td for _, sym_td in batch)
         params = {
             "symbol":     symbols_str,
             "interval":   "1h",
-            "outputsize": 800,     # ~33 dias H1 — EMA200 bem convergida
+            "outputsize": 800,
             "apikey":     Config.TWELVE_DATA_API_KEY,
             "format":     "JSON",
             "timezone":   "UTC",
         }
 
-        # ── Retry com exponential backoff ──────────────────────
-        data = {}
-        for attempt in range(3):
-            try:
-                resp = requests.get(
-                    "https://api.twelvedata.com/time_series",
-                    params=params,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                break
-            except requests.exceptions.HTTPError as e:
-                if resp.status_code == 429:
-                    wait = (2 ** attempt) * 10  # 10s, 20s, 40s
-                    log(f"[TWELVEDATA] 429 no batch {batch_idx+1}/{len(batches)}. Aguardando {wait}s...")
-                    time.sleep(wait)
-                    if attempt == 2:
-                        log(f"[TWELVEDATA] Batch {batch_idx+1} abandonado após 3 retries.")
-                        hit_429 = True
-                else:
-                    log(f"[TWELVEDATA] Erro HTTP {resp.status_code}: {e}")
-                    break
-            except Exception as e:
-                log(f"[TWELVEDATA] Erro na requisição batch {batch_idx+1}: {e}")
-                break
-
-        # ── Trata erro geral da API ────────────────────────────
-        if isinstance(data, dict) and data.get("status") == "error":
-            code = data.get("code", "???")
-            msg = data.get("message", "erro desconhecido")
-            log(f"[TWELVEDATA] ERRO GERAL DA API — Code {code}: {msg}")
-            if code == 429:
-                hit_429 = True
-                _last_refresh = now  # evita refresh imediato
-                log("[TWELVEDATA] Rate limit atingido. Próximo refresh no próximo ciclo.")
-                break
+        try:
+            resp = requests.get(
+                "https://api.twelvedata.com/time_series",
+                params=params,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            merged.update(data)
+            log(f"[TWELVEDATA] Batch {batch_idx+1}/2 recebido ({len(batch)} pares)")
+        except Exception as e:
+            log(f"[TWELVEDATA] Erro no batch {batch_idx+1}: {e}")
             continue
 
-        # ── Processa cada símbolo do batch ─────────────────────
-        for sym_internal, sym_td in batch:
-            sym_data = data.get(sym_td, {})
+    for sym_internal, sym_td in TD_SYMBOLS.items():
+        sym_data = merged.get(sym_td, {})
 
-            if isinstance(sym_data, dict) and sym_data.get("status") == "error":
-                log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
-                continue
+        if sym_data.get("status") == "error":
+            log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
+            continue
 
-            values = sym_data.get("values", []) if isinstance(sym_data, dict) else []
-            if not values or len(values) < 50:
-                log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
-                continue
+        values = sym_data.get("values", [])
+        if not values or len(values) < 50:
+            log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
+            continue
 
-            try:
-                df = pd.DataFrame(values)
-                df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-                df = df.set_index("datetime").sort_index()
-                df = df.rename(columns={
-                    "open": "Open", "high": "High",
-                    "low":  "Low",  "close": "Close",
-                })
-                for col in ["Open", "High", "Low", "Close"]:
-                    df[col] = df[col].astype(float)
-                df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
+        try:
+            df = pd.DataFrame(values)
+            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+            df = df.set_index("datetime").sort_index()
+            df = df.rename(columns={
+                "open": "Open", "high": "High",
+                "low":  "Low",  "close": "Close",
+            })
+            for col in ["Open", "High", "Low", "Close"]:
+                df[col] = df[col].astype(float)
+            df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
 
-                _cache[sym_internal] = (now, df)
-                ok_count += 1
+            _cache[sym_internal] = (now, df)
+            ok_count += 1
 
-            except Exception as e:
-                log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
-
-        # ── NOVO: espera 65s entre batches (respeita limite/min) ─
-        if batch_idx < len(batches) - 1 and not hit_429:
-            time.sleep(65)
+        except Exception as e:
+            log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
 
     _last_refresh = now
-    total = len(symbols_to_fetch)
-    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{total} pares OK")
+    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
 
 
 def _get_df(symbol: str):
