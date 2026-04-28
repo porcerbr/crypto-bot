@@ -455,21 +455,23 @@ def get_confluence_snapshot() -> list[dict]:
 
 def check_near_signals(bot) -> None:
     """
-    Verifica se algum par está com 5 ou 6/11 (quase sinal).
-    Envia alerta no Telegram quando um par se aproxima do threshold,
-    com cooldown de 2h por par para não spam.
+    Verifica se algum par PERMITIDO está com score próximo do mínimo.
+    Só alerta pares que o bot pode realmente operar com o saldo atual.
     """
     from ai_validator import load_ai_params
+    from utils import get_allowed_symbols
 
     ai_params      = load_ai_params()
     effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
-    NEAR_THRESHOLD = effective_conf - 2   # 2 pontos abaixo do mínimo
+    NEAR_THRESHOLD = effective_conf - 2
 
     if not hasattr(bot, "_near_signal_cooldown"):
         bot._near_signal_cooldown = {}
 
-    now      = time.time()
-    snapshot = get_confluence_snapshot()
+    # Só pares liberados pelo nível de capital atual
+    allowed_symbols = get_allowed_symbols(bot.balance)
+    now             = time.time()
+    snapshot        = get_confluence_snapshot()
 
     for item in snapshot:
         sym   = item["symbol"]
@@ -477,30 +479,31 @@ def check_near_signals(bot) -> None:
         total = item["total"]
         direc = item["best_dir"]
 
-        # Só alerta na faixa de "quase sinal"
+        # Ignora pares bloqueados pelo SAFETY
+        if sym not in allowed_symbols:
+            continue
+
         if score < NEAR_THRESHOLD or score >= effective_conf:
             continue
 
-        # Cooldown de 2h por par para não spam
         last_alert = bot._near_signal_cooldown.get(sym, 0)
         if now - last_alert < 7200:
             continue
 
-        # Quais checks faltam para virar sinal
-        checks = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
-        missing = [name for name, ok in checks if not ok][:3]  # máx 3 faltando
+        checks  = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
+        missing = [name for name, ok in checks if not ok][:3]
 
         bars = "🟢" * score + "⚪" * (total - score)
-        msg = (
+        msg  = (
             f"📊 QUASE SINAL — {sym}\n"
             f"——————————————\n"
             f"Direção: {direc} | Score: {score}/{total}\n"
             f"{bars}\n"
             f"RSI: {item['rsi']} | ADX: {item['adx']}\n"
-            f"Cenário H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
+            f"H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
             f"❌ Falta confirmar:\n" +
             "\n".join(f"  • {m}" for m in missing) +
-            f"\n\nPrecisa de {effective_conf - score} check(s) para virar sinal."
+            f"\n\nFaltam {effective_conf - score} check(s) para virar sinal."
         )
         bot.send(msg)
         bot._near_signal_cooldown[sym] = now
