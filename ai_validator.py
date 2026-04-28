@@ -82,7 +82,7 @@ def _call_gemini(
     system: str,
     user_msg: str,
     max_tokens: int = 500,
-    timeout: int = 30,
+    timeout: int = 25,   # aumentado de 15s para 25s
 ) -> str | None:
     from config import Config
     api_key = getattr(Config, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
@@ -92,36 +92,45 @@ def _call_gemini(
 
     url  = _GEMINI_URL.format(model=_MODEL_FLASH)
     body = {
-        # system instruction — suportado pelo Gemini 2.0
-        "systemInstruction": {
-            "parts": [{"text": system}]
-        },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": user_msg}],
-            }
-        ],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature":     0.2,   # baixo para respostas consistentes e JSON limpo
-        },
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
     }
 
-    try:
-        resp = requests.post(
-            url,
-            params={"key": api_key},
-            headers={"Content-Type": "application/json"},
-            json=body,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        log(f"[AI] Erro Gemini: {e}")
-        return None
+    # 1 retry automático em caso de timeout ou erro 5xx
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                url,
+                params={"key": api_key},
+                headers={"Content-Type": "application/json"},
+                json=body,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except requests.exceptions.Timeout:
+            log(f"[AI] Gemini timeout (tentativa {attempt+1}/2)")
+            if attempt == 0:
+                time.sleep(3)  # espera 3s antes do retry
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response else 0
+            if status == 429:
+                log("[AI] Gemini rate limit (429) — aguardando 10s...")
+                time.sleep(10)
+            elif status >= 500:
+                log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/2)")
+                if attempt == 0:
+                    time.sleep(3)
+            else:
+                log(f"[AI] Erro Gemini HTTP {status}: {e}")
+                return None
+        except Exception as e:
+            log(f"[AI] Erro Gemini: {e}")
+            return None
+
+    log("[AI] Gemini falhou após 2 tentativas — usando fallback")
+    return None
 
 
 def _parse_json(raw: str, context: str = "") -> dict | None:
