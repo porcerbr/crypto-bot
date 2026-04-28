@@ -269,6 +269,16 @@ def scan(bot):
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
         tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
 
+        # Distância em pips (JPY e ouro usam fator diferente)
+        if is_jpy_pair(sym):
+            pip_factor = 0.01
+        elif sym == "XAUUSD":
+            pip_factor = 0.01
+        else:
+            pip_factor = 0.0001
+        sl_pips = round(abs(entry - sl) / pip_factor)
+        tp_pips = round(abs(tp  - entry) / pip_factor)
+
         # ── NOVO: Alavancagem dinâmica ───────────────────────────────
         from utils import get_dynamic_leverage
         eff_lev = get_dynamic_leverage(bot.balance)
@@ -343,6 +353,8 @@ def scan(bot):
             "tp": tp,
             "sl_pct": sl_pct,
             "tp_pct": tp_pct,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
             "rr": rr,
             "score": sc,
             "max_score": tot_c,
@@ -388,12 +400,22 @@ def scan(bot):
 # SNAPSHOT DE CONFLUÊNCIA — sem gerar sinal
 # ═══════════════════════════════════════════════════════════
 
+# Cache do snapshot de confluência — evita recalcular a cada 60s
+_snapshot_cache: list = []
+_snapshot_ts: float  = 0.0
+_SNAPSHOT_TTL: int   = 600  # 10 minutos
+
+
 def get_confluence_snapshot() -> list[dict]:
     """
-    Varre todos os pares e retorna o score de confluência atual
-    para BUY e SELL, sem gerar nenhum sinal ou notificação.
-    Usado pelo comando /confluencia e pelo alerta de "quase sinal".
+    Varre todos os pares e retorna o score de confluência atual.
+    Resultado é cacheado por 10 minutos para não sobrecarregar o loop.
     """
+    global _snapshot_cache, _snapshot_ts
+
+    if time.time() - _snapshot_ts < _SNAPSHOT_TTL and _snapshot_cache:
+        return _snapshot_cache
+
     results = []
     for sym in Config.FXGOLD_ASSETS:
         try:
@@ -409,24 +431,25 @@ def get_confluence_snapshot() -> list[dict]:
             best_score = max(buy_sc, sell_sc)
 
             results.append({
-                "symbol":     sym,
-                "buy_score":  buy_sc,
-                "sell_score": sell_sc,
-                "best_dir":   best_dir,
-                "best_score": best_score,
-                "total":      buy_tot,
-                "rsi":        round(h1.get("rsi", 0), 1),
-                "adx":        round(h1.get("adx", 0), 1),
-                "cenario":    h1.get("cenario", "NEUTRO"),
-                "h4_aligned": mtf.get("aligned", False),
+                "symbol":      sym,
+                "buy_score":   buy_sc,
+                "sell_score":  sell_sc,
+                "best_dir":    best_dir,
+                "best_score":  best_score,
+                "total":       buy_tot,
+                "rsi":         round(h1.get("rsi", 0), 1),
+                "adx":         round(h1.get("adx", 0), 1),
+                "cenario":     h1.get("cenario", "NEUTRO"),
+                "h4_aligned":  mtf.get("aligned", False),
                 "buy_checks":  buy_checks,
                 "sell_checks": sell_checks,
             })
         except Exception as e:
             log(f"[SNAPSHOT] Erro em {sym}: {e}")
 
-    # Ordena do maior score para o menor
     results.sort(key=lambda x: x["best_score"], reverse=True)
+    _snapshot_cache = results
+    _snapshot_ts    = time.time()
     return results
 
 
