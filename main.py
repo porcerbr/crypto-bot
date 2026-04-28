@@ -158,23 +158,34 @@ def send_heartbeat(bot, regime_info: dict = None, ai_params: dict = None):
 def _send_confluence_report(bot):
     from signals import get_confluence_snapshot
     from ai_validator import load_ai_params
+    from utils import get_allowed_symbols
+
     bot.send("⏳ Calculando confluência...")
     try:
-        snapshot   = get_confluence_snapshot()
-        ai_params  = load_ai_params()
-        min_conf   = ai_params.get("live_confluence", 7)
-        live_regime= ai_params.get("live_regime", "neutral")
+        snapshot        = get_confluence_snapshot()
+        ai_params       = load_ai_params()
+        min_conf        = ai_params.get("live_confluence", 7)
+        live_regime     = ai_params.get("live_regime", "neutral")
+        allowed_symbols = get_allowed_symbols(bot.balance)
+
         lines = [
             f"📊 CONFLUÊNCIA — {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",
             f"Regime: {live_regime.upper()} | Mínimo: {min_conf}/11",
             "——————————————————",
         ]
+
         for item in snapshot:
-            score = item["best_score"]
-            total = item["total"]
-            direc = item["best_dir"]
-            bar   = "🟢" * score + "⚪" * (total - score)
-            if score >= min_conf:
+            score  = item["best_score"]
+            total  = item["total"]
+            direc  = item["best_dir"]
+            sym    = item["symbol"]
+            bar    = "🟢" * score + "⚪" * (total - score)
+            h4     = "✅" if item["h4_aligned"] else "❌"
+            locked = sym not in allowed_symbols
+
+            if locked:
+                status = "🔒"   # bloqueado pelo nível de capital
+            elif score >= min_conf:
                 status = "🔥 SINAL"
             elif score >= min_conf - 2:
                 status = "⚡ QUASE"
@@ -182,13 +193,16 @@ def _send_confluence_report(bot):
                 status = "👀 WATCH"
             else:
                 status = "💤"
-            h4 = "✅" if item["h4_aligned"] else "❌"
+
             lines.append(
-                f"{status} {item['symbol']} {direc} {score}/{total}\n"
+                f"{status} {sym} {direc} {score}/{total}"
+                + (" (bloqueado)" if locked else "") + "\n"
                 f"  {bar}\n"
                 f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
             )
+
         lines.append("——————————————————")
+        lines.append("🔒 = par bloqueado pelo nível de capital atual.")
         lines.append("Use /confluencia para atualizar.")
         bot.send("\n".join(lines))
     except Exception as e:
