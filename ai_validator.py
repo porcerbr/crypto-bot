@@ -575,80 +575,84 @@ _ADX_TRENDING = 25   # acima  = tendência clara → pode relaxar 1 ponto
 def check_live_regime(bot) -> dict:
     """
     Roda a cada heartbeat (1h) sem chamar nenhuma API.
-    Calcula o ADX médio dos trades ativos + cache de análise recente
-    e ajusta min_confluence localmente em ai_params.json.
-
-    Lógica:
-      ADX médio < 18  → regime "ranging"   → min_confluence +1 (mais restritivo)
-      ADX médio > 25  → regime "trending"  → min_confluence -1 (mais permissivo, mín 6)
-      Entre 18-25     → regime "neutral"   → mantém o valor base do Sonnet
-
-    Retorna dict com regime detectado e confluence ajustada.
+    Usa os valores de ADX já calculados pelo scan (via analysis._cache)
+    em vez de reprocessar 800 candles do zero — evita stack overflow.
     """
-    from analysis import _cache   # acessa o cache do Twelve Data diretamente
+    try:
+        from analysis import _cache
+        import pandas as pd
+    except ImportError:
+        return {"live_regime": "neutral", "confluence_adj": 0}
 
     if not _cache:
         return {"live_regime": "neutral", "confluence_adj": 0}
 
-    # Calcula ADX médio dos últimos candles de todos os pares em cache
     adx_values = []
-    for sym, (_, df) in _cache.items():
+    for sym, (_, df) in list(_cache.items()):
         try:
-            if len(df) < 15:
+            if len(df) < 28:
                 continue
-            highs  = df["High"]
-            lows   = df["Low"]
-            closes = df["Close"]
-            import pandas as pd
+            # Usa apenas os últimos 50 candles para ADX aproximado
+            # evita processar 800 linhas e explodir a pilha de chamadas
+            df_tail = df.tail(50)
+            highs  = df_tail["High"]
+            lows   = df_tail["Low"]
+            closes = df_tail["Close"]
+
             tr = pd.concat([
                 highs - lows,
                 (highs - closes.shift()).abs(),
                 (lows  - closes.shift()).abs(),
             ], axis=1).max(axis=1)
+
             up_move  = highs.diff()
             dn_move  = -lows.diff()
             plus_dm  = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
             minus_dm = dn_move.where((dn_move > up_move) & (dn_move > 0), 0.0)
-            atr_s    = tr.ewm(alpha=1/14, adjust=False).mean()
-            plus_di  = 100 * plus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
-            minus_di = 100 * minus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
+            atr_s    = tr.rolling(14).mean()
+            plus_di  = 100 * plus_dm.rolling(14).mean() / (atr_s + 1e-10)
+            minus_di = 100 * minus_dm.rolling(14).mean() / (atr_s + 1e-10)
             dx       = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
-            adx      = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
-            if adx > 0:
-                adx_values.append(adx)
+            adx_val  = float(dx.rolling(14).mean().iloc[-1])
+            if adx_val > 0 and not pd.isna(adx_val):
+                adx_values.append(adx_val)
         except Exception:
             continue
 
     if not adx_values:
         return {"live_regime": "neutral", "confluence_adj": 0}
 
-    avg_adx = round(sum(adx_values) / len(adx_values), 1)
-    params  = load_ai_params()
+    avg_adx   = round(sum(adx_values) / len(adx_values), 1)
+    params    = load_ai_params()
     base_conf = params.get("min_confluence", 7)
 
     if avg_adx < _ADX_RANGING:
         live_regime    = "ranging"
-        confluence_adj = +1       # mais restritivo em mercado lateral
+        confluence_adj = +1
     elif avg_adx > _ADX_TRENDING:
         live_regime    = "trending"
-        confluence_adj = -1       # mais permissivo em tendência clara
+        confluence_adj = -1
     else:
         live_regime    = "neutral"
         confluence_adj = 0
 
     effective_conf = max(6, min(9, base_conf + confluence_adj))
 
-    # Salva regime live (separado do regime mensal do Opus)
-    prev_regime = params.get("live_regime", "neutral")
-    params["live_regime"]       = live_regime
-    params["live_adx_avg"]      = avg_adx
-    params["live_confluence"]   = effective_conf
+    prev_regime              = params.get("live_regime", "neutral")
+    params["live_regime"]    = live_regime
+    params["live_adx_avg"]   = avg_adx
+    params["live_confluence"]= effective_conf
     save_ai_params(params)
 
-    # Loga só se o regime mudou
     if live_regime != prev_regime:
-        log(f"[REGIME] Mudança detectada: {prev_regime} → {live_regime} "
-            f"(ADX médio={avg_adx}) | confluence={base_conf} → {effective_conf}")
+        log(f"[REGIME] {prev_regime} → {live_regime} (ADX médio={avg_adx}) | confluence={effective_conf}")
+
+    return {
+        "live_regime":    live_regime,
+        "avg_adx":        avg_adx,
+        "confluence_adj": confluence_adj,
+        "effective_conf": effective_conf,
+    }
 
     return {
         "live_regime":    live_regime,
