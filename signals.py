@@ -382,3 +382,103 @@ def scan(bot):
         pend["ai_confidence"] = ai_confidence
         bot.add_pending(pend)
         break
+
+
+# ═══════════════════════════════════════════════════════════
+# SNAPSHOT DE CONFLUÊNCIA — sem gerar sinal
+# ═══════════════════════════════════════════════════════════
+
+def get_confluence_snapshot() -> list[dict]:
+    """
+    Varre todos os pares e retorna o score de confluência atual
+    para BUY e SELL, sem gerar nenhum sinal ou notificação.
+    Usado pelo comando /confluencia e pelo alerta de "quase sinal".
+    """
+    results = []
+    for sym in Config.FXGOLD_ASSETS:
+        try:
+            mtf = get_multi_timeframe(sym)
+            h1  = mtf.get("h1")
+            if not h1:
+                continue
+
+            buy_sc,  buy_tot,  buy_checks,  _, _ = calc_confluence(h1, "BUY",  mtf)
+            sell_sc, sell_tot, sell_checks, _, _ = calc_confluence(h1, "SELL", mtf)
+
+            best_dir   = "BUY" if buy_sc >= sell_sc else "SELL"
+            best_score = max(buy_sc, sell_sc)
+
+            results.append({
+                "symbol":     sym,
+                "buy_score":  buy_sc,
+                "sell_score": sell_sc,
+                "best_dir":   best_dir,
+                "best_score": best_score,
+                "total":      buy_tot,
+                "rsi":        round(h1.get("rsi", 0), 1),
+                "adx":        round(h1.get("adx", 0), 1),
+                "cenario":    h1.get("cenario", "NEUTRO"),
+                "h4_aligned": mtf.get("aligned", False),
+                "buy_checks":  buy_checks,
+                "sell_checks": sell_checks,
+            })
+        except Exception as e:
+            log(f"[SNAPSHOT] Erro em {sym}: {e}")
+
+    # Ordena do maior score para o menor
+    results.sort(key=lambda x: x["best_score"], reverse=True)
+    return results
+
+
+def check_near_signals(bot) -> None:
+    """
+    Verifica se algum par está com 5 ou 6/11 (quase sinal).
+    Envia alerta no Telegram quando um par se aproxima do threshold,
+    com cooldown de 2h por par para não spam.
+    """
+    from ai_validator import load_ai_params
+
+    ai_params      = load_ai_params()
+    effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
+    NEAR_THRESHOLD = effective_conf - 2   # 2 pontos abaixo do mínimo
+
+    if not hasattr(bot, "_near_signal_cooldown"):
+        bot._near_signal_cooldown = {}
+
+    now      = time.time()
+    snapshot = get_confluence_snapshot()
+
+    for item in snapshot:
+        sym   = item["symbol"]
+        score = item["best_score"]
+        total = item["total"]
+        direc = item["best_dir"]
+
+        # Só alerta na faixa de "quase sinal"
+        if score < NEAR_THRESHOLD or score >= effective_conf:
+            continue
+
+        # Cooldown de 2h por par para não spam
+        last_alert = bot._near_signal_cooldown.get(sym, 0)
+        if now - last_alert < 7200:
+            continue
+
+        # Quais checks faltam para virar sinal
+        checks = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
+        missing = [name for name, ok in checks if not ok][:3]  # máx 3 faltando
+
+        bars = "🟢" * score + "⚪" * (total - score)
+        msg = (
+            f"📊 QUASE SINAL — {sym}\n"
+            f"——————————————\n"
+            f"Direção: {direc} | Score: {score}/{total}\n"
+            f"{bars}\n"
+            f"RSI: {item['rsi']} | ADX: {item['adx']}\n"
+            f"Cenário H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
+            f"❌ Falta confirmar:\n" +
+            "\n".join(f"  • {m}" for m in missing) +
+            f"\n\nPrecisa de {effective_conf - score} check(s) para virar sinal."
+        )
+        bot.send(msg)
+        bot._near_signal_cooldown[sym] = now
+        log(f"[NEAR] {sym} {direc} {score}/{total} — alerta enviado")
