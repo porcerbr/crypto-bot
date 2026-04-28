@@ -140,13 +140,16 @@ class TradingBot:
 
         trade = {
             **pend,
-            "lot": plan["lot"],
-            "margin_required": plan["margin_required"],
-            "commission": plan["commission"],
-            "opened_at": pend["created_at"],
-            "wallet_before": self.balance,
-            "trailing_activated": False,
-            "effective_leverage": eff_lev,
+            "lot":               plan["lot"],
+            "margin_required":   plan["margin_required"],
+            "commission":        plan["commission"],
+            "opened_at":         pend["created_at"],
+            "wallet_before":     self.balance,
+            "trailing_activated":False,
+            "effective_leverage":eff_lev,
+            # propaga metadados da IA para o trade (usados no close_trade → history)
+            "ai_approved":       pend.get("ai_approved", True),
+            "ai_confidence":     pend.get("ai_confidence", 0),
         }
         self.balance -= plan["margin_required"]
         self.active_trades.append(trade)
@@ -264,11 +267,17 @@ class TradingBot:
         self.balance += margin + profit
         self.balance = round(self.balance, 2)
         self.history.append({
-            "symbol": symbol,
-            "dir": trade["dir"],
-            "result": result,
-            "pnl": round(profit, 2),
-            "closed_at": datetime.now().strftime("%d/%m %H:%M"),
+            "symbol":        symbol,
+            "dir":           trade["dir"],
+            "result":        result,
+            "pnl":           round(profit, 2),
+            "closed_at":     datetime.now().strftime("%d/%m %H:%M"),
+            "opened_at":     trade.get("opened_at", ""),
+            "adx":           trade.get("adx", 0),
+            # Feedback loop — IA aprovou? Com qual confiança?
+            # Permite ao aprendizado semanal correlacionar confiança com resultado
+            "ai_approved":   trade.get("ai_approved", True),
+            "ai_confidence": trade.get("ai_confidence", 0),
         })
         if result == "WIN":
             self.wins += 1
