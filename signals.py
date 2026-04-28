@@ -302,18 +302,27 @@ def scan(bot):
         ai_params  = load_ai_params()
         min_rr     = ai_params.get("min_rr", 1.5)
 
-        # Ajuste de confluência pelo viés estratégico do Opus
-        base_conf  = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
-        bias       = ai_params.get("strategy_bias", "balanced")
+        # Confluência mínima efetiva — combina 3 camadas:
+        # 1. Sonnet define base (min_confluence)
+        # 2. Opus ajusta pelo viés estratégico mensal (strategy_bias)
+        # 3. Regime em tempo real (live_confluence) ajusta pelo ADX atual
+        base_conf = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
+        bias      = ai_params.get("strategy_bias", "balanced")
+
         if bias == "conservative":
-            effective_min_conf = base_conf + 1    # mais restritivo
+            bias_adj = +1
         elif bias == "aggressive":
-            effective_min_conf = max(base_conf - 1, 6)  # mais permissivo (mín 6)
+            bias_adj = -1
         else:
-            effective_min_conf = base_conf
+            bias_adj = 0
+
+        # live_confluence já tem o ajuste de regime embutido (calculado no heartbeat)
+        live_conf = ai_params.get("live_confluence", base_conf)
+        effective_min_conf = max(6, min(9, live_conf + bias_adj))
 
         if sc < effective_min_conf:
-            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} (bias={bias}), descartado")
+            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
+                f"(base={base_conf}, bias={bias}, regime={ai_params.get('live_regime','?')}), descartado")
             continue
         if rr < min_rr:
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
@@ -354,13 +363,22 @@ def scan(bot):
         }
 
         # ── Validação por IA ─────────────────────────────────────────
-        # Claude avalia o contexto completo antes de enviar ao Telegram
         approved, ai_reason = validate_signal(pend, mtf, bot)
         if not approved:
             log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
-            bot.next_pending_id()  # descarta o ID reservado
+            bot.next_pending_id()
             continue
 
-        pend["ai_reason"] = ai_reason  # salva o motivo para exibição
+        # Extrai confiança do motivo (formato "IA (N/10): motivo")
+        ai_confidence = 0
+        try:
+            if "IA (" in ai_reason:
+                ai_confidence = int(ai_reason.split("(")[1].split("/")[0])
+        except Exception:
+            pass
+
+        pend["ai_reason"]     = ai_reason
+        pend["ai_approved"]   = True
+        pend["ai_confidence"] = ai_confidence
         bot.add_pending(pend)
         break
