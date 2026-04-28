@@ -19,10 +19,13 @@ _INVALID_LOG_COOLDOWN = 10 * 60  # loga no máximo 1x a cada 10 min por símbolo
 
 
 def _log_invalid_candle(symbol: str):
+    """Loga uma mensagem de aviso quando um candle é inválido, respeitando o cooldown."""
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        _log_invalid_candle(symbol)
+        # Chamamos a função log (importada no topo) em vez da própria função
+        log(f"[ANÁLISE] {symbol}: candle inválido ou incompleto, ignorando...")
         _invalid_candle_logged[symbol] = now
+
 _cache: dict = {}
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
