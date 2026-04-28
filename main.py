@@ -1,3 +1,4 @@
+import sys
 import time
 import threading
 import requests
@@ -10,6 +11,9 @@ from db import load_state, save_state, append_log, save_metrics, calculate_metri
 from bot import TradingBot
 from signals import scan
 from api import create_api
+
+# Pandas .ewm() em séries longas pode aprofundar a pilha — aumenta o limite
+sys.setrecursionlimit(5000)
 
 # ═══════════════════════════════════════════════════════════
 # CONFIGURAÇÕES DE HEARTBEAT
@@ -132,17 +136,82 @@ def send_error_notification(bot, error_msg, traceback_str=""):
     append_log("error", {"message": error_msg, "traceback": traceback_str})
 
 
+def send_heartbeat(bot, regime_info: dict = None, ai_params: dict = None):
+    total = bot.wins + bot.losses
+    wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
+    regime_info = regime_info or {}
+    live_regime = regime_info.get("live_regime", "neutral")
+    avg_adx     = regime_info.get("avg_adx", 0)
+    eff_conf    = regime_info.get("effective_conf", 7)
+    emoji = {"ranging": "〰️", "trending": "📈", "neutral": "➡️", "volatile": "⚡"}.get(live_regime, "➡️")
+    bot.send(
+        "💓 HEARTBEAT — Bot operando\n"
+        "——————————————————\n"
+        "💰 Saldo: $" + str(round(bot.balance, 2)) + "\n"
+        "📊 WR: " + str(wr) + "% | " + str(bot.wins) + "W / " + str(bot.losses) + "L\n"
+        "📈 Ativos: " + str(len(bot.active_trades)) + " | Pendentes: " + str(len(bot.pending_trades)) + "\n"
+        f"{emoji} Regime: {live_regime.upper()} (ADX={avg_adx})\n"
+        f"🎯 Confluência mínima: {eff_conf}/11"
+    )
+
+
+def _send_confluence_report(bot):
+    from signals import get_confluence_snapshot
+    from ai_validator import load_ai_params
+    bot.send("⏳ Calculando confluência...")
+    try:
+        snapshot   = get_confluence_snapshot()
+        ai_params  = load_ai_params()
+        min_conf   = ai_params.get("live_confluence", 7)
+        live_regime= ai_params.get("live_regime", "neutral")
+        lines = [
+            f"📊 CONFLUÊNCIA — {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",
+            f"Regime: {live_regime.upper()} | Mínimo: {min_conf}/11",
+            "——————————————————",
+        ]
+        for item in snapshot:
+            score = item["best_score"]
+            total = item["total"]
+            direc = item["best_dir"]
+            bar   = "🟢" * score + "⚪" * (total - score)
+            if score >= min_conf:
+                status = "🔥 SINAL"
+            elif score >= min_conf - 2:
+                status = "⚡ QUASE"
+            elif score >= min_conf - 4:
+                status = "👀 WATCH"
+            else:
+                status = "💤"
+            h4 = "✅" if item["h4_aligned"] else "❌"
+            lines.append(
+                f"{status} {item['symbol']} {direc} {score}/{total}\n"
+                f"  {bar}\n"
+                f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
+            )
+        lines.append("——————————————————")
+        lines.append("Use /confluencia para atualizar.")
+        bot.send("\n".join(lines))
+    except Exception as e:
+        bot.send(f"❌ Erro: {e}")
+
+
 def bot_loop(bot):
-    last_heartbeat = 0
-    last_daily_report = None
+    last_heartbeat        = 0
+    last_daily_report     = None
+    last_weekly_learning  = 0
+    last_monthly_analysis = 0
+    last_near_check       = 0   # check_near_signals a cada 10 min
 
     while True:
         now = datetime.now(timezone.utc)
 
-        # ── HEARTBEAT ──────────────────────────────────────────────
+        # ── HEARTBEAT (1h) ─────────────────────────────────────────
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
-                send_heartbeat(bot)
+                from ai_validator import check_live_regime, load_ai_params
+                regime_info = check_live_regime(bot)
+                ai_p        = load_ai_params()
+                send_heartbeat(bot, regime_info, ai_p)
                 last_heartbeat = time.time()
             except Exception as e:
                 log(f"[HEARTBEAT] Erro: {e}")
@@ -155,11 +224,62 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
 
+        # ── APRENDIZADO SEMANAL (Sonnet/Flash) ─────────────────────
+        WEEK_SECS = 7 * 24 * 3600
+        if time.time() - last_weekly_learning >= WEEK_SECS:
+            try:
+                from ai_validator import weekly_learning
+                result = weekly_learning(bot)
+                if result:
+                    bot.send(
+                        f"🧠 APRENDIZADO SEMANAL\n"
+                        f"——————————————————\n"
+                        f"{result.get('last_suggestion','')}\n\n"
+                        f"Min confluence: {result['min_confluence']} | "
+                        f"Min ADX: {result['min_adx']} | "
+                        f"Min RR: {result['min_rr']}\n"
+                        f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
+                    )
+                last_weekly_learning = time.time()
+            except Exception as e:
+                log(f"[SONNET] Erro no aprendizado semanal: {e}")
+
+        # ── ANÁLISE ESTRATÉGICA MENSAL (Opus/Flash) ────────────────
+        MONTH_SECS = 30 * 24 * 3600
+        if time.time() - last_monthly_analysis >= MONTH_SECS:
+            try:
+                from ai_validator import monthly_deep_analysis
+                result = monthly_deep_analysis(bot)
+                if result:
+                    regime_pairs = result.get("regime_pairs", {})
+                    regime_txt   = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
+                    bot.send(
+                        f"🔮 ANÁLISE MENSAL (Opus)\n"
+                        f"——————————————————\n"
+                        f"{result.get('opus_summary','')}\n\n"
+                        f"Regime: {result.get('market_regime','?').upper()} | "
+                        f"Viés: {result.get('strategy_bias','?').upper()}\n"
+                        f"Sessões favoritas: {', '.join(result.get('favored_sessions',[]))  or '—'}\n"
+                        f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\n\n"
+                        f"Por par:\n{regime_txt}"
+                    )
+                last_monthly_analysis = time.time()
+            except Exception as e:
+                log(f"[OPUS] Erro na análise mensal: {e}")
+
         # ── LOOP PRINCIPAL ─────────────────────────────────────────
         if not bot.is_paused():
             try:
+                bot.expire_pending_signals(max_age_seconds=7200)
                 scan(bot)
                 bot.monitor_trades()
+
+                # Alerta de quase sinal — máx 1x a cada 10 min
+                if time.time() - last_near_check >= 600:
+                    from signals import check_near_signals
+                    check_near_signals(bot)
+                    last_near_check = time.time()
+
             except Exception as e:
                 error_msg = str(e)
                 tb = traceback.format_exc()
@@ -169,18 +289,24 @@ def bot_loop(bot):
 
         # ── COMANDOS DO TELEGRAM ───────────────────────────────────
         try:
-            url = "https://api.telegram.org/bot" + Config.BOT_TOKEN + "/getUpdates?offset=" + str(bot.last_id+1) + "&timeout=5"
+            url  = ("https://api.telegram.org/bot" + Config.BOT_TOKEN
+                    + "/getUpdates?offset=" + str(bot.last_id + 1) + "&timeout=5")
             resp = requests.get(url, timeout=10).json()
             if "result" in resp:
                 for u in resp["result"]:
                     if "message" in u and "text" in u["message"]:
                         txt = u["message"]["text"].strip()
+
                         if txt.startswith("/executar_"):
                             parts = txt.split("_")
                             if len(parts) >= 3:
-                                pid = int(parts[1])
+                                pid    = int(parts[1])
                                 amount = float(parts[2])
                                 bot.execute_pending(pid, amount)
+
+                        elif txt in ("/confluencia", "/confluência"):
+                            _send_confluence_report(bot)
+
                     bot.last_id = u["update_id"]
         except Exception:
             pass
