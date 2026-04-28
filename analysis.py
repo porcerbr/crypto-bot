@@ -13,7 +13,16 @@ TD_SYMBOLS = {
     "GBPJPY": "GBP/JPY", "XAUUSD": "XAU/USD",
 }
 
-# ── Cache: symbol_interno -> (timestamp, DataFrame) ─────────
+# Cooldown de log para candle inválido — evita spam a cada minuto
+_invalid_candle_logged: dict = {}
+_INVALID_LOG_COOLDOWN = 10 * 60  # loga no máximo 1x a cada 10 min por símbolo
+
+
+def _log_invalid_candle(symbol: str):
+    now = time.time()
+    if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
+        _log_invalid_candle(symbol)
+        _invalid_candle_logged[symbol] = now
 _cache: dict = {}
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
@@ -368,7 +377,7 @@ def get_multi_timeframe(symbol: str) -> dict:
 
     # ── H1 ───────────────────────────────────────────────────
     if not _validate_last_candle(df):
-        log(f"[MTF] {symbol}: candle H1 inválido")
+        _log_invalid_candle(symbol)
         return mtf
 
     h1 = _calc_indicators(df)
