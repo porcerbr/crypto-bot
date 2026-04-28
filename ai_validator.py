@@ -17,11 +17,12 @@ import json
 import os
 import time
 import requests
+from collections import deque
 from datetime import datetime
 from utils import log
 
 # ── Modelos ───────────────────────────────────────────────────
-_MODEL_FLASH   = "gemini-2.0-flash"      # todas as camadas (grátis)
+_MODEL_FLASH   = "gemini-2.0-flash"
 _GEMINI_URL    = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent"
@@ -30,6 +31,35 @@ _GEMINI_URL    = (
 AI_PARAMS_FILE      = "ai_params.json"
 MIN_TRADES_TO_LEARN = 20
 MIN_TRADES_FOR_DEEP = 50
+
+# ── Rate limiter global ───────────────────────────────────────
+# Free tier: 15 req/min. Mantemos janela deslizante de 60s.
+_RATE_LIMIT     = 12          # usa 12 das 15 disponíveis (margem de segurança)
+_RATE_WINDOW    = 60          # segundos
+_call_times: deque = deque()  # timestamps das últimas chamadas
+
+
+def _rate_limit_wait():
+    """
+    Bloqueia até que haja espaço na janela de rate limit.
+    Garante que nunca enviamos mais de _RATE_LIMIT req em _RATE_WINDOW segundos.
+    """
+    now = time.time()
+    # Remove chamadas fora da janela
+    while _call_times and now - _call_times[0] >= _RATE_WINDOW:
+        _call_times.popleft()
+
+    if len(_call_times) >= _RATE_LIMIT:
+        wait = _RATE_WINDOW - (now - _call_times[0]) + 1
+        if wait > 0:
+            log(f"[AI] Rate limit preventivo — aguardando {wait:.0f}s")
+            time.sleep(wait)
+        # Limpa novamente após espera
+        now = time.time()
+        while _call_times and now - _call_times[0] >= _RATE_WINDOW:
+            _call_times.popleft()
+
+    _call_times.append(time.time())
 
 
 # ═══════════════════════════════════════════════════════════
@@ -82,7 +112,7 @@ def _call_gemini(
     system: str,
     user_msg: str,
     max_tokens: int = 500,
-    timeout: int = 25,   # aumentado de 15s para 25s
+    timeout: int = 25,
 ) -> str | None:
     from config import Config
     api_key = getattr(Config, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
@@ -97,8 +127,10 @@ def _call_gemini(
         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
     }
 
-    # 1 retry automático em caso de timeout ou erro 5xx
     for attempt in range(2):
+        # Espera se necessário antes de cada chamada
+        _rate_limit_wait()
+
         try:
             resp = requests.post(
                 url,
@@ -109,22 +141,32 @@ def _call_gemini(
             )
             resp.raise_for_status()
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
         except requests.exceptions.Timeout:
             log(f"[AI] Gemini timeout (tentativa {attempt+1}/2)")
             if attempt == 0:
-                time.sleep(3)  # espera 3s antes do retry
+                time.sleep(5)
+
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response else 0
             if status == 429:
-                log("[AI] Gemini rate limit (429) — aguardando 10s...")
-                time.sleep(10)
+                # Rate limit atingido mesmo com controle preventivo
+                # Espera 65s para garantir que a janela resetou completamente
+                log("[AI] Gemini 429 — aguardando 65s para janela resetar")
+                _call_times.clear()  # reseta o tracker local
+                time.sleep(65)
+                # Tenta uma última vez após espera longa
+                if attempt == 0:
+                    continue
+                return None
             elif status >= 500:
                 log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/2)")
                 if attempt == 0:
-                    time.sleep(3)
+                    time.sleep(5)
             else:
-                log(f"[AI] Erro Gemini HTTP {status}: {e}")
+                log(f"[AI] Erro Gemini HTTP {status}")
                 return None
+
         except Exception as e:
             log(f"[AI] Erro Gemini: {e}")
             return None
