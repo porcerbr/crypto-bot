@@ -625,38 +625,112 @@
                             Nenhum trade ativo.
                         </div>`;
                 } else {
-                    activeContainer.innerHTML = d.active_trades.map(t => {
-                        const dirClass = t.dir === 'BUY' ? 'buy' : 'sell';
-                        const progress = t.tp !== t.entry ? Math.abs((t.pnl||0) / ((t.tp - t.entry) * (t.lot||0.01) * 100000)) * 100 : 0;
+                    // Painel de resumo geral dos trades ativos
+                    const totalPnl    = d.active_trades.reduce((s,t) => s + (t.pnl||0), 0);
+                    const totalMargin = d.active_trades.reduce((s,t) => s + (t.margin_required||0), 0);
+                    const totalPnlPct = totalMargin > 0 ? (totalPnl / totalMargin * 100) : 0;
+                    const pnlColor    = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    const pnlSign     = totalPnl >= 0 ? '+' : '';
+
+                    const summaryHtml = `
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+                        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+                            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">P&L Total</div>
+                            <div style="font-size:20px;font-weight:700;color:${pnlColor}">${pnlSign}$${totalPnl.toFixed(2)}</div>
+                            <div style="font-size:11px;color:${pnlColor}">${pnlSign}${totalPnlPct.toFixed(1)}% s/ margem</div>
+                        </div>
+                        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+                            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Trades Abertos</div>
+                            <div style="font-size:20px;font-weight:700;color:var(--blue)">${d.active_trades.length}</div>
+                            <div style="font-size:11px;color:var(--text-muted)">Margem: $${totalMargin.toFixed(2)}</div>
+                        </div>
+                        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+                            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Em lucro</div>
+                            <div style="font-size:20px;font-weight:700;color:var(--green)">${d.active_trades.filter(t=>(t.pnl||0)>0).length}</div>
+                            <div style="font-size:11px;color:var(--red)">Em perda: ${d.active_trades.filter(t=>(t.pnl||0)<0).length}</div>
+                        </div>
+                    </div>`;
+
+                    const tradesHtml = d.active_trades.map(t => {
+                        const dirClass  = t.dir === 'BUY' ? 'buy' : 'sell';
+                        const pnl       = t.pnl || 0;
+                        const pnlPct    = t.pnl_pct || 0;
+                        const pnlPips   = t.pnl_pips || 0;
+                        const pnlColor  = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                        const pnlSign   = pnl >= 0 ? '+' : '';
+                        const progress  = t.tp_progress || 0;
+                        const progColor = pnl >= 0 ? 'green' : 'red';
+
+                        // Barra de distância SL ←→ Preço ←→ TP
+                        const totalPips  = (t.sl_dist_pips||0) + (t.tp_dist_pips||0);
+                        const slPct      = totalPips > 0 ? (t.sl_dist_pips / totalPips * 100) : 50;
+                        const curPct     = totalPips > 0 ? (t.sl_dist_pips / totalPips * 100) : 50;
+
                         return `
                         <div class="trade-card ${dirClass}">
                             <div class="trade-header">
-                                <div>
-                                    <span class="trade-symbol">${t.symbol} ${t.name ? '('+t.name+')' : ''}</span>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span class="trade-symbol">${t.symbol}</span>
                                     <span class="trade-dir ${dirClass}">${t.dir}</span>
+                                    ${t.trailing_activated ? '<span style="font-size:10px;color:var(--amber);background:rgba(210,153,34,0.15);padding:2px 6px;border-radius:4px">🔒 TRAILING</span>' : ''}
+                                    ${t.ai_confidence ? `<span style="font-size:10px;color:var(--purple);background:rgba(163,113,247,0.15);padding:2px 6px;border-radius:4px">🤖 ${t.ai_confidence}/10</span>` : ''}
                                 </div>
-                                <span style="font-size:12px;color:var(--text-muted)">${t.opened_at}</span>
+                                <span style="font-size:11px;color:var(--text-muted)">${t.opened_at}</span>
                             </div>
-                            <div class="trade-row">
-                                <div>Entrada <strong>${t.entry.toFixed(5)}</strong></div>
-                                <div>Atual <strong style="color:${(t.pnl||0)>=0?'var(--green)':'var(--red)'}">${t.pnl ? (t.pnl>=0?'+':'')+t.pnl.toFixed(2) : '--'}</strong></div>
-                                <div>SL <strong>${t.sl.toFixed(5)}</strong></div>
-                                <div>TP <strong>${t.tp.toFixed(5)}</strong></div>
-                                <div>Lote <strong>${t.lot}</strong></div>
-                                <div>Margem <strong>$${(t.margin_required||0).toFixed(2)}</strong></div>
+
+                            <!-- P&L em destaque -->
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+                                <div>
+                                    <div style="font-size:11px;color:var(--text-muted)">P&L Atual</div>
+                                    <div style="font-size:26px;font-weight:800;color:${pnlColor};line-height:1">${pnlSign}$${pnl.toFixed(2)}</div>
+                                    <div style="font-size:12px;color:${pnlColor}">${pnlSign}${pnlPct.toFixed(1)}% s/ margem &nbsp;|&nbsp; ${pnlSign}${pnlPips.toFixed(1)} pips</div>
+                                </div>
+                                <div style="text-align:right">
+                                    <div style="font-size:11px;color:var(--text-muted)">Preço atual</div>
+                                    <div style="font-size:18px;font-weight:700;color:var(--text-bright)">${(t.current_price||t.entry).toFixed(5)}</div>
+                                    <div style="font-size:11px;color:var(--text-muted)">Entrada: ${t.entry.toFixed(5)}</div>
+                                </div>
                             </div>
-                            <div style="margin-top:8px">
-                                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted)">
+
+                            <!-- Grade de info -->
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">
+                                <div style="background:var(--bg);border-radius:6px;padding:8px;text-align:center">
+                                    <div style="font-size:10px;color:var(--text-muted)">SL</div>
+                                    <div style="font-size:13px;font-weight:600;color:var(--red)">${t.sl.toFixed(5)}</div>
+                                    <div style="font-size:10px;color:var(--text-muted)">${t.sl_dist_pips} pips</div>
+                                </div>
+                                <div style="background:var(--bg);border-radius:6px;padding:8px;text-align:center">
+                                    <div style="font-size:10px;color:var(--text-muted)">Lote / Margem</div>
+                                    <div style="font-size:13px;font-weight:600;color:var(--text-bright)">${t.lot}</div>
+                                    <div style="font-size:10px;color:var(--text-muted)">$${(t.margin_required||0).toFixed(2)}</div>
+                                </div>
+                                <div style="background:var(--bg);border-radius:6px;padding:8px;text-align:center">
+                                    <div style="font-size:10px;color:var(--text-muted)">TP</div>
+                                    <div style="font-size:13px;font-weight:600;color:var(--green)">${t.tp.toFixed(5)}</div>
+                                    <div style="font-size:10px;color:var(--text-muted)">${t.tp_dist_pips} pips</div>
+                                </div>
+                            </div>
+
+                            <!-- Barra progresso para TP -->
+                            <div>
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:4px">
                                     <span>Progresso para TP</span>
-                                    <span>${Math.min(progress,100).toFixed(1)}%</span>
+                                    <span style="color:${pnlColor};font-weight:600">${progress.toFixed(1)}%</span>
                                 </div>
                                 <div class="progress-bar">
-                                    <div class="progress-fill ${progress>=50?'green':'blue'}" style="width:${Math.min(progress,100)}%"></div>
+                                    <div class="progress-fill ${progColor}" style="width:${Math.min(progress,100)}%;transition:width 0.5s ease"></div>
                                 </div>
                             </div>
-                            ${t.trailing_activated ? '<div style="margin-top:6px;font-size:11px;color:var(--amber)">🔒 Trailing Stop ativo</div>' : ''}
+
+                            <!-- Score e RR -->
+                            <div style="display:flex;gap:8px;margin-top:8px">
+                                ${t.score ? `<span style="font-size:10px;background:rgba(88,166,255,0.1);color:var(--blue);padding:2px 8px;border-radius:4px">Score ${t.score}/13</span>` : ''}
+                                ${t.rr ? `<span style="font-size:10px;background:rgba(63,185,80,0.1);color:var(--green);padding:2px 8px;border-radius:4px">RR 1:${t.rr}</span>` : ''}
+                            </div>
                         </div>`;
                     }).join('');
+
+                    activeContainer.innerHTML = summaryHtml + tradesHtml;
                 }
                 updateLastUpdate();
             } catch (e) {
@@ -817,7 +891,7 @@
             fetchStatus();
             fetchPending();
             fetchHistory();
-        }, 3000);
+        }, 15000); // reduzido de 3s para 15s — menos spam no log
 
         initChart();
         fetchStatus();
