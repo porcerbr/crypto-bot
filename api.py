@@ -15,6 +15,12 @@ def create_api(bot):
         except FileNotFoundError:
             return "<h1>Dashboard não encontrado</h1><p>Coloque o arquivo dashboard.html na raiz do projeto.</p>", 404
 
+    # --- LIMPEZA DE LOGS (Evita erros 404 no console) ---
+    @app.route('/sw.js')
+    @app.route('/favicon.ico')
+    def dummy_routes():
+        return "", 204
+
     @app.route("/api/status")
     def status():
         active = []
@@ -27,30 +33,24 @@ def create_api(bot):
             direc = t["dir"]
             margin = t.get("margin_required", 0)
 
-            # Preço atual do cache (sem chamar API externa)
             try:
                 from analysis import _cache
                 cur_price = float(_cache[sym][1]["Close"].iloc[-1]) if sym in _cache else entry
             except Exception:
                 cur_price = entry
 
-            # P&L em dólares (pip value para forex = lot * 10 USD por pip)
             pip_factor = 0.01 if (sym.endswith("JPY") or sym == "XAUUSD") else 0.0001
-            pip_value  = lot * (0.01 / pip_factor)   # USD por pip
+            pip_value  = lot * (0.01 / pip_factor)
             if direc == "BUY":
                 pnl_pips = (cur_price - entry) / pip_factor
             else:
                 pnl_pips = (entry - cur_price) / pip_factor
             pnl_usd = round(pnl_pips * pip_value, 2)
-
-            # % sobre margem usada
             pnl_pct = round(pnl_usd / margin * 100, 1) if margin > 0 else 0
 
-            # Distância até SL e TP em pips
             sl_dist_pips = round(abs(cur_price - sl) / pip_factor, 1)
             tp_dist_pips = round(abs(tp - cur_price) / pip_factor, 1)
 
-            # Progresso para TP (0-100%)
             total_range = abs(tp - entry)
             moved       = abs(cur_price - entry)
             tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0
@@ -81,7 +81,6 @@ def create_api(bot):
         total = bot.wins + bot.losses
         wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-        # NOVO: Informações de segurança dinâmica
         from utils import get_dynamic_leverage, get_dynamic_max_trades, get_allowed_symbols
 
         return jsonify({
@@ -95,7 +94,6 @@ def create_api(bot):
             "mode": bot.mode,
             "timeframe": bot.timeframe,
             "paused": bot.is_paused(),
-            # NOVO: Dados de segurança
             "dynamic_leverage": get_dynamic_leverage(bot.balance),
             "max_trades_allowed": get_dynamic_max_trades(bot.balance),
             "allowed_symbols": get_allowed_symbols(bot.balance),
@@ -128,47 +126,24 @@ def create_api(bot):
     def history():
         return jsonify(bot.history[-20:])
 
-    # ═══════════════════════════════════════════════════════════
-    # NOVOS ENDPOINTS: Logs e Métricas
-    # ═══════════════════════════════════════════════════════════
-
     @app.route("/api/logs")
     def logs():
-        """Retorna logs recentes do bot."""
         from db import get_recent_logs
         entry_type = request.args.get("type")
         hours = request.args.get("hours", 24, type=int)
         limit = request.args.get("limit", 100, type=int)
-
         logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
-        return jsonify({
-            "logs": logs_data,
-            "count": len(logs_data),
-            "filter": {"type": entry_type, "hours": hours}
-        })
+        return jsonify({"logs": logs_data, "count": len(logs_data)})
 
     @app.route("/api/metrics")
     def metrics():
-        """Retorna métricas de performance calculadas."""
         from db import calculate_metrics, load_metrics
-
         current = calculate_metrics(bot)
         saved = load_metrics()
-
         return jsonify({
             "current": current,
             "last_saved": saved.get("updated_at") if saved else None,
             "initial_balance": Config.INITIAL_BALANCE,
         })
-
-    @app.route("/api/force-save", methods=["POST"])
-    def force_save():
-        """Força salvamento do estado imediatamente."""
-        from db import save_state
-        try:
-            save_state(bot)
-            return jsonify({"ok": True, "message": "Estado salvo com sucesso"})
-        except Exception as e:
-            return jsonify({"ok": False, "message": str(e)}), 500
 
     return app
