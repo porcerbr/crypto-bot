@@ -142,6 +142,62 @@ def send_error_notification(bot, error_msg, traceback_str=""):
     append_log("error", {"message": error_msg, "traceback": traceback_str})
 
 
+def _send_confluence_report(bot):
+    """Gera e envia relatório de confluência de todos os pares."""
+    from signals import get_confluence_snapshot
+    from ai_validator import load_ai_params
+
+    bot.send("⏳ Calculando confluência de todos os pares...")
+
+    try:
+        snapshot   = get_confluence_snapshot()
+        ai_params  = load_ai_params()
+        min_conf   = ai_params.get("live_confluence", 7)
+        live_regime= ai_params.get("live_regime", "neutral")
+
+        lines = [
+            f"📊 CONFLUÊNCIA ATUAL — {datetime.utcnow().strftime('%d/%m %H:%M')} UTC",
+            f"Regime: {live_regime.upper()} | Mínimo para sinal: {min_conf}/11",
+            "——————————————————",
+        ]
+
+        for item in snapshot:
+            score = item["best_score"]
+            total = item["total"]
+            direc = item["best_dir"]
+            sym   = item["symbol"]
+
+            # Barra visual de progresso
+            filled  = "🟢" * score
+            empty   = "⚪" * (total - score)
+            bar     = filled + empty
+
+            # Emoji de status
+            if score >= min_conf:
+                status = "🔥 SINAL"
+            elif score >= min_conf - 2:
+                status = "⚡ QUASE"
+            elif score >= min_conf - 4:
+                status = "👀 WATCH"
+            else:
+                status = "💤"
+
+            h4  = "✅" if item["h4_aligned"] else "❌"
+            lines.append(
+                f"{status} {sym} {direc} {score}/{total}\n"
+                f"  {bar}\n"
+                f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
+            )
+
+        lines.append("——————————————————")
+        lines.append("Use /confluencia a qualquer momento para atualizar.")
+        bot.send("\n".join(lines))
+
+    except Exception as e:
+        bot.send(f"❌ Erro ao gerar relatório: {e}")
+        log(f"[CONFLUENCIA] Erro: {e}")
+
+
 def bot_loop(bot):
     last_heartbeat = 0
     last_daily_report = None
@@ -219,9 +275,14 @@ def bot_loop(bot):
         # ── LOOP PRINCIPAL ─────────────────────────────────────────
         if not bot.is_paused():
             try:
-                bot.expire_pending_signals(max_age_seconds=7200)  # expira sinais com +2h
+                bot.expire_pending_signals(max_age_seconds=7200)
                 scan(bot)
                 bot.monitor_trades()
+
+                # Alerta de quase sinal (a cada ciclo, com cooldown interno de 2h)
+                from signals import check_near_signals
+                check_near_signals(bot)
+
             except Exception as e:
                 error_msg = str(e)
                 tb = traceback.format_exc()
@@ -237,12 +298,17 @@ def bot_loop(bot):
                 for u in resp["result"]:
                     if "message" in u and "text" in u["message"]:
                         txt = u["message"]["text"].strip()
+
                         if txt.startswith("/executar_"):
                             parts = txt.split("_")
                             if len(parts) >= 3:
-                                pid = int(parts[1])
+                                pid    = int(parts[1])
                                 amount = float(parts[2])
                                 bot.execute_pending(pid, amount)
+
+                        elif txt in ("/confluencia", "/confluência"):
+                            _send_confluence_report(bot)
+
                     bot.last_id = u["update_id"]
         except Exception:
             pass
@@ -282,3 +348,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                
