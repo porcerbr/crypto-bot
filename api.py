@@ -1,11 +1,47 @@
+
+"""
+api.py \u2014 Endpoints HTTP do Sniper Bot (modo sinalizador).
+
+Todos os n\u00fameros de saldo / P&L s\u00e3o SIMULADOS para estat\u00edstica.
+Este bot n\u00e3o executa ordens em corretora real.
+"""
+
 import os
 from flask import Flask, jsonify, request, render_template_string
 from flask_cors import CORS
+
+from config import Config
+from utils import (
+    calc_pnl_usd,
+    calc_pnl_pips,
+    pip_factor,
+    is_jpy_pair,
+)
+
+
+def _get_cached_price(symbol: str, fallback: float) -> float:
+    """L\u00ea o \u00faltimo Close do cache local. Se falhar, usa fallback."""
+    try:
+        from analysis import _cache
+        if symbol in _cache:
+            return float(_cache[symbol][1]["Close"].iloc[-1])
+    except Exception:
+        pass
+    return fallback
+
+
+def _get_usdjpy_price() -> float:
+    """Cota\u00e7\u00e3o USDJPY do cache \u2014 usada para converter P&L de pares JPY."""
+    return _get_cached_price("USDJPY", 150.0)
+
 
 def create_api(bot):
     app = Flask(__name__)
     CORS(app)
 
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # DASHBOARD HTML
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/")
     def index():
         try:
@@ -13,13 +49,21 @@ def create_api(bot):
                 html = f.read()
             return render_template_string(html)
         except FileNotFoundError:
-            return "<h1>Dashboard não encontrado</h1><p>Coloque o arquivo dashboard.html na raiz do projeto.</p>", 404
+            return (
+                "<h1>Dashboard n\u00e3o encontrado</h1>"
+                "<p>Coloque o arquivo dashboard.html na raiz do projeto.</p>"
+            ), 404
 
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # STATUS \u2014 estado geral + trades ativos com P&L unificado
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/status")
     def status():
+        usdjpy = _get_usdjpy_price()
         active = []
+
         for t in bot.active_trades:
-            sym = t["symbol"]
+            sym   = t["symbol"]
             entry = t["entry"]
             sl    = t["sl"]
             tp    = t["tp"]
@@ -27,81 +71,102 @@ def create_api(bot):
             direc = t["dir"]
             margin = t.get("margin_required", 0)
 
-            # Preço atual do cache (sem chamar API externa)
-            try:
-                from analysis import _cache
-                cur_price = float(_cache[sym][1]["Close"].iloc[-1]) if sym in _cache else entry
-            except Exception:
-                cur_price = entry
+            cur_price = _get_cached_price(sym, entry)
+            pf = pip_factor(sym)
 
-            # P&L em dólares (pip value para forex = lot * 10 USD por pip)
-            pip_factor = 0.01 if (sym.endswith("JPY") or sym == "XAUUSD") else 0.0001
-            pip_value  = lot * (0.01 / pip_factor)   # USD por pip
-            if direc == "BUY":
-                pnl_pips = (cur_price - entry) / pip_factor
-            else:
-                pnl_pips = (entry - cur_price) / pip_factor
-            pnl_usd = round(pnl_pips * pip_value, 2)
+            # P&L unificado (mesma fun\u00e7\u00e3o usada em bot.close_trade)
+            pnl_usd = round(
+                calc_pnl_usd(sym, direc, entry, cur_price, lot, usdjpy_price=usdjpy),
+                2,
+            )
+            pnl_pips = calc_pnl_pips(sym, direc, entry, cur_price)
+            pnl_pct  = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
 
-            # % sobre margem usada
-            pnl_pct = round(pnl_usd / margin * 100, 1) if margin > 0 else 0
+            # Dist\u00e2ncias em pips (sempre positivas)
+            sl_dist_pips = round(abs(cur_price - sl) / pf, 1)
+            tp_dist_pips = round(abs(tp - cur_price) / pf, 1)
 
-            # Distância até SL e TP em pips
-            sl_dist_pips = round(abs(cur_price - sl) / pip_factor, 1)
-            tp_dist_pips = round(abs(tp - cur_price) / pip_factor, 1)
-
-            # Progresso para TP (0-100%)
+            # Progresso at\u00e9 TP (0\u2013100%), considerando dire\u00e7\u00e3o
             total_range = abs(tp - entry)
-            moved       = abs(cur_price - entry)
-            tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0
+            if direc == "BUY":
+                moved = max(0, cur_price - entry)
+            else:
+                moved = max(0, entry - cur_price)
+            tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0.0
 
             active.append({
-                "symbol":           sym,
-                "name":             t.get("name", ""),
-                "dir":              direc,
-                "entry":            entry,
-                "sl":               sl,
-                "tp":               tp,
-                "lot":              lot,
-                "margin_required":  margin,
-                "current_price":    cur_price,
-                "pnl":              pnl_usd,
-                "pnl_pct":         pnl_pct,
-                "pnl_pips":        round(pnl_pips, 1),
-                "sl_dist_pips":    sl_dist_pips,
-                "tp_dist_pips":    tp_dist_pips,
-                "tp_progress":     tp_progress,
-                "opened_at":        t.get("opened_at", ""),
+                "symbol":             sym,
+                "name":               t.get("name", ""),
+                "dir":                direc,
+                "entry":              entry,
+                "sl":                 sl,
+                "tp":                 tp,
+                "lot":                lot,
+                "margin_required":    margin,
+                "current_price":      cur_price,
+                "pnl":                pnl_usd,
+                "pnl_pct":            pnl_pct,
+                "pnl_pips":           pnl_pips,
+                "sl_dist_pips":       sl_dist_pips,
+                "tp_dist_pips":       tp_dist_pips,
+                "tp_progress":        tp_progress,
+                "opened_at":          t.get("opened_at", ""),
                 "effective_leverage": t.get("effective_leverage", bot.leverage),
                 "trailing_activated": t.get("trailing_activated", False),
-                "score":            t.get("score", 0),
-                "rr":               t.get("rr", 0),
-                "ai_confidence":    t.get("ai_confidence", 0),
+                "score":              t.get("score", 0),
+                "score_total":        t.get("score_total", 0),
+                "rr":                 t.get("rr", 0),
+                "ai_confidence":      t.get("ai_confidence", 0),
             })
-        total = bot.wins + bot.losses
-        wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-        # NOVO: Informações de segurança dinâmica
+        total = bot.wins + bot.losses
+        wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
+
+        # Seguran\u00e7a din\u00e2mica + drawdown
         from utils import get_dynamic_leverage, get_dynamic_max_trades, get_allowed_symbols
+        from db import calculate_metrics
+
+        try:
+            metrics = calculate_metrics(bot)
+            drawdown_pct = metrics.get("drawdown_pct", 0)
+            max_drawdown_pct = metrics.get("max_drawdown_pct", 0)
+        except Exception:
+            drawdown_pct = 0
+            max_drawdown_pct = 0
 
         return jsonify({
-            "active_trades": active,
-            "pending_count": len(bot.pending_trades),
-            "balance": round(bot.balance, 2),
-            "leverage": bot.get_current_leverage(),
-            "winrate": wr,
-            "wins": bot.wins,
-            "losses": bot.losses,
-            "mode": bot.mode,
-            "timeframe": bot.timeframe,
-            "paused": bot.is_paused(),
-            # NOVO: Dados de segurança
-            "dynamic_leverage": get_dynamic_leverage(bot.balance),
-            "max_trades_allowed": get_dynamic_max_trades(bot.balance),
-            "allowed_symbols": get_allowed_symbols(bot.balance),
-            "consecutive_losses": bot.consecutive_losses,
+            # Trades
+            "active_trades":       active,
+            "pending_count":       len(bot.pending_trades),
+
+            # Conta (simulada)
+            "balance":             round(bot.balance, 2),
+            "initial_balance":     Config.INITIAL_BALANCE,
+            "leverage":            bot.get_current_leverage(),
+            "winrate":             wr,
+            "wins":                bot.wins,
+            "losses":              bot.losses,
+
+            # Modo / status
+            "mode":                bot.mode,
+            "timeframe":           bot.timeframe,
+            "paused":              bot.is_paused(),
+            "signal_only":         Config.BOT_IS_SIGNAL_ONLY,
+
+            # Seguran\u00e7a din\u00e2mica
+            "dynamic_leverage":    get_dynamic_leverage(bot.balance),
+            "max_trades_allowed":  get_dynamic_max_trades(bot.balance),
+            "allowed_symbols":     get_allowed_symbols(bot.balance),
+            "consecutive_losses":  bot.consecutive_losses,
+
+            # Drawdown \u2014 exigido pelo dashboard
+            "drawdown_pct":        drawdown_pct,
+            "max_drawdown_pct":    max_drawdown_pct,
         })
 
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # PENDENTES
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/pending")
     def pending():
         return jsonify(bot.pending_trades)
@@ -113,7 +178,7 @@ def create_api(bot):
         try:
             amount = float(data.get("amount", 0))
         except (TypeError, ValueError):
-            return jsonify({"ok": False, "message": "Valor inválido"}), 400
+            return jsonify({"ok": False, "message": "Valor inv\u00e1lido"}), 400
         ok, msg = bot.execute_pending(pid, amount)
         return jsonify({"ok": ok, "message": msg})
 
@@ -124,45 +189,51 @@ def create_api(bot):
         ok = bot.reject_pending(pid)
         return jsonify({"ok": ok})
 
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # FECHAMENTO MANUAL \u2014 com P&L real
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/close_trade", methods=["POST"])
     def close_trade():
-        """Fecha um trade ativo manualmente pelo símbolo."""
+        """Fecha um trade ativo manualmente pelo s\u00edmbolo."""
         data   = request.get_json(force=True) or {}
         symbol = data.get("symbol")
         if not symbol:
-            return jsonify({"ok": False, "message": "Símbolo não informado"}), 400
+            return jsonify({"ok": False, "message": "S\u00edmbolo n\u00e3o informado"}), 400
 
         trade = next((t for t in bot.active_trades if t["symbol"] == symbol), None)
         if not trade:
-            return jsonify({"ok": False, "message": f"Trade {symbol} não encontrado"}), 404
+            return jsonify({"ok": False, "message": f"Trade {symbol} n\u00e3o encontrado"}), 404
 
-        # Pega preço atual do cache
-        try:
-            from analysis import _cache
-            cur_price = float(_cache[symbol][1]["Close"].iloc[-1]) if symbol in _cache else trade["entry"]
-        except Exception:
-            cur_price = trade["entry"]
+        cur_price = _get_cached_price(symbol, trade["entry"])
+        usdjpy    = _get_usdjpy_price()
 
-        # Determina resultado com base no preço atual
-        if trade["dir"] == "BUY":
-            result = "WIN" if cur_price >= trade["entry"] else "LOSS"
-        else:
-            result = "WIN" if cur_price <= trade["entry"] else "LOSS"
+        # \ud83d\udd34 FIX: decidir WIN/LOSS pelo P&L real, n\u00e3o pelo pre\u00e7o bruto.
+        pnl_usd = calc_pnl_usd(
+            trade["symbol"], trade["dir"],
+            trade["entry"], cur_price,
+            trade.get("lot", 0.01),
+            usdjpy_price=usdjpy,
+        )
+        result = "WIN" if pnl_usd > 0 else "LOSS"
 
         bot.close_trade(trade, cur_price, result)
-        return jsonify({"ok": True, "message": f"Trade {symbol} fechado manualmente ({result})"})
+        return jsonify({
+            "ok": True,
+            "message": f"Trade {symbol} fechado manualmente ({result}, P&L ${pnl_usd:+.2f})",
+            "pnl": round(pnl_usd, 2),
+        })
 
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # HIST\u00d3RICO / LOGS / M\u00c9TRICAS
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/history")
     def history():
-        return jsonify(bot.history[-20:])
-
-    # ═══════════════════════════════════════════════════════════
-    # NOVOS ENDPOINTS: Logs e Métricas
-    # ═══════════════════════════════════════════════════════════
+        limit = request.args.get("limit", 20, type=int)
+        limit = max(1, min(limit, 500))
+        return jsonify(bot.history[-limit:])
 
     @app.route("/api/logs")
     def logs():
-        """Retorna logs recentes do bot."""
         from db import get_recent_logs
         entry_type = request.args.get("type")
         hours = request.args.get("hours", 24, type=int)
@@ -170,24 +241,40 @@ def create_api(bot):
 
         logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
         return jsonify({
-            "logs": logs_data,
-            "count": len(logs_data),
-            "filter": {"type": entry_type, "hours": hours}
+            "logs":   logs_data,
+            "count":  len(logs_data),
+            "filter": {"type": entry_type, "hours": hours},
         })
 
     @app.route("/api/metrics")
     def metrics():
-        """Retorna métricas de performance calculadas."""
         from db import calculate_metrics, load_metrics
-
         current = calculate_metrics(bot)
-        saved = load_metrics()
-
+        saved   = load_metrics()
         return jsonify({
-            "current": current,
-            "last_saved": saved.get("updated_at") if saved else None,
+            "current":         current,
+            "last_saved":      saved.get("updated_at") if saved else None,
             "initial_balance": Config.INITIAL_BALANCE,
         })
+
+    @app.route("/api/equity_curve")
+    def equity_curve():
+        """Curva de equity \u2014 usada pelo dashboard para gr\u00e1fico."""
+        try:
+            from db import load_equity_curve
+            curve = load_equity_curve()
+        except Exception:
+            # Fallback: reconstr\u00f3i da history
+            curve = []
+            balance = Config.INITIAL_BALANCE
+            for h in bot.history:
+                balance += h.get("pnl", 0)
+                curve.append({
+                    "t":       h.get("closed_at", ""),
+                    "balance": round(balance, 2),
+                    "pnl":     h.get("pnl", 0),
+                })
+        return jsonify(curve)
 
     @app.route("/api/force-save", methods=["POST"])
     def force_save():
@@ -200,7 +287,6 @@ def create_api(bot):
 
     @app.route("/api/ai_params")
     def ai_params():
-        """Retorna parâmetros aprendidos pela IA (regime, bias, etc.)."""
         try:
             from ai_validator import load_ai_params
             return jsonify(load_ai_params())
@@ -209,7 +295,6 @@ def create_api(bot):
 
     @app.route("/api/confluence")
     def confluence():
-        """Retorna snapshot de confluência de todos os pares."""
         try:
             from signals import get_confluence_snapshot
             from utils import get_allowed_symbols
@@ -220,5 +305,17 @@ def create_api(bot):
             return jsonify(snapshot)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/health")
+    def health():
+        """Endpoint leve para Railway health-check."""
+        return jsonify({
+            "ok":          True,
+            "balance":     round(bot.balance, 2),
+            "active":      len(bot.active_trades),
+            "pending":     len(bot.pending_trades),
+            "paused":      bot.is_paused(),
+            "signal_only": Config.BOT_IS_SIGNAL_ONLY,
+        })
 
     return app
