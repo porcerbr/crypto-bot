@@ -17,6 +17,7 @@ from utils import (
     pip_factor,
     is_jpy_pair,
 )
+from performance import calculate_metrics_from_history, equity_curve_from_history, trade_breakdown
 
 
 def _get_cached_price(symbol: str, fallback: float) -> float:
@@ -115,6 +116,7 @@ def create_api(bot):
                 "trailing_activated": t.get("trailing_activated", False),
                 "score":              t.get("score", 0),
                 "score_total":        t.get("score_total", 0),
+                "drawdown_pct":       bot.current_drawdown_pct() if hasattr(bot, "current_drawdown_pct") else 0.0,
                 "rr":                 t.get("rr", 0),
                 "ai_confidence":      t.get("ai_confidence", 0),
             })
@@ -251,11 +253,30 @@ def create_api(bot):
         from db import calculate_metrics, load_metrics
         current = calculate_metrics(bot)
         saved   = load_metrics()
+        performance = calculate_metrics_from_history(
+            bot.history,
+            initial_balance=Config.INITIAL_BALANCE,
+            current_balance=bot.balance,
+            active_trades_count=len(bot.active_trades),
+            pending_trades_count=len(bot.pending_trades),
+        )
         return jsonify({
             "current":         current,
+            "performance":     performance,
+            "breakdown":       trade_breakdown(bot.history),
             "last_saved":      saved.get("updated_at") if saved else None,
             "initial_balance": Config.INITIAL_BALANCE,
         })
+
+    @app.route("/api/performance")
+    def performance():
+        return jsonify(calculate_metrics_from_history(
+            bot.history,
+            initial_balance=Config.INITIAL_BALANCE,
+            current_balance=bot.balance,
+            active_trades_count=len(bot.active_trades),
+            pending_trades_count=len(bot.pending_trades),
+        ))
 
     @app.route("/api/equity_curve")
     def equity_curve():
@@ -315,6 +336,7 @@ def create_api(bot):
             "active":      len(bot.active_trades),
             "pending":     len(bot.pending_trades),
             "paused":      bot.is_paused(),
+            "risk_off":    bot.is_risk_off() if hasattr(bot, "is_risk_off") else False,
             "signal_only": Config.BOT_IS_SIGNAL_ONLY,
         })
 
