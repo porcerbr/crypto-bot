@@ -1,162 +1,309 @@
 
+from __future__ import annotations
+
+import os
 import time
+import json
+import random
 import threading
-import requests
-import pandas as pd
+from pathlib import Path
 from datetime import datetime, timezone
+from typing import Iterable
+
+import pandas as pd
+import requests
+
 from config import Config
 from utils import log, asset_name
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# Mapeamento interno \u2192 Twelve Data
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ============================================================================
+# PROFESSIONAL MARKET DATA PROVIDER
+# ============================================================================
+#
+# Goals:
+# - normalize broker symbols to Twelve Data format
+# - retry with exponential backoff
+# - validate payloads before accepting them
+# - persist last good candles to disk
+# - warm start from disk cache so the bot does not begin empty
+# - keep the public cache contract used by the rest of the bot
+# ============================================================================
+
 TD_SYMBOLS = {
-    "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY",
-    "AUDUSD": "AUD/USD", "USDCAD": "USD/CAD", "USDCHF": "USD/CHF",
-    "NZDUSD": "NZD/USD", "EURGBP": "EUR/GBP", "EURJPY": "EUR/JPY",
-    "GBPJPY": "GBP/JPY", "XAUUSD": "XAU/USD",
+    "EURUSD": "EUR/USD",
+    "GBPUSD": "GBP/USD",
+    "USDJPY": "USD/JPY",
+    "AUDUSD": "AUD/USD",
+    "USDCAD": "USD/CAD",
+    "USDCHF": "USD/CHF",
+    "NZDUSD": "NZD/USD",
+    "EURGBP": "EUR/GBP",
+    "EURJPY": "EUR/JPY",
+    "GBPJPY": "GBP/JPY",
+    "XAUUSD": "XAU/USD",
 }
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# CACHE E SINCRONIZA\u00c7\u00c3O
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# O refresh pode demorar ~65s (sleep entre batches do free tier),
-# ent\u00e3o roda numa thread separada. O loop principal l\u00ea o cache
-# sem bloquear, e recebe None se o cache ainda estiver vazio.
-_cache: dict = {}
+_cache: dict[str, tuple[float, pd.DataFrame]] = {}
 _cache_lock = threading.RLock()
-_CACHE_TTL = 20 * 60          # 20 min
+_CACHE_TTL = int(os.getenv("MARKET_DATA_CACHE_TTL", str(20 * 60)))
 _last_refresh: float = 0.0
-_refresh_thread: threading.Thread = None
+_refresh_thread: threading.Thread | None = None
 _refresh_in_progress = threading.Event()
+_invalid_candle_logged: dict[str, float] = {}
+_INVALID_LOG_COOLDOWN = int(os.getenv("MARKET_DATA_INVALID_LOG_COOLDOWN", str(10 * 60)))
 
-# Cooldown de log para candle inv\u00e1lido
-_invalid_candle_logged: dict = {}
-_INVALID_LOG_COOLDOWN = 10 * 60
+_DATA_DIR = Path(os.getenv("MARKET_DATA_DIR", ".market_cache"))
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+_TD_TIMEOUT = float(os.getenv("TWELVE_DATA_TIMEOUT", "20"))
+_TD_RETRIES = max(1, int(os.getenv("TWELVE_DATA_RETRIES", "3")))
+_TD_BATCH_SIZE = max(1, int(os.getenv("TWELVE_DATA_BATCH_SIZE", "8")))
+_TD_BATCH_PAUSE = max(0, int(os.getenv("TWELVE_DATA_BATCH_PAUSE", "61")))
+_TD_DEFAULT_INTERVAL = os.getenv("TWELVE_DATA_INTERVAL", "1h")
+_TD_OUTPUTSIZE = max(50, int(os.getenv("TWELVE_DATA_OUTPUTSIZE", "800")))
+_TD_USE_DISK_FALLBACK = os.getenv("MARKET_DATA_DISK_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def _chunked(items: list[tuple[str, str]], size: int) -> Iterable[list[tuple[str, str]]]:
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+def _symbol_to_api(symbol: str) -> str:
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return sym
+    if "/" in sym or ":" in sym:
+        return sym
+    # EURUSD -> EUR/USD, XAUUSD -> XAU/USD
+    if len(sym) == 6:
+        return f"{sym[:3]}/{sym[3:]}"
+    return sym
+
+
+def _symbol_to_file(symbol: str) -> str:
+    return (symbol or "UNKNOWN").replace("/", "_").replace(":", "_")
+
+
+def _disk_path(symbol: str) -> Path:
+    return _DATA_DIR / f"{_symbol_to_file(symbol)}.csv"
+
+
+def _save_disk_cache(symbol: str, df: pd.DataFrame) -> None:
+    try:
+        if df is None or df.empty:
+            return
+        path = _disk_path(symbol)
+        out = df.copy()
+        if out.index.name != "datetime":
+            out.index.name = "datetime"
+        out.reset_index().to_csv(path, index=False)
+    except Exception as exc:
+        log(f"[TWELVEDATA] Falha ao salvar cache em disco para {symbol}: {type(exc).__name__}: {str(exc)[:80]}")
+
+
+def _load_disk_cache(symbol: str) -> pd.DataFrame | None:
+    if not _TD_USE_DISK_FALLBACK:
+        return None
+    path = _disk_path(symbol)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+        if df.empty or "datetime" not in df.columns:
+            return None
+        df["datetime"] = pd.to_datetime(df["datetime"], utc=True, errors="coerce")
+        df = df.dropna(subset=["datetime"])
+        df = df.set_index("datetime").sort_index()
+        required = ["Open", "High", "Low", "Close"]
+        for col in required:
+            if col not in df.columns:
+                return None
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Volume" not in df.columns:
+            df["Volume"] = 0.0
+        df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+        df = df.dropna(subset=["Open", "High", "Low", "Close"])
+        if len(df) == 0:
+            return None
+        return df
+    except Exception as exc:
+        log(f"[TWELVEDATA] Falha ao ler cache em disco para {symbol}: {type(exc).__name__}: {str(exc)[:80]}")
+        return None
+
+
+def _response_to_frame(raw: dict, api_symbol: str) -> pd.DataFrame | None:
+    if not isinstance(raw, dict):
+        return None
+
+    if raw.get("status") == "error":
+        message = raw.get("message", "erro desconhecido")
+        raise RuntimeError(message)
+
+    values = raw.get("values")
+    if not values and api_symbol in raw and isinstance(raw[api_symbol], dict):
+        values = raw[api_symbol].get("values")
+    if not values:
+        return None
+
+    df = pd.DataFrame(values)
+    if df.empty or "datetime" not in df.columns:
+        return None
+
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True, errors="coerce")
+    df = df.dropna(subset=["datetime"])
+    if df.empty:
+        return None
+
+    df = df.set_index("datetime").sort_index()
+    rename_map = {"open": "Open", "high": "High", "low": "Low", "close": "Close"}
+    df = df.rename(columns=rename_map)
+
+    for col in ["Open", "High", "Low", "Close"]:
+        if col not in df.columns:
+            return None
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "Volume" not in df.columns:
+        df["Volume"] = 0.0
+    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    return df if not df.empty else None
+
+
+def _fetch_symbol(symbol_internal: str, interval: str = None, outputsize: int = None) -> tuple[pd.DataFrame | None, dict | None]:
+    if not Config.TWELVE_DATA_API_KEY:
+        return None, None
+
+    api_symbol = _symbol_to_api(symbol_internal)
+    if not api_symbol:
+        return None, None
+
+    interval = interval or _TD_DEFAULT_INTERVAL
+    outputsize = int(outputsize or _TD_OUTPUTSIZE)
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": api_symbol,
+        "interval": interval,
+        "outputsize": outputsize,
+        "apikey": Config.TWELVE_DATA_API_KEY,
+        "format": "JSON",
+        "timezone": "UTC",
+    }
+
+    last_exc: Exception | None = None
+    for attempt in range(1, _TD_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=_TD_TIMEOUT)
+            resp.raise_for_status()
+            raw = resp.json()
+            df = _response_to_frame(raw, api_symbol)
+            if df is not None and len(df) >= 20:
+                return df, raw if isinstance(raw, dict) else None
+
+            # Try a couple of common alias intervals before giving up.
+            if interval == "1h":
+                for alt_interval in ("60min", "1hour"):
+                    if alt_interval == interval:
+                        continue
+                    alt_params = dict(params)
+                    alt_params["interval"] = alt_interval
+                    alt_resp = requests.get(url, params=alt_params, timeout=_TD_TIMEOUT)
+                    alt_resp.raise_for_status()
+                    alt_raw = alt_resp.json()
+                    alt_df = _response_to_frame(alt_raw, api_symbol)
+                    if alt_df is not None and len(alt_df) >= 20:
+                        return alt_df, alt_raw if isinstance(alt_raw, dict) else None
+
+            last_exc = RuntimeError(f"{api_symbol}: payload vazio ou insuficiente")
+        except Exception as exc:
+            last_exc = exc
+
+        if attempt < _TD_RETRIES:
+            sleep_for = min(8.0, 0.9 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
+            time.sleep(sleep_for)
+
+    log(f"[TWELVEDATA] {api_symbol}: falha ao obter candles ({type(last_exc).__name__ if last_exc else 'erro'})")
+    return None, None
+
+
+def _normalize_cache_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    out = out.dropna(subset=["Open", "High", "Low", "Close"])
+    return out
+
+
+def _warm_start_from_disk() -> int:
+    loaded = 0
+    with _cache_lock:
+        for symbol in TD_SYMBOLS:
+            df = _load_disk_cache(symbol)
+            if df is None:
+                continue
+            _cache[symbol] = (time.time(), _normalize_cache_df(df))
+            loaded += 1
+    if loaded:
+        log(f"[TWELVEDATA] Warm start carregou {loaded}/{len(TD_SYMBOLS)} pares do cache local")
+    return loaded
+
+
+_warm_start_from_disk()
 
 
 def _log_invalid_candle(symbol: str):
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        log(f"[AN\u00c1LISE] {symbol}: candle inv\u00e1lido ou incompleto, ignorando...")
+        log(f"[ANÁLISE] {symbol}: candle inválido ou incompleto, ignorando...")
         _invalid_candle_logged[symbol] = now
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# REFRESH DE CACHE (thread separada)
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-def _fetch_batch(symbols_td: list[str]) -> dict:
-    """Faz UMA chamada batch ao Twelve Data e retorna o JSON."""
-    if not Config.TWELVE_DATA_API_KEY:
-        return {}
-    try:
-        resp = requests.get(
-            "https://api.twelvedata.com/time_series",
-            params={
-                "symbol":     ",".join(symbols_td),
-                "interval":   "1h",
-                "outputsize": 800,
-                "apikey":     Config.TWELVE_DATA_API_KEY,
-                "format":     "JSON",
-                "timezone":   "UTC",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        log(f"[TWELVEDATA] Erro no batch: {type(e).__name__}: {str(e)[:100]}")
-        return {}
+def _strip_open_candle(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove o último candle se ainda não fechou."""
+    if df.empty:
+        return df
+    last_time = df.index[-1]
+    if last_time.tzinfo is None:
+        last_time = last_time.replace(tzinfo=timezone.utc)
+    # assume H1 base data; safer to remove the current candle if it may still be forming
+    if last_time + pd.Timedelta(hours=1) > datetime.now(timezone.utc):
+        df = df.iloc[:-1]
+    return df
 
 
-def _refresh_cache_worker():
-    """Executa o refresh em thread separada para n\u00e3o bloquear o loop principal."""
-    global _last_refresh
-
-    if not Config.TWELVE_DATA_API_KEY:
-        log("[TWELVEDATA] TWELVE_DATA_API_KEY n\u00e3o configurada.")
-        _refresh_in_progress.clear()
-        return
-
-    try:
-        items = list(TD_SYMBOLS.items())
-        # Free tier: 8 cr\u00e9ditos/minuto. 11 s\u00edmbolos = 2 batches de 8+3
-        batches = [items[:8], items[8:]]
-        merged = {}
-
-        for batch_idx, batch in enumerate(batches):
-            if batch_idx > 0:
-                log("[TWELVEDATA] Aguardando 61s entre batches (free tier)...")
-                time.sleep(61)
-
-            symbols_td = [sym_td for _, sym_td in batch]
-            data = _fetch_batch(symbols_td)
-            if data:
-                merged.update(data)
-                log(f"[TWELVEDATA] Batch {batch_idx + 1}/2 OK ({len(batch)} pares)")
-
-        ok_count = 0
-        new_data = {}
-        now = time.time()
-
-        for sym_internal, sym_td in TD_SYMBOLS.items():
-            sym_data = merged.get(sym_td, {})
-
-            if sym_data.get("status") == "error":
-                log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
-                continue
-
-            values = sym_data.get("values", [])
-            if not values or len(values) < 50:
-                log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
-                continue
-
-            try:
-                df = pd.DataFrame(values)
-                df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-                df = df.set_index("datetime").sort_index()
-                df = df.rename(columns={
-                    "open": "Open", "high": "High",
-                    "low":  "Low",  "close": "Close",
-                })
-                for col in ["Open", "High", "Low", "Close"]:
-                    df[col] = df[col].astype(float)
-                df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
-
-                new_data[sym_internal] = (now, df)
-                ok_count += 1
-            except Exception as e:
-                log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
-
-        # Commita tudo de uma vez no cache (mant\u00e9m dados antigos dos pares que falharam)
-        with _cache_lock:
-            _cache.update(new_data)
-            _last_refresh = now
-
-        log(f"[TWELVEDATA] Cache atualizado \u2014 {ok_count}/{len(TD_SYMBOLS)} pares OK")
-
-    finally:
-        _refresh_in_progress.clear()
+def _validate_last_candle(df: pd.DataFrame) -> bool:
+    """Rejeita candles anômalos ou de indecisão."""
+    if len(df) < 15:
+        return False
+    tr_temp = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift()).abs(),
+        (df["Low"]  - df["Close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr_temp = tr_temp.rolling(14).mean().iloc[-1]
+    last_range = df["High"].iloc[-1] - df["Low"].iloc[-1]
+    last_body = abs(df["Close"].iloc[-1] - df["Open"].iloc[-1])
+    atr_mult = getattr(Config, "ATR_ANOMALY_MULT", 2.5)
+    if atr_temp > 0 and last_range > atr_mult * atr_temp:
+        return False
+    if atr_temp > 0 and last_body < 0.1 * atr_temp:
+        return False
+    return True
 
 
 def _trigger_refresh_if_needed():
-    """Dispara refresh em thread separada se o cache estiver vencido."""
     global _refresh_thread
-
     now = time.time()
     if now - _last_refresh < _CACHE_TTL:
-        return  # cache ainda v\u00e1lido
-
-    # Se j\u00e1 tem refresh rolando, n\u00e3o dispara outro
+        return
     if _refresh_in_progress.is_set():
         return
-
     _refresh_in_progress.set()
-    _refresh_thread = threading.Thread(
-        target=_refresh_cache_worker,
-        daemon=True,
-        name="td-refresh",
-    )
+    _refresh_thread = threading.Thread(target=_refresh_cache_worker, daemon=True, name="td-refresh")
     _refresh_thread.start()
 
 
@@ -171,17 +318,19 @@ def force_initial_refresh(blocking: bool = True):
 
 
 def _get_df(symbol: str):
-    """Retorna o DataFrame do cache. None se n\u00e3o dispon\u00edvel ainda."""
+    """Retorna o DataFrame do cache. None se não disponível ainda."""
     _trigger_refresh_if_needed()
     with _cache_lock:
         if symbol not in _cache:
             return None
         _, df = _cache[symbol]
+        if df is None:
+            return None
         return df.copy()
 
 
 def get_cached_price(symbol: str):
-    """\u00daltimo pre\u00e7o de fechamento do cache (sem trigger de refresh)."""
+    """Último preço de fechamento do cache."""
     with _cache_lock:
         if symbol not in _cache:
             return None
@@ -192,13 +341,83 @@ def get_cached_price(symbol: str):
 
 
 def get_cache_age_seconds() -> float:
-    """Idade do \u00faltimo refresh (para exibir no dashboard)."""
+    """Idade do último refresh (para exibir no dashboard)."""
     if _last_refresh == 0:
         return float("inf")
     return time.time() - _last_refresh
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+def _refresh_cache_worker():
+    """Refresh profissional com retry, fallback e persistência local."""
+    global _last_refresh
+
+    if not Config.TWELVE_DATA_API_KEY:
+        log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada.")
+        _refresh_in_progress.clear()
+        return
+
+    started = time.time()
+    now = time.time()
+    success_count = 0
+    disk_fallback_count = 0
+    updated: dict[str, tuple[float, pd.DataFrame]] = {}
+    stale_before = 0
+
+    try:
+        items = list(TD_SYMBOLS.items())
+        batches = list(_chunked(items, _TD_BATCH_SIZE))
+
+        with _cache_lock:
+            stale_before = len(_cache)
+
+        for batch_idx, batch in enumerate(batches):
+            if batch_idx > 0 and _TD_BATCH_PAUSE > 0:
+                log(f"[TWELVEDATA] Aguardando {_TD_BATCH_PAUSE}s entre lotes (rate limit)...")
+                time.sleep(_TD_BATCH_PAUSE)
+
+            for sym_internal, sym_td in batch:
+                df, raw = _fetch_symbol(sym_internal)
+                if df is None:
+                    disk_df = _load_disk_cache(sym_internal)
+                    if disk_df is not None and len(disk_df) >= 50:
+                        disk_df = _normalize_cache_df(disk_df)
+                        updated[sym_internal] = (now, disk_df)
+                        disk_fallback_count += 1
+                        continue
+
+                    # Preserve old cache if we already had valid data before.
+                    with _cache_lock:
+                        if sym_internal in _cache:
+                            updated[sym_internal] = _cache[sym_internal]
+                    log(f"[TWELVEDATA] {sym_td}: dados insuficientes ou indisponíveis")
+                    continue
+
+                df = _normalize_cache_df(df)
+                if len(df) < 50:
+                    log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(df)} candles)")
+                    continue
+
+                updated[sym_internal] = (now, df)
+                _save_disk_cache(sym_internal, df)
+                success_count += 1
+
+            log(f"[TWELVEDATA] Lote {batch_idx + 1}/{len(batches)} processado ({len(batch)} pares)")
+
+        if updated:
+            with _cache_lock:
+                _cache.update(updated)
+                _last_refresh = now
+
+        total_ok = success_count + disk_fallback_count
+        elapsed = round(time.time() - started, 1)
+        log(f"[TWELVEDATA] Cache atualizado — {total_ok}/{len(TD_SYMBOLS)} pares prontos em {elapsed}s")
+
+    except Exception as exc:
+        log(f"[TWELVEDATA] Erro inesperado no refresh: {type(exc).__name__}: {str(exc)[:180]}")
+    finally:
+        _refresh_in_progress.clear()
+
+
 # HELPERS DE C\u00c1LCULO
 # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
