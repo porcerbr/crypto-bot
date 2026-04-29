@@ -12,14 +12,14 @@ class Config:
     # CREDENCIAIS \u2014 devem vir obrigatoriamente de vari\u00e1veis de ambiente
     # Railway \u2192 Variables
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    BOT_TOKEN = _getenv_required("TELEGRAM_TOKEN")
-    CHAT_ID   = _getenv_required("TELEGRAM_CHAT_ID")
+    BOT_TOKEN = _getenv_required("7952260034:AAHTy0sTn5jIA0a7O9yJOQ9qPwZLxQDbxf4")
+    CHAT_ID   = _getenv_required("1056795017")
 
     # Twelve Data \u2014 chave gr\u00e1tis em https://twelvedata.com/
-    TWELVE_DATA_API_KEY = _getenv_required("TWELVE_DATA_API_KEY")
+    TWELVE_DATA_API_KEY = _getenv_required("b0c5b7aa2b1e430b83d14c4fe0db3cfd")
 
     # Google Gemini \u2014 chave gr\u00e1tis em https://aistudio.google.com/apikey
-    GEMINI_API_KEY = _getenv_required("GEMINI_API_KEY")
+    GEMINI_API_KEY = _getenv_required("AIzaSyDx9WQaAaALWcTTRudihFLfTb8HFAZPphQ")
 
     # Push opcional (ntfy.sh)
     NTFY_TOPIC = _getenv_required("NTFY_TOPIC")
