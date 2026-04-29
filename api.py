@@ -124,6 +124,34 @@ def create_api(bot):
         ok = bot.reject_pending(pid)
         return jsonify({"ok": ok})
 
+    @app.route("/api/close_trade", methods=["POST"])
+    def close_trade():
+        """Fecha um trade ativo manualmente pelo símbolo."""
+        data   = request.get_json(force=True) or {}
+        symbol = data.get("symbol")
+        if not symbol:
+            return jsonify({"ok": False, "message": "Símbolo não informado"}), 400
+
+        trade = next((t for t in bot.active_trades if t["symbol"] == symbol), None)
+        if not trade:
+            return jsonify({"ok": False, "message": f"Trade {symbol} não encontrado"}), 404
+
+        # Pega preço atual do cache
+        try:
+            from analysis import _cache
+            cur_price = float(_cache[symbol][1]["Close"].iloc[-1]) if symbol in _cache else trade["entry"]
+        except Exception:
+            cur_price = trade["entry"]
+
+        # Determina resultado com base no preço atual
+        if trade["dir"] == "BUY":
+            result = "WIN" if cur_price >= trade["entry"] else "LOSS"
+        else:
+            result = "WIN" if cur_price <= trade["entry"] else "LOSS"
+
+        bot.close_trade(trade, cur_price, result)
+        return jsonify({"ok": True, "message": f"Trade {symbol} fechado manualmente ({result})"})
+
     @app.route("/api/history")
     def history():
         return jsonify(bot.history[-20:])
