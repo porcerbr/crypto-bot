@@ -480,11 +480,10 @@ class TradingBot:
         tp_dir = "+" if direc == "BUY" else "\u2212"
 
         checks_lines = [
-            f"{'\u2705' if c['ok'] else '\u274c'} {c['name']}"
+            f"{'✅' if c['ok'] else '❌'} {c['name']}"
             for c in pend["checks"]
         ]
-        checks_str = "\
-".join(checks_lines)
+        checks_str = "\n".join(checks_lines)
 
         lines = [
             f"\ud83c\udfaf SINAL PENDENTE \u2014 {pend['symbol']} ({pend['name']})",
@@ -494,7 +493,7 @@ class TradingBot:
             f"\ud83d\uded1 SL:       {fmt(pend['sl'])}  ({sl_dir}{sl_pips} pips)",
             f"\ud83c\udfaf TP:       {fmt(pend['tp'])}  ({tp_dir}{tp_pips} pips)",
             f"\ud83d\udcca RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}",
-            f"\ud83e\udd16 IA: {pend.get('ai_reason', '\u2014')}",
+            f"🤖 IA: {pend.get('ai_reason', '—')}",
             "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
             "\u26a0\ufe0f Se der erro de SL/TP inv\u00e1lido:",
             "   Pre\u00e7o mudou \u2014 use a dist\u00e2ncia em pips",

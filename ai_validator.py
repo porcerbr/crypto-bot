@@ -346,9 +346,9 @@ Trades ativos: {len(bot.active_trades)}
     reason     = result.get("reason", "sem motivo")
     confidence = int(result.get("confidence", 5))
 
-    log(f"[GEMINI] {sym} {direction} \u2192 {'\u2705' if approve else '\u274c'} "
-        f"confian\u00e7a {confidence}/10: {reason}")
-    return approve, f"IA ({confidence}/10): {reason}"
+    approve_emoji = "✅" if approve else "❌"
+    log(f"[GEMINI] {sym} {direction} → {approve_emoji} "
+        f"confiança {confidence}/10: {reason}")
 
 
 # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
