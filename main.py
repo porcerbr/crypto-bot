@@ -78,7 +78,7 @@ def send_startup_notification(bot):
 
 
 def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None = None):
-    """Heartbeat periódico confirmando que o bot está vivo, incluindo regime atual."""
+    """Heartbeat peri\u00f3dico confirmando que o bot est\u00e1 vivo, incluindo regime atual."""
     total = bot.wins + bot.losses
     wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
 
@@ -88,24 +88,28 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
     eff_conf    = regime_info.get("effective_conf", Config.MIN_CONFLUENCE)
 
     emoji = {
-        "ranging":  "〰️",
-        "trending": "📈",
-        "neutral":  "➡️",
-        "volatile": "⚡",
-    }.get(live_regime, "➡️")
+        "ranging":  "\u3030\ufe0f",
+        "trending": "\ud83d\udcc8",
+        "neutral":  "\u27a1\ufe0f",
+        "volatile": "\u26a1",
+    }.get(live_regime, "\u27a1\ufe0f")
 
-    drawdown = bot.current_drawdown_pct() if hasattr(bot, "current_drawdown_pct") else 0.0
     bot.send(
-        "💓 HEARTBEAT — Bot operando"
-        "------------------------------"
-        f"💰 Saldo: ${round(bot.balance, 2)}"
-        f"📉 Drawdown: {drawdown}%"
-        f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L"
-        f"📈 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}"
-        f"{emoji} Regime: {live_regime.upper()} (ADX={avg_adx})"
-        f"🎯 Confluência mínima efetiva: {eff_conf} pts"
+        "\ud83d\udc93 HEARTBEAT \u2014 Bot operando\
+"
+        "------------------------------\
+"
+        f"\ud83d\udcb0 Saldo: ${round(bot.balance, 2)}\
+"
+        f"\ud83d\udcca WR: {wr}% | {bot.wins}W / {bot.losses}L\
+"
+        f"\ud83d\udcc8 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\
+"
+        f"{emoji} Regime: {live_regime.upper()} (ADX={avg_adx})\
+"
+        f"\ud83c\udfaf Conflu\u00eancia m\u00ednima efetiva: {eff_conf} pts"
     )
-    append_log("heartbeat", {"balance": bot.balance, "winrate": wr, "regime": live_regime, "drawdown_pct": drawdown})
+    append_log("heartbeat", {"balance": bot.balance, "winrate": wr, "regime": live_regime})
 
 
 def send_daily_report(bot):
@@ -120,16 +124,7 @@ def send_daily_report(bot):
 
     for h in bot.history:
         try:
-            trade_time = None
-            iso_ts = h.get("closed_ts_iso")
-            if iso_ts:
-                trade_time = datetime.fromisoformat(iso_ts)
-                if trade_time.tzinfo is None:
-                    trade_time = trade_time.replace(tzinfo=timezone.utc)
-                trade_time = trade_time.astimezone(timezone.utc)
-            else:
-                trade_time = datetime.strptime(h.get("closed_at", ""), "%d/%m %H:%M").replace(year=now.year, tzinfo=timezone.utc)
-
+            trade_time = datetime.strptime(h["closed_at"], "%d/%m %H:%M").replace(year=now.year)
             if trade_time.date() == now.date():
                 day_pnl += h.get("pnl", 0)
                 day_trades += 1
@@ -362,37 +357,36 @@ def bot_loop(bot):
                 append_log("loop_error", {"error": error_msg})
 
         # \u2500\u2500 COMANDOS TELEGRAM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        if Config.BOT_TOKEN and Config.CHAT_ID:
-            try:
-                url  = (
-                    f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
-                    f"/getUpdates?offset={bot.last_id + 1}&timeout=5"
-                )
-                resp = requests.get(url, timeout=10).json()
-                if "result" in resp:
-                    for u in resp["result"]:
-                        if "message" in u and "text" in u["message"]:
-                            txt = u["message"]["text"].strip()
+        try:
+            url  = (
+                f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
+                f"/getUpdates?offset={bot.last_id + 1}&timeout=5"
+            )
+            resp = requests.get(url, timeout=10).json()
+            if "result" in resp:
+                for u in resp["result"]:
+                    if "message" in u and "text" in u["message"]:
+                        txt = u["message"]["text"].strip()
 
-                            if txt.startswith("/executar_"):
-                                parts = txt.split("_")
-                                if len(parts) >= 3:
-                                    try:
-                                        pid    = int(parts[1])
-                                        amount = float(parts[2])
-                                        bot.execute_pending(pid, amount)
-                                    except ValueError:
-                                        bot.send("❌ Formato inválido. Use /executar_<id>_<valor>")
+                        if txt.startswith("/executar_"):
+                            parts = txt.split("_")
+                            if len(parts) >= 3:
+                                try:
+                                    pid    = int(parts[1])
+                                    amount = float(parts[2])
+                                    bot.execute_pending(pid, amount)
+                                except ValueError:
+                                    bot.send("\u274c Formato inv\u00e1lido. Use /executar_<id>_<valor>")
 
-                            elif txt in ("/confluencia", "/confluência"):
-                                _send_confluence_report(bot)
+                        elif txt in ("/confluencia", "/conflu\u00eancia"):
+                            _send_confluence_report(bot)
 
-                            elif txt == "/status":
-                                send_heartbeat(bot)
+                        elif txt == "/status":
+                            send_heartbeat(bot)
 
-                        bot.last_id = u["update_id"]
-            except Exception:
-                pass
+                    bot.last_id = u["update_id"]
+        except Exception:
+            pass
 
         time.sleep(Config.SCAN_INTERVAL)
 

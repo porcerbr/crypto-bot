@@ -345,56 +345,53 @@ def _detect_liquidity_sweeps(df: pd.DataFrame, swing_lookback: int = 10) -> dict
 # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 def _calc_indicators(df: pd.DataFrame) -> dict:
-    closes = df["Close"].astype(float)
-    highs = df["High"].astype(float)
-    lows = df["Low"].astype(float)
-    opens = df["Open"].astype(float)
+    closes = df["Close"]
+    highs, lows, opens = df["High"], df["Low"], df["Open"]
 
-    ema9 = closes.ewm(span=9, adjust=False, min_periods=1).mean().iloc[-1]
-    ema21 = closes.ewm(span=21, adjust=False, min_periods=1).mean().iloc[-1]
-    ema200 = closes.ewm(span=200, adjust=False, min_periods=1).mean().iloc[-1]
+    ema9   = closes.ewm(span=9,   adjust=False).mean().iloc[-1]
+    ema21  = closes.ewm(span=21,  adjust=False).mean().iloc[-1]
+    ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
 
-    w = min(20, max(len(closes) - 1, 2))
-    sma20 = closes.rolling(w, min_periods=2).mean().iloc[-1]
-    std20 = closes.rolling(w, min_periods=2).std(ddof=0).iloc[-1]
+    w     = min(20, len(closes) - 1)
+    sma20 = closes.rolling(w).mean().iloc[-1]
+    std20 = closes.rolling(w).std().iloc[-1]
 
     delta = closes.diff()
-    gain = delta.where(delta > 0, 0.0).rolling(14, min_periods=1).mean()
-    loss = (-delta.where(delta < 0, 0.0)).rolling(14, min_periods=1).mean()
-    avg_gain = float(gain.iloc[-1]) if len(gain) else 0.0
-    avg_loss = float(loss.iloc[-1]) if len(loss) else 0.0
-    if avg_loss <= 1e-12:
-        rsi_val = 100.0 if avg_gain > 0 else 50.0
-    else:
-        rs = avg_gain / avg_loss
-        rsi_val = 100 - (100 / (1 + rs))
-    rsi_val = round(float(max(0, min(100, rsi_val))), 1)
+    gain  = delta.where(delta > 0, 0.0).rolling(14).mean()
+    loss  = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
+    loss_val = float(loss.iloc[-1])
+    rsi_val  = (
+        round(100 - (100 / (1 + float(gain.iloc[-1]) / loss_val)), 1)
+        if loss_val != 0 else 50.0
+    )
 
-    ema12 = closes.ewm(span=12, adjust=False, min_periods=1).mean()
-    ema26 = closes.ewm(span=26, adjust=False, min_periods=1).mean()
+    ema12     = closes.ewm(span=12, adjust=False).mean()
+    ema26     = closes.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
-    sig_line = macd_line.ewm(span=9, adjust=False, min_periods=1).mean()
+    sig_line  = macd_line.ewm(span=9, adjust=False).mean()
 
     tr = pd.concat([
         highs - lows,
         (highs - closes.shift()).abs(),
-        (lows - closes.shift()).abs(),
+        (lows  - closes.shift()).abs(),
     ], axis=1).max(axis=1)
-    atr_series = tr.rolling(14, min_periods=1).mean()
-    atr = float(atr_series.iloc[-1]) if len(atr_series) else 0.0
+    atr = float(tr.rolling(14).mean().iloc[-1])
 
-    up_move = highs.diff()
-    dn_move = -lows.diff()
-    plus_dm = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
+    up_move  = highs.diff()
+    dn_move  = -lows.diff()
+    plus_dm  = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
     minus_dm = dn_move.where((dn_move > up_move) & (dn_move > 0), 0.0)
-    atr_s = tr.ewm(alpha=1/14, adjust=False, min_periods=1).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=1/14, adjust=False, min_periods=1).mean() / (atr_s + 1e-10)
-    minus_di = 100 * minus_dm.ewm(alpha=1/14, adjust=False, min_periods=1).mean() / (atr_s + 1e-10)
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
-    adx = float(dx.ewm(alpha=1/14, adjust=False, min_periods=1).mean().iloc[-1])
+    atr_s    = tr.ewm(alpha=1/14, adjust=False).mean()
+    plus_di  = 100 * plus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
+    minus_di = 100 * minus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_s
+    dx       = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
+    adx      = float(dx.ewm(alpha=1/14, adjust=False).mean().iloc[-1])
 
     price = float(closes.iloc[-1])
-    chg = float((closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100) if len(closes) >= 10 else 0.0
+    chg   = (
+        float((closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100)
+        if len(closes) >= 10 else 0.0
+    )
 
     cen = "NEUTRO"
     if price > float(ema200) and float(ema9) > float(ema21):
@@ -402,41 +399,38 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
     elif price < float(ema200) and float(ema9) < float(ema21):
         cen = "BAIXA"
 
-    last_body = abs(float(closes.iloc[-1]) - float(opens.iloc[-1]))
+    # Candle de for\u00e7a real: body >= 50% do range
+    last_body  = abs(float(closes.iloc[-1]) - float(opens.iloc[-1]))
     last_range = float(highs.iloc[-1]) - float(lows.iloc[-1])
-    body_ratio = (last_body / last_range) if last_range > 0 else 0.0
+    body_ratio = (last_body / last_range) if last_range > 0 else 0
     candle_bull = float(closes.iloc[-1]) > float(opens.iloc[-1]) and body_ratio >= 0.5
     candle_bear = float(closes.iloc[-1]) < float(opens.iloc[-1]) and body_ratio >= 0.5
-
-    atr_pct = round((atr / price) * 100, 3) if price > 0 else 0.0
-    if atr_pct >= 1.5:
-        volatility_regime = "extreme"
-    elif atr_pct >= 0.8:
-        volatility_regime = "high"
-    elif atr_pct <= 0.15:
-        volatility_regime = "low"
-    else:
-        volatility_regime = "normal"
 
     return {
         "price":       price,
         "ema9":        float(ema9),
         "ema21":       float(ema21),
         "ema200":      float(ema200),
-        "upper":       float(sma20 + 2 * std20) if pd.notna(sma20) and pd.notna(std20) else price,
-        "lower":       float(sma20 - 2 * std20) if pd.notna(sma20) and pd.notna(std20) else price,
+        "upper":       float(sma20 + 2 * std20),
+        "lower":       float(sma20 - 2 * std20),
         "rsi":         rsi_val,
-        "adx":         round(adx, 1) if pd.notna(adx) else 0.0,
-        "atr":         round(atr, 6) if pd.notna(atr) else 0.0,
-        "atr_pct":     atr_pct,
-        "volatility":  volatility_regime,
+        "atr":         round(atr, 5) if not pd.isna(atr) else 0.0,
+        "adx":         round(adx, 1) if not pd.isna(adx) else 0.0,
         "macd_bull":   bool(macd_line.iloc[-1] > sig_line.iloc[-1]),
         "macd_bear":   bool(macd_line.iloc[-1] < sig_line.iloc[-1]),
+        "macd_hist":   float(macd_line.iloc[-1] - sig_line.iloc[-1]),
+        "change_pct":  round(chg, 2),
         "candle_bull": candle_bull,
         "candle_bear": candle_bear,
-        "delta_pct":   round(chg, 2),
+        "t_buy":       float(highs.tail(5).max()),
+        "t_sell":      float(lows.tail(5).min()),
         "cenario":     cen,
     }
+
+
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# API P\u00daBLICA
+# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
     """Retorna indicadores H1 para o s\u00edmbolo (usa cache interno)."""

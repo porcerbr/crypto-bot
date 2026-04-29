@@ -4,4 +4,3 @@ pandas
 flask
 flask-cors
 pywebpush
-gunicorn
