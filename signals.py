@@ -132,14 +132,14 @@ def _get_smc_sl_tp(entry, direction, res, mtf, atr):
                 # OB bullish: SL no low do OB
                 best_ob = min(obs, key=lambda x: abs(x["low"] - entry))
                 if best_ob["low"] < entry:
-                    sl = round(best_ob["low"] - 0.5 * atr, 5)  # buffer de 0.5 ATR
+                    sl = round(best_ob["low"] - 0.8 * atr, 5)  # buffer de 0.5 ATR
                     sl_source = "ob"
         else:
             obs = ob.get("bearish", [])
             if obs:
                 best_ob = min(obs, key=lambda x: abs(x["high"] - entry))
                 if best_ob["high"] > entry:
-                    sl = round(best_ob["high"] + 0.5 * atr, 5)
+                    sl = round(best_ob["high"] + 0.8 * atr, 5)
                     sl_source = "ob"
 
     # Se não achou OB adequado, usa ATR
@@ -508,3 +508,4 @@ def check_near_signals(bot) -> None:
         bot.send(msg)
         bot._near_signal_cooldown[sym] = now
         log(f"[NEAR] {sym} {direc} {score}/{total} — alerta enviado")
+    
