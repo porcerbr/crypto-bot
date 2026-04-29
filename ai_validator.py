@@ -312,26 +312,29 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     regime_info = ai_params.get("regime_pairs", {}).get(sym, ai_params.get("market_regime", "neutral"))
     bias        = ai_params.get("strategy_bias", "balanced")
 
-    user_msg = f"""
-Par: {sym} | Dire\u00e7\u00e3o: {direction}
-Entrada: {signal.get('entry')} | SL: {signal.get('sl')} | TP: {signal.get('tp')}
-RR: {signal.get('rr')} | Score: {signal.get('score')}/{signal.get('max_score')}
+    user_msg_lines = [
+        "Par: " + str(sym) + " | Direção: " + str(direction),
+        "Entrada: " + str(signal.get('entry')) + " | SL: " + str(signal.get('sl')) + " | TP: " + str(signal.get('tp')),
+        "RR: " + str(signal.get('rr')) + " | Score: " + str(signal.get('score')) + "/" + str(signal.get('max_score')),
+        "",
+        "Indicadores H1:",
+        "- RSI: " + str(h1.get('rsi', 50)) + " | ADX: " + str(h1.get('adx', 0)),
+        "- EMA9 " + (">" if h1.get('ema9', 0) > h1.get('ema21', 0) else "<") + " EMA21",
+        "- Preço " + (">" if h1.get('price', 0) > h1.get('ema200', 0) else "<") + " EMA200",
+        "- MACD bull: " + str(h1.get('macd_bull')) + " | bear: " + str(h1.get('macd_bear')),
+        "- FVG ativo: " + str(fvg_active) + " | OB ativo: " + str(ob_active),
+        "- Sweep bull: " + str(sweep.get('bullish')) + " | bear: " + str(sweep.get('bearish')),
+        "",
+        "H4: alinhado=" + str(indicators.get('aligned', False)) + " | cenário=" + str(indicators.get('h4_cenario', 'NEUTRO')),
+        "Regime do par: " + str(regime_info) + " | Viés estratégico: " + str(bias),
+        "",
+        "Histórico par (" + str(len(pair_history)) + " trades): WR " + str(pair_wr) + "% | Últimos: " + str(last_results),
+        "WR geral do bot: " + str(round(bot.wins / max(bot.wins + bot.losses, 1) * 100, 1)) + "%",
+        "Trades ativos: " + str(len(bot.active_trades)),
+    ]
+    user_msg = "\n".join(user_msg_lines).strip()
 
-Indicadores H1:
-- RSI: {h1.get('rsi',50)} | ADX: {h1.get('adx',0)}
-- EMA9 {">" if h1.get('ema9',0) > h1.get('ema21',0) else "<"} EMA21
-- Pre\u00e7o {">" if h1.get('price',0) > h1.get('ema200',0) else "<"} EMA200
-- MACD bull: {h1.get('macd_bull')} | bear: {h1.get('macd_bear')}
-- FVG ativo: {fvg_active} | OB ativo: {ob_active}
-- Sweep bull: {sweep.get('bullish')} | bear: {sweep.get('bearish')}
-
-H4: alinhado={indicators.get('aligned',False)} | cen\u00e1rio={indicators.get('h4_cenario','NEUTRO')}
-Regime do par: {regime_info} | Vi\u00e9s estrat\u00e9gico: {bias}
-
-Hist\u00f3rico par ({len(pair_history)} trades): WR {pair_wr}% | \u00daltimos: {last_results}
-WR geral do bot: {round(bot.wins / max(bot.wins + bot.losses, 1) * 100, 1)}%
-Trades ativos: {len(bot.active_trades)}
-""".strip()
+    raw    = _call_gemini(_VALIDATOR_SYSTEM, user_msg, max_tokens=120, timeout=15)
 
     raw    = _call_gemini(_VALIDATOR_SYSTEM, user_msg, max_tokens=120, timeout=15)
     result = _parse_json(raw, context=f"{sym} {direction}")
@@ -416,47 +419,45 @@ def weekly_learning(bot) -> dict | None:
             conf_stats[bucket]["wins"] += 1
 
     conf_summary = [
-        f"Confiança {bucket}/10: WR {round(s['wins']/s['total']*100)}% ({s['total']} trades)"
+        f"Confian\u00e7a {bucket}/10: WR {round(s['wins']/s['total']*100)}% ({s['total']} trades)"
         for bucket, s in sorted(conf_stats.items())
     ]
 
-    pair_lines = chr(10).join(pair_summary)
-    conf_lines = chr(10).join(conf_summary) if conf_summary else "dados insuficientes ainda"
-    strategic_context = params.get("opus_summary") or "ainda não disponível"
-    recent_trades = [
+    recent_trades_lines = [
         (
-            h.get("symbol"),
-            h.get("dir"),
-            h.get("result"),
-            f"PnL=${h.get('pnl', 0)}",
-            f"ADX={h.get('adx', 0)}",
-            f"conf={h.get('ai_confidence', 0)}",
+            "  - " + str(h.get("symbol")) + " " + str(h.get("dir")) + " " + str(h.get("result")) +
+            " | PnL=$" + str(h.get("pnl", 0)) +
+            " | ADX=" + str(h.get("adx", 0)) +
+            " | conf=" + str(h.get("ai_confidence", 0))
         )
         for h in history[-15:]
     ]
 
-    user_msg = f"""
-=== RELATÓRIO SEMANAL ===
+    user_msg_lines = [
+        "=== RELATÓRIO SEMANAL ===",
+        "",
+        "Performance: WR " + str(wr) + "% (" + str(bot.wins) + "W/" + str(bot.losses) + "L) | P&L $" + str(total_pnl) + " | Saldo $" + str(round(bot.balance, 2)),
+        "WR últimos 30 trades: " + str(recent_wr) + "%",
+        "",
+        "Por par:",
+        pair_lines,
+        "",
+        "WR por confiança da IA (feedback loop):",
+        conf_lines,
+        "",
+        "Parâmetros atuais:",
+        "  min_confluence=" + str(params['min_confluence']) + " | min_adx=" + str(params['min_adx']),
+        "  min_rr=" + str(params['min_rr']) + " | session_strictness=" + str(params['session_strictness']),
+        "  blocked_pairs=" + str(params['blocked_pairs']),
+        "",
+        "Contexto estratégico: " + str(strategic_context),
+        "",
+        "Últimos 15 trades:",
+        "\n".join(recent_trades_lines) if recent_trades_lines else "(sem trades recentes)",
+    ]
+    user_msg = "\n".join(user_msg_lines).strip()
 
-Performance: WR {wr}% ({bot.wins}W/{bot.losses}L) | P&L ${total_pnl} | Saldo ${round(bot.balance, 2)}
-WR últimos 30 trades: {recent_wr}%
-
-Por par:
-{pair_lines}
-
-WR por confiança da IA (feedback loop):
-{conf_lines}
-
-Parâmetros atuais:
-  min_confluence={params['min_confluence']} | min_adx={params['min_adx']}
-  min_rr={params['min_rr']} | session_strictness={params['session_strictness']}
-  blocked_pairs={params['blocked_pairs']}
-
-Contexto estratégico: {strategic_context}
-
-Últimos 15 trades:
-{recent_trades}
-""".strip()
+    log("[AI] Aprendizado semanal iniciado...")
 
     log("[AI] Aprendizado semanal iniciado...")
     raw    = _call_gemini(_LEARNER_SYSTEM, user_msg, max_tokens=600, timeout=40)
@@ -559,27 +560,34 @@ def monthly_deep_analysis(bot) -> dict | None:
 
     params = load_ai_params()
 
-    user_msg = f"""
-=== AN\u00c1LISE ESTRAT\u00c9GICA MENSAL ===
+    quarter_lines = quarters
+    pair_lines_text = "\n".join(pair_summary) if pair_summary else "dados insuficientes"
+    hour_lines_text = "\n".join(hour_summary) if hour_summary else "dados insuficientes"
 
-Geral: {total} trades | WR {wr}% | P&L ${total_pnl} | Saldo ${round(bot.balance, 2)}
-BUY WR: {buy_wr}% ({len(buy_trades)} trades) | SELL WR: {sell_wr}% ({len(sell_trades)} trades)
+    user_msg_lines = [
+        "=== ANÁLISE ESTRATÉGICA MENSAL ===",
+        "",
+        "Geral: " + str(total) + " trades | WR " + str(wr) + "% | P&L $" + str(total_pnl) + " | Saldo $" + str(round(bot.balance, 2)),
+        "BUY WR: " + str(buy_wr) + "% (" + str(len(buy_trades)) + " trades) | SELL WR: " + str(sell_wr) + "% (" + str(len(sell_trades)) + " trades)",
+        "",
+        "Evolução temporal:",
+        "\n".join(quarter_lines) if quarter_lines else "dados insuficientes",
+        "",
+        "Por par:",
+        pair_lines_text,
+        "",
+        "Por hora UTC:",
+        hour_lines_text,
+        "",
+        "Parâmetros atuais:",
+        "  min_confluence=" + str(params['min_confluence']) + " | min_adx=" + str(params['min_adx']),
+        "  strategy_bias=" + str(params['strategy_bias']) + " | blocked_pairs=" + str(params['blocked_pairs']),
+        "",
+        "Análise anterior: " + str(params.get('opus_summary') or 'primeira análise'),
+    ]
+    user_msg = "\n".join(user_msg_lines).strip()
 
-Evolu\u00e7\u00e3o temporal:
-{chr(10).join(quarters)}
-
-Por par:
-{chr(10).join(pair_summary)}
-
-Por hora UTC:
-{chr(10).join(hour_summary) if hour_summary else 'dados insuficientes'}
-
-Par\u00e2metros atuais:
-  min_confluence={params['min_confluence']} | min_adx={params['min_adx']}
-  strategy_bias={params['strategy_bias']} | blocked_pairs={params['blocked_pairs']}
-
-An\u00e1lise anterior: {params.get('opus_summary') or 'primeira an\u00e1lise'}
-""".strip()
+    log("[AI] Análise estratégica mensal iniciada...")
 
     log("[AI] An\u00e1lise estrat\u00e9gica mensal iniciada...")
     raw    = _call_gemini(_STRATEGIST_SYSTEM, user_msg, max_tokens=1000, timeout=60)
