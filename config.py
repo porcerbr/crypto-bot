@@ -60,7 +60,7 @@ class Config:
     ATR_SL_MULT = 2.0         # era 1.5
     ATR_TP_MULT = 2.0         # era 2.5 (agora consistente com SL)
 
-    MIN_CONFLUENCE = 7  # validado pelo backtest — era 6
+    MIN_CONFLUENCE = 8  # validado pelo backtest — era 6
 
     INITIAL_BALANCE = float(os.getenv("START_BALANCE", "150"))
     RISK_PERCENT_PER_TRADE = 2.0
