@@ -22,9 +22,9 @@ def _log_invalid_candle(symbol: str):
     """Loga uma mensagem de aviso quando um candle é inválido, respeitando o cooldown."""
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
+        # Chamamos a função log (importada no topo) em vez da própria função
         log(f"[ANÁLISE] {symbol}: candle inválido ou incompleto, ignorando...")
         _invalid_candle_logged[symbol] = now
-
 
 _cache: dict = {}
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
@@ -33,8 +33,9 @@ _last_refresh: float = 0.0
 
 def _refresh_cache():
     """
-    Busca de forma inteligente: apenas os pares permitidos no config.py.
-    Evita o delay de 61s se o número de pares for <= 8.
+    Busca todos os 11 pares em UMA chamada batch.
+    Custo: 11 créditos por refresh.
+    Com TTL de 20 min: ~72 refreshes/dia, dentro do free tier de 800/dia.
     """
     global _last_refresh
 
@@ -42,23 +43,14 @@ def _refresh_cache():
         log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada no Railway.")
         return
 
-    # OTIMIZAÇÃO: Busca apenas os símbolos permitidos no config.py
-    allowed_symbols = getattr(Config, "ALLOWED_SYMBOLS", [])
-    
-    if allowed_symbols:
-        items = [(sym, td) for sym, td in TD_SYMBOLS.items() if sym in allowed_symbols]
-    else:
-        items = list(TD_SYMBOLS.items()) # Fallback: se não tiver filtro, busca todos
-
-    if not items:
-        log("[TWELVEDATA] Nenhum ativo configurado para buscar.")
-        return
-
-    # Divide em batches de 8 (limite do free tier por minuto)
-    batches = [items[i:i + 8] for i in range(0, len(items), 8)]
-    now = time.time()
+    # Free tier: 8 créditos/minuto, 1 crédito por símbolo.
+    # 11 símbolos em 1 chamada = 11 créditos → excede o limite.
+    # Solução: 2 batches (8 + 3) com 61s de intervalo.
+    items    = list(TD_SYMBOLS.items())
+    batches  = [items[:8], items[8:]]   # [8 pares, 3 pares]
+    now      = time.time()
     ok_count = 0
-    merged = {}
+    merged   = {}
 
     for batch_idx, batch in enumerate(batches):
         if batch_idx > 0:
@@ -84,12 +76,12 @@ def _refresh_cache():
             resp.raise_for_status()
             data = resp.json()
             merged.update(data)
-            log(f"[TWELVEDATA] Batch {batch_idx+1}/{len(batches)} recebido ({len(batch)} pares)")
+            log(f"[TWELVEDATA] Batch {batch_idx+1}/2 recebido ({len(batch)} pares)")
         except Exception as e:
             log(f"[TWELVEDATA] Erro no batch {batch_idx+1}: {e}")
             continue
 
-    for sym_internal, sym_td in items:
+    for sym_internal, sym_td in TD_SYMBOLS.items():
         sym_data = merged.get(sym_td, {})
 
         if sym_data.get("status") == "error":
@@ -120,7 +112,7 @@ def _refresh_cache():
             log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
 
     _last_refresh = now
-    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(items)} pares OK")
+    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
 
 
 def _get_df(symbol: str):
@@ -364,6 +356,7 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
 
     df = _strip_open_candle(df)
     if not _validate_last_candle(df):
+        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
         return None
 
     ind = _calc_indicators(df)
