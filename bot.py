@@ -38,34 +38,6 @@ class TradingBot:
         self._lock               = threading.RLock()
 
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-
-    def _update_peak_balance(self):
-        with self._lock:
-            self._peak_balance = max(float(getattr(self, "_peak_balance", self.balance)), float(self.balance))
-
-    def current_drawdown_pct(self) -> float:
-        peak = float(getattr(self, "_peak_balance", self.balance) or self.balance or 0)
-        if peak <= 0:
-            return 0.0
-        dd = max(0.0, (peak - float(self.balance)) / peak * 100)
-        return round(dd, 2)
-
-    def risk_off_reason(self) -> str:
-        max_dd = float(getattr(Config, "MAX_DRAWDOWN_PCT", 20.0))
-        if self.current_drawdown_pct() >= max_dd:
-            return f"Circuit breaker: drawdown de {self.current_drawdown_pct()}% >= {max_dd}%"
-
-        max_losses = int(getattr(Config, "MAX_CONSECUTIVE_LOSSES", 3))
-        if self.consecutive_losses >= max_losses:
-            return f"Circuit breaker: {self.consecutive_losses} perdas consecutivas"
-
-        if self.paused_until and time.time() < self.paused_until:
-            return "Bot pausado por proteção de risco"
-        return ""
-
-    def is_risk_off(self) -> bool:
-        return bool(self.risk_off_reason())
-
     # HELPERS DE ESTADO
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     def next_pending_id(self) -> int:
@@ -176,7 +148,7 @@ class TradingBot:
                     f"${round(max_risk_usd, 2)} para banca atual"
                 )
 
-            plan = calc_trade_plan(pend["symbol"], pend["entry"], eff_lev, self.balance, margin_usd, pend.get("dir", "BUY"))
+            plan = calc_trade_plan(pend["symbol"], pend["entry"], eff_lev, self.balance, margin_usd)
             if not plan["ok"]:
                 return False, plan["error"]
             if plan["margin_required"] > self.balance * 0.8:
@@ -362,7 +334,6 @@ class TradingBot:
 
             self.balance += margin + profit
             self.balance = round(self.balance, 2)
-            self._update_peak_balance()
 
             closed_at_iso = datetime.now(timezone.utc).isoformat()
             self.history.append({
@@ -480,10 +451,11 @@ class TradingBot:
         tp_dir = "+" if direc == "BUY" else "\u2212"
 
         checks_lines = [
-            f"{'✅' if c['ok'] else '❌'} {c['name']}"
+            f"{'\u2705' if c['ok'] else '\u274c'} {c['name']}"
             for c in pend["checks"]
         ]
-        checks_str = "\n".join(checks_lines)
+        checks_str = "\
+".join(checks_lines)
 
         lines = [
             f"\ud83c\udfaf SINAL PENDENTE \u2014 {pend['symbol']} ({pend['name']})",
@@ -493,7 +465,7 @@ class TradingBot:
             f"\ud83d\uded1 SL:       {fmt(pend['sl'])}  ({sl_dir}{sl_pips} pips)",
             f"\ud83c\udfaf TP:       {fmt(pend['tp'])}  ({tp_dir}{tp_pips} pips)",
             f"\ud83d\udcca RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}",
-            f"🤖 IA: {pend.get('ai_reason', '—')}",
+            f"\ud83e\udd16 IA: {pend.get('ai_reason', '\u2014')}",
             "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
             "\u26a0\ufe0f Se der erro de SL/TP inv\u00e1lido:",
             "   Pre\u00e7o mudou \u2014 use a dist\u00e2ncia em pips",
