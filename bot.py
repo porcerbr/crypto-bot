@@ -291,7 +291,45 @@ class TradingBot:
                 self.paused_until = time.time() + Config.PAUSE_DURATION
                 self.send("CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
         self.active_trades.remove(trade)
-        msg = "Trade fechado: " + symbol + " — " + result + chr(10) + "P&L: $" + str(round(profit, 2)) + chr(10) + "Saldo: $" + str(round(self.balance, 2))
+
+        # ── Notificação enriquecida ───────────────────────────────
+        total = self.wins + self.losses
+        new_wr = round(self.wins / total * 100, 1) if total > 0 else 0
+
+        # Pips ganhos/perdidos
+        pip_factor = 0.01 if (is_jpy_pair(symbol) or symbol == "XAUUSD") else 0.0001
+        pips = round((exit_price - entry) / pip_factor if trade["dir"] == "BUY"
+                     else (entry - exit_price) / pip_factor, 1)
+
+        # Duração do trade
+        duration_str = "—"
+        try:
+            opened_str = trade.get("opened_at", "")
+            if opened_str:
+                opened_dt = datetime.strptime(opened_str, "%d/%m %H:%M").replace(
+                    year=datetime.now().year)
+                delta = datetime.now() - opened_dt
+                h, m  = divmod(int(delta.total_seconds() // 60), 60)
+                duration_str = f"{h}h {m}min" if h > 0 else f"{m}min"
+        except Exception:
+            pass
+
+        pnl_sign  = "+" if profit >= 0 else ""
+        pips_sign = "+" if pips >= 0 else ""
+        emoji     = "✅" if result == "WIN" else "❌"
+        wr_emoji  = "📈" if new_wr >= 55 else "📊"
+
+        msg = (
+            f"{emoji} TRADE FECHADO — {symbol} {trade['dir']}\n"
+            f"——————————————————\n"
+            f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}\n"
+            f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)\n"
+            f"⏱ Duração: {duration_str}\n"
+            f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}\n"
+            f"——————————————————\n"
+            f"🏦 Saldo: ${round(self.balance, 2)}\n"
+            f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L)"
+        )
         self.send(msg)
         save_state(self)
 
