@@ -293,14 +293,19 @@ def bot_loop(bot):
                 from ai_validator import weekly_learning
                 result = weekly_learning(bot)
                 if result:
-                    last_suggestion = result.get('last_suggestion', '')
-                    blocked_pairs = ', '.join(result.get('blocked_pairs', [])) or 'nenhum'
                     bot.send(
-                        f"""🧠 APRENDIZADO SEMANAL
-──────────────────
-{last_suggestion}
-Min confluence: {result['min_confluence']} | Min ADX: {result['min_adx']} | Min RR: {result['min_rr']}
-Pares bloqueados: {blocked_pairs}"""
+                        "\ud83e\udde0 APRENDIZADO SEMANAL\
+"
+                        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+"
+                        f"{result.get('last_suggestion','')}\
+\
+"
+                        f"Min confluence: {result['min_confluence']} | "
+                        f"Min ADX: {result['min_adx']} | "
+                        f"Min RR: {result['min_rr']}\
+"
+                        f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
                     )
                 last_weekly_learning = time.time()
             except Exception as e:
@@ -313,17 +318,25 @@ Pares bloqueados: {blocked_pairs}"""
                 result = monthly_deep_analysis(bot)
                 if result:
                     regime_pairs = result.get("regime_pairs", {})
-                    regime_txt = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
-                    favored_sessions = ', '.join(result.get('favored_sessions', [])) or '—'
-                    avoid_hours = result.get('avoid_hours_utc', []) or 'nenhuma'
+                    regime_txt   = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
                     bot.send(
-                        f"""🔮 ANÁLISE MENSAL (Estratégica)
-──────────────────
-{result.get('opus_summary', '')}
-Regime: {result.get('market_regime','?').upper()} | Viés: {result.get('strategy_bias','?').upper()}
-Sessões favoritas: {favored_sessions}
-Horas a evitar (UTC): {avoid_hours}
-Regimes por par: {regime_txt or '—'}"""
+                        "\ud83d\udd2e AN\u00c1LISE MENSAL (Estrat\u00e9gica)\
+"
+                        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+"
+                        f"{result.get('opus_summary','')}\
+\
+"
+                        f"Regime: {result.get('market_regime','?').upper()} | "
+                        f"Vi\u00e9s: {result.get('strategy_bias','?').upper()}\
+"
+                        f"Sess\u00f5es favoritas: {', '.join(result.get('favored_sessions',[])) or '\u2014'}\
+"
+                        f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\
+\
+"
+                        f"Por par:\
+{regime_txt}"
                     )
                 last_monthly_analysis = time.time()
             except Exception as e:
