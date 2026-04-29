@@ -1,19 +1,32 @@
+
 import os
 
+
+def _getenv_required(name: str) -> str:
+    """Retorna env var; se n\u00e3o existir/vazia, retorna '' (valida\u00e7\u00e3o acontece em main.py)."""
+    return os.getenv(name, "").strip()
+
+
 class Config:
-    BOT_TOKEN  = os.getenv("TELEGRAM_TOKEN", "7952260034:AAFz3nzC0BJ7Fp7YKwDBIv_HiBX5Sg04TLg")
-    CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "1056795017")
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # CREDENCIAIS \u2014 devem vir obrigatoriamente de vari\u00e1veis de ambiente
+    # Railway \u2192 Variables
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    BOT_TOKEN = _getenv_required("7952260034:AAHTy0sTn5jIA0a7O9yJOQ9qPwZLxQDbxf4")
+    CHAT_ID   = _getenv_required("T1056795017")
 
-    # ── Twelve Data ───────────────────────────────────────────
-    # Chave grátis em: https://twelvedata.com/
-    # Railway → Variables → TWELVE_DATA_API_KEY
-    TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+    # Twelve Data \u2014 chave gr\u00e1tis em https://twelvedata.com/
+    TWELVE_DATA_API_KEY = _getenv_required("b0c5b7aa2b1e430b83d14c4fe0db3cfd")
 
-    # ── Google Gemini (IA de validação e aprendizado — GRÁTIS) ───
-    # Chave grátis em: https://aistudio.google.com/apikey
-    # Railway → Variables → GEMINI_API_KEY
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    # Google Gemini \u2014 chave gr\u00e1tis em https://aistudio.google.com/apikey
+    GEMINI_API_KEY = _getenv_required("AIzaSyDx9WQaAaALWcTTRudihFLfTb8HFAZPphQ")
 
+    # Push opcional (ntfy.sh)
+    NTFY_TOPIC = _getenv_required("NTFY_TOPIC")
+
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # MODO E TIMEFRAME
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     MODE = "FXGOLD"
     TIMEFRAME = "1h"
 
@@ -24,48 +37,62 @@ class Config:
         "GBPJPY": "GBP/JPY", "XAUUSD": "Ouro"
     }
 
-    # ── ALAVANCAGEM FIXA ─────────────────────────────────
-    DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "500"))
-    USE_FIXED_LEVERAGE = True      # True = sempre usa DEFAULT_LEVERAGE
-                                   # False = usa dinâmica da Tickmill
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # ALAVANCAGEM
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    DEFAULT_LEVERAGE  = int(os.getenv("DEFAULT_LEVERAGE", "500"))
+    USE_FIXED_LEVERAGE = True
+    USE_DYNAMIC_LEVERAGE = True  # prevalece sobre USE_FIXED quando True
 
-    # ── SMC & Multi-Timeframe ────────────────────────────
-    MTF_CONFIRM_TIMEFRAME = "4h"
-    MTF_MIN_CONFLUENCE = 5
-    FVG_LOOKBACK = 20
-    OB_LOOKBACK = 15
+    # Tabela de alavancagem din\u00e2mica por faixa de capital
+    DYNAMIC_LEVERAGE_TABLE = {
+        500:           500,   # $0-$500
+        2000:          200,
+        5000:          100,
+        10000:          50,
+        30000:          30,
+        float('inf'):   20,   # $30k+
+    }
+
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # SMC & MULTI-TIMEFRAME
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    MTF_CONFIRM_TIMEFRAME    = "4h"
+    MTF_MIN_CONFLUENCE       = 5
+    FVG_LOOKBACK             = 20
+    OB_LOOKBACK              = 15
     LIQUIDITY_SWING_LOOKBACK = 10
 
-    # ── R:R Dinâmico baseado em Score SMC ────────────────
-    TP_SL_RATIO_BASE = 2.0    # era 2.5 — ajustado pelo backtest (melhor expectância)
-    TP_SL_RATIO_STEP = 0.3
-    MAX_TP_SL_RATIO  = 4.0
-    USE_OB_FOR_SL        = True
+    # R:R din\u00e2mico baseado em score SMC
+    TP_SL_RATIO_BASE   = 2.5
+    TP_SL_RATIO_STEP   = 0.5
+    MAX_TP_SL_RATIO    = 4.5
+    USE_OB_FOR_SL      = True
     USE_LIQUIDITY_FOR_TP = True
-    USE_FVG_FOR_TP       = True
+    USE_FVG_FOR_TP     = True
 
-    # ── Turtle Position Sizing ───────────────────────────
-    ATR_RISK_PCT     = 1.0
-    ATR_MULT_FOR_RISK= 2.0
+    # Turtle Position Sizing
+    ATR_RISK_PCT       = 1.0
+    ATR_MULT_FOR_RISK  = 2.0
 
-    # Fallback porcentagem
+    # Fallback de SL/TP em porcentagem
     SL_TP_BASE_MULTIPLIER = 400.0
-    SL_MAX_PCT = 4.0
-    SL_MIN_PCT = 0.5
-    TP_SL_RATIO = 2.0         # era 2.5
+    SL_MAX_PCT            = 4.0
+    SL_MIN_PCT            = 0.5
+    TP_SL_RATIO           = 2.5
 
-    # ATR multipliers — otimizados pelo backtest de 3 anos
-    # SL: 2.0x ATR dá mais espaço e reduz stops prematuros
-    # TP: 2.0x ATR (RR 1:2.0) maximizou expectância (+$1.19/trade)
-    ATR_SL_MULT = 2.0         # era 1.5
-    ATR_TP_MULT = 2.0         # era 2.5 (agora consistente com SL)
+    ATR_SL_MULT = 1.5
+    ATR_TP_MULT = 2.5
 
-    MIN_CONFLUENCE = 8  # validado pelo backtest — era 6
+    MIN_CONFLUENCE = 6
 
-    INITIAL_BALANCE = float(os.getenv("START_BALANCE", "150"))
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # CAPITAL E RISCO
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
     RISK_PERCENT_PER_TRADE = 2.0
 
-    # ── Correlação (regra 3-5-7) ─────────────────────────
+    # Correla\u00e7\u00e3o (regra 3-5-7)
     CORRELATION_GROUPS = {
         "USD_LONG":  ["EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "XAUUSD"],
         "USD_SHORT": ["USDJPY", "USDCAD", "USDCHF"],
@@ -75,139 +102,102 @@ class Config:
     }
     MAX_CORRELATED_RISK_PCT = 7.0
 
-    MAX_TRADES = 3
-    ASSET_COOLDOWN = 3600
-    SCAN_INTERVAL = 60
-    PAUSE_DURATION = 3600
+    MAX_TRADES             = 3
+    ASSET_COOLDOWN         = 3600
+    SCAN_INTERVAL          = 60
+    PAUSE_DURATION         = 3600
     MAX_CONSECUTIVE_LOSSES = 3
 
     MARGIN_CALL_PCT = 100.0
-    STOP_OUT_PCT = 30.0
+    STOP_OUT_PCT    = 30.0
 
     TIMEFRAMES = {
-        "1h": ("60d", "1h"),
+        "1h": ("60d",  "1h"),
         "4h": ("120d", "1h"),
     }
 
-    COMMISSION_PER_LOT = {
-        "FOREX": 6.0,
-        "COMMODITIES": 6.0,
-    }
-    CONTRACT_SIZES = {
-        "FOREX": 100000,
-        "COMMODITIES": 100,
-    }
-    CONTRACT_SIZES_SPECIFIC = {
-        "XAUUSD": 100,
-    }
-    MAX_LEVERAGE = {
-        "FOREX": 1000,
-        "XAUUSD": 1000,
-    }
-    MIN_LOT = 0.01
+    COMMISSION_PER_LOT = {"FOREX": 6.0, "COMMODITIES": 6.0}
+    CONTRACT_SIZES     = {"FOREX": 100000, "COMMODITIES": 100}
+    CONTRACT_SIZES_SPECIFIC = {"XAUUSD": 100}
+    MAX_LEVERAGE       = {"FOREX": 1000, "XAUUSD": 1000}
+    MIN_LOT            = 0.01
 
     YAHOO_SYMBOLS = {
-        "EURUSD": "EURUSD=X",
-        "GBPUSD": "GBPUSD=X",
-        "USDJPY": "USDJPY=X",
-        "AUDUSD": "AUDUSD=X",
-        "USDCAD": "USDCAD=X",
-        "USDCHF": "USDCHF=X",
-        "NZDUSD": "NZDUSD=X",
-        "EURGBP": "EURGBP=X",
-        "EURJPY": "EURJPY=X",
-        "GBPJPY": "GBPJPY=X",
-        "XAUUSD": "XAUUSD=X",
+        "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+        "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
+        "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
+        "GBPJPY": "GBPJPY=X", "XAUUSD": "XAUUSD=X",
     }
 
     TRAILING_ACTIVATION = 0.5
-    ATR_MULT_TRAIL = 1.5
+    ATR_MULT_TRAIL      = 1.5
 
-    NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # PROTE\u00c7\u00d5ES DE SEGURAN\u00c7A (FASE 500x)
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
-    # ═══════════════════════════════════════════════════════════
-    # NOVO: ALAVANCAGEM DINÂMICA POR BANCA
-    # ═══════════════════════════════════════════════════════════
-    # Reduz alavancagem conforme capital cresce — protege lucros
-    # acumulados e reduz drasticamente o risco de gap catastrófico
-    DYNAMIC_LEVERAGE_TABLE = {
-        500:    500,   # $0-$500:   sobrevivência (única opção viável)
-        2000:   200,   # $500-$2k:  já operável, reduz risco
-        5000:   100,   # $2k-$5k:   confortável
-        10000:  50,    # $5k-$10k:  crescimento seguro
-        30000:  30,    # $10k-$30k: sustentabilidade
-        float('inf'): 20,  # $30k+: patrimônio, alav institucional
-    }
-
-    # Se True, usa a tabela acima. Se False, usa DEFAULT_LEVERAGE fixo.
-    USE_DYNAMIC_LEVERAGE = True
-
-    # ═══════════════════════════════════════════════════════════
-    # NOVO: PROTEÇÕES DE SEGURANÇA PARA FASE 500x
-    # ═══════════════════════════════════════════════════════════
-
-    # 1. Máximo de trades ativos por nível de banca
-    # Com $150 e 500x, 3 trades abertos = suicídio se mercado abrir com gap
+    # M\u00e1ximo de trades ativos por n\u00edvel de banca
     DYNAMIC_MAX_TRADES = {
-        500:    1,   # até $500:   APENAS 1 trade por vez
-        1500:   2,   # até $1500:  máximo 2 trades
-        float('inf'): 3,  # acima: 3 trades (seu padrão original)
+        500:          1,
+        1500:         2,
+        float('inf'): 3,
     }
 
-    # 2. Ativos permitidos por nível de banca (tier system)
-    # Bloqueia pares voláteis enquanto banca é pequena demais
+    # Tier system de ativos
     ASSET_TIERS = {
-        0: {
-            "min_balance": 0,
-            "symbols": ["EURUSD", "GBPUSD"],  # majors mais estáveis
-        },
-        1: {
-            "min_balance": 500,
-            "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"],
-        },
-        2: {
-            "min_balance": 1000,
-            "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF",
-                       "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "USDJPY"],
-        },
-        3: {
-            "min_balance": 2000,
-            "symbols": list(FXGOLD_ASSETS.keys()),  # tudo incluindo XAUUSD
-        },
+        0: {"min_balance": 0,    "symbols": ["EURUSD", "GBPUSD"]},
+        1: {"min_balance": 500,  "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]},
+        2: {"min_balance": 1000, "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF",
+                                             "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "USDJPY"]},
+        3: {"min_balance": 2000, "symbols": list(FXGOLD_ASSETS.keys())},
     }
 
-    # 3. Risco máximo ABSOLUTO por trade (em USD)
-    # Impede que banca pequena arrisque demais em um único trade
+    # Risco m\u00e1ximo absoluto (USD) por trade
     MAX_RISK_ABSOLUTE_USD = {
-        500:    5.0,    # até $500:   máx $5 de risco por trade
-        1500:   15.0,   # até $1500:  máx $15
-        3000:   30.0,   # até $3000:  máx $30
-        float('inf'): 100.0,  # acima: máx $100
+        500:          5.0,
+        1500:        15.0,
+        3000:        30.0,
+        float('inf'): 100.0,
     }
 
-    # 4. Margem mínima livre obrigatória antes de abrir trade
-    # Garante buffer contra gaps e movimentos bruscos
+    # Margem livre m\u00ednima obrigat\u00f3ria
     MIN_FREE_MARGIN_PCT = {
-        500:    0.60,   # 60% livre obrigatório (só pode usar 40%)
-        1500:   0.40,   # 40% livre
-        3000:   0.25,   # 25% livre
-        float('inf'): 0.15,  # 15% livre
+        500:          0.60,
+        1500:         0.40,
+        3000:         0.25,
+        float('inf'): 0.15,
     }
 
-    # 5. Proteção de fim de semana / gap
-    # Não abre novos trades próximo do fechamento de sexta ou na abertura de domingo
-    FRIDAY_NO_TRADE_AFTER_HOUR = 20   # UTC — não abre após 20h de sexta
-    SUNDAY_NO_TRADE_BEFORE_HOUR = 22  # UTC — não abre antes de 22h de domingo
+    # Prote\u00e7\u00e3o de gap fim de semana
+    FRIDAY_NO_TRADE_AFTER_HOUR  = 20  # UTC
+    SUNDAY_NO_TRADE_BEFORE_HOUR = 22  # UTC
 
-    # 6. ATR anômalo mais agressivo
-    # Se candle > 2.5x ATR, ignora sinal (era 3x no seu código original)
+    # Candle an\u00f4malo: se body > N*ATR, ignora sinal
     ATR_ANOMALY_MULT = 2.5
 
-    # 7. Cooldown extendido após loss em fase 500x
-    # Com banca pequena, 1h pode não ser suficiente para resetar
+    # Cooldown ap\u00f3s loss
     DYNAMIC_COOLDOWN = {
-        500:    7200,   # 2 horas
-        1500:   5400,   # 1.5 horas
-        float('inf'): 3600,  # 1h padrão
+        500:          7200,  # 2h
+        1500:         5400,  # 1.5h
+        float('inf'): 3600,  # 1h
     }
-    
+
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # VALIDA\u00c7\u00c3O
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    @classmethod
+    def validate(cls) -> list[str]:
+        """Retorna lista de erros de configura\u00e7\u00e3o. Vazia = tudo OK."""
+        errors = []
+        if not cls.BOT_TOKEN:
+            errors.append("TELEGRAM_TOKEN n\u00e3o configurado")
+        if not cls.CHAT_ID:
+            errors.append("TELEGRAM_CHAT_ID n\u00e3o configurado")
+        if not cls.TWELVE_DATA_API_KEY:
+            errors.append("TWELVE_DATA_API_KEY n\u00e3o configurado (obrigat\u00f3rio para obter candles)")
+        if not cls.GEMINI_API_KEY:
+            # Warning apenas \u2014 bot funciona sem IA mas aprova tudo
+            errors.append("AVISO: GEMINI_API_KEY n\u00e3o configurado \u2014 IA desativada")
+        if cls.INITIAL_BALANCE <= 0:
+            errors.append(f"START_BALANCE inv\u00e1lido: {cls.INITIAL_BALANCE}")
+        return errors
