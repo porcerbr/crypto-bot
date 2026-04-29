@@ -45,7 +45,8 @@ TD_SYMBOLS = {
 
 _cache: dict[str, tuple[float, pd.DataFrame]] = {}
 _cache_lock = threading.RLock()
-_CACHE_TTL = int(os.getenv("MARKET_DATA_CACHE_TTL", str(20 * 60)))
+# Free tier suporta FX/crypto com histórico limitado; um refresh por hora evita gastar créditos à toa.
+_CACHE_TTL = int(os.getenv("MARKET_DATA_CACHE_TTL", str(60 * 60)))
 _last_refresh: float = 0.0
 _refresh_thread: threading.Thread | None = None
 _refresh_in_progress = threading.Event()
@@ -56,12 +57,15 @@ _DATA_DIR = Path(os.getenv("MARKET_DATA_DIR", ".market_cache"))
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _TD_TIMEOUT = float(os.getenv("TWELVE_DATA_TIMEOUT", "20"))
-_TD_RETRIES = max(1, int(os.getenv("TWELVE_DATA_RETRIES", "3")))
+_TD_RETRIES = max(1, int(os.getenv("TWELVE_DATA_RETRIES", "2")))
 _TD_BATCH_SIZE = max(1, int(os.getenv("TWELVE_DATA_BATCH_SIZE", "8")))
 _TD_BATCH_PAUSE = max(0, int(os.getenv("TWELVE_DATA_BATCH_PAUSE", "61")))
 _TD_DEFAULT_INTERVAL = os.getenv("TWELVE_DATA_INTERVAL", "1h")
-_TD_OUTPUTSIZE = max(50, int(os.getenv("TWELVE_DATA_OUTPUTSIZE", "800")))
+_TD_OUTPUTSIZE = max(50, int(os.getenv("TWELVE_DATA_OUTPUTSIZE", "250")))
 _TD_USE_DISK_FALLBACK = os.getenv("MARKET_DATA_DISK_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+_TD_ALLOW_DEMO_FALLBACK = os.getenv("TWELVE_DATA_DEMO_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+_YAHOO_FALLBACK_ENABLED = os.getenv("MARKET_DATA_YAHOO_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+
 
 
 def _chunked(items: list[tuple[str, str]], size: int) -> Iterable[list[tuple[str, str]]]:
@@ -83,6 +87,83 @@ def _symbol_to_api(symbol: str) -> str:
 
 def _symbol_to_file(symbol: str) -> str:
     return (symbol or "UNKNOWN").replace("/", "_").replace(":", "_")
+
+
+def _interval_to_yahoo(interval: str) -> tuple[str, str]:
+    """Mapeia intervalos do bot para o endpoint chart do Yahoo Finance."""
+    normalized = (interval or "1h").strip().lower()
+    if normalized in {"1h", "60min", "1hour"}:
+        return "1h", "60d"
+    if normalized in {"4h", "240min", "4hour"}:
+        return "1h", "60d"
+    if normalized in {"1day", "1d", "day"}:
+        return "1d", "1y"
+    return "1h", "60d"
+
+
+def _fetch_yahoo_symbol(symbol_internal: str, interval: str = None, outputsize: int = None) -> tuple[pd.DataFrame | None, dict | None]:
+    if not _YAHOO_FALLBACK_ENABLED:
+        return None, None
+
+    ticker = Config.YAHOO_SYMBOLS.get(symbol_internal)
+    if not ticker:
+        return None, None
+
+    yahoo_interval, yahoo_range = _interval_to_yahoo(interval or _TD_DEFAULT_INTERVAL)
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+    params = {
+        "interval": yahoo_interval,
+        "range": yahoo_range,
+        "includePrePost": "false",
+        "events": "div,splits",
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=_TD_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json()
+        chart = (raw or {}).get("chart", {})
+        result = (chart.get("result") or [None])[0]
+        if not result:
+            return None, raw if isinstance(raw, dict) else None
+
+        timestamps = result.get("timestamp") or []
+        quote = (((result.get("indicators") or {}).get("quote") or [None])[0]) or {}
+        opens = quote.get("open") or []
+        highs = quote.get("high") or []
+        lows = quote.get("low") or []
+        closes = quote.get("close") or []
+        volumes = quote.get("volume") or []
+
+        rows = []
+        for i, ts in enumerate(timestamps):
+            try:
+                dt = pd.to_datetime(int(ts), unit="s", utc=True)
+            except Exception:
+                continue
+            o = opens[i] if i < len(opens) else None
+            h = highs[i] if i < len(highs) else None
+            l = lows[i] if i < len(lows) else None
+            c = closes[i] if i < len(closes) else None
+            if o is None or h is None or l is None or c is None:
+                continue
+            rows.append({
+                "datetime": dt,
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+                "volume": float(volumes[i]) if i < len(volumes) and volumes[i] is not None else 0.0,
+            })
+
+        if not rows:
+            return None, raw if isinstance(raw, dict) else None
+
+        df = pd.DataFrame(rows).set_index("datetime").sort_index()
+        return _response_to_frame({"values": df.reset_index().rename(columns={"datetime": "datetime", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}).to_dict(orient="records")}, symbol_internal), raw if isinstance(raw, dict) else None
+    except Exception as exc:
+        log(f"[YAHOO] {symbol_internal}: falha no fallback ({type(exc).__name__}: {str(exc)[:120]})")
+        return None, None
 
 
 def _disk_path(symbol: str) -> Path:
@@ -171,11 +252,11 @@ def _response_to_frame(raw: dict, api_symbol: str) -> pd.DataFrame | None:
 
 
 def _fetch_symbol(symbol_internal: str, interval: str = None, outputsize: int = None) -> tuple[pd.DataFrame | None, dict | None]:
-    if not Config.TWELVE_DATA_API_KEY:
+    if not Config.TWELVE_DATA_API_KEY and symbol_internal != "XAUUSD":
         return None, None
 
     api_symbol = _symbol_to_api(symbol_internal)
-    if not api_symbol:
+    if not api_symbol and symbol_internal != "XAUUSD":
         return None, None
 
     interval = interval or _TD_DEFAULT_INTERVAL
@@ -190,39 +271,62 @@ def _fetch_symbol(symbol_internal: str, interval: str = None, outputsize: int = 
         "timezone": "UTC",
     }
 
-    last_exc: Exception | None = None
-    for attempt in range(1, _TD_RETRIES + 1):
-        try:
-            resp = requests.get(url, params=params, timeout=_TD_TIMEOUT)
-            resp.raise_for_status()
-            raw = resp.json()
-            df = _response_to_frame(raw, api_symbol)
-            if df is not None and len(df) >= 20:
-                return df, raw if isinstance(raw, dict) else None
+    def _call_twelvedata(request_params: dict) -> tuple[pd.DataFrame | None, dict | None, Exception | None]:
+        last_error = None
+        for attempt in range(1, _TD_RETRIES + 1):
+            try:
+                resp = requests.get(url, params=request_params, timeout=_TD_TIMEOUT)
+                resp.raise_for_status()
+                raw = resp.json()
+                df = _response_to_frame(raw, api_symbol)
+                if df is not None and len(df) >= 20:
+                    return df, raw if isinstance(raw, dict) else None, None
+                if isinstance(raw, dict) and raw.get("status") == "error":
+                    return None, raw, RuntimeError(raw.get("message", "erro desconhecido"))
+                last_error = RuntimeError(f"{api_symbol}: payload vazio ou insuficiente")
+            except Exception as exc:
+                last_error = exc
 
-            # Try a couple of common alias intervals before giving up.
-            if interval == "1h":
-                for alt_interval in ("60min", "1hour"):
-                    if alt_interval == interval:
-                        continue
-                    alt_params = dict(params)
-                    alt_params["interval"] = alt_interval
-                    alt_resp = requests.get(url, params=alt_params, timeout=_TD_TIMEOUT)
-                    alt_resp.raise_for_status()
-                    alt_raw = alt_resp.json()
-                    alt_df = _response_to_frame(alt_raw, api_symbol)
-                    if alt_df is not None and len(alt_df) >= 20:
-                        return alt_df, alt_raw if isinstance(alt_raw, dict) else None
+            if attempt < _TD_RETRIES:
+                sleep_for = min(8.0, 0.9 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
+                time.sleep(sleep_for)
+        return None, None, last_error
 
-            last_exc = RuntimeError(f"{api_symbol}: payload vazio ou insuficiente")
-        except Exception as exc:
-            last_exc = exc
+    # 1) Twelve Data normal
+    df, raw, err = _call_twelvedata(params)
+    if df is not None:
+        return df, raw
 
-        if attempt < _TD_RETRIES:
-            sleep_for = min(8.0, 0.9 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
-            time.sleep(sleep_for)
+    # 2) Interval aliases quando a free tier é mais sensível a parâmetros
+    if interval == "1h":
+        for alt_interval in ("60min", "1hour"):
+            alt_params = dict(params)
+            alt_params["interval"] = alt_interval
+            alt_df, alt_raw, alt_err = _call_twelvedata(alt_params)
+            if alt_df is not None:
+                return alt_df, alt_raw
+            if alt_err is not None:
+                err = alt_err
 
-    log(f"[TWELVEDATA] {api_symbol}: falha ao obter candles ({type(last_exc).__name__ if last_exc else 'erro'})")
+    # 3) Fallback demo para símbolos trial/forex quando a conta free está apertando o limite
+    if _TD_ALLOW_DEMO_FALLBACK and symbol_internal != "XAUUSD":
+        demo_params = dict(params)
+        demo_params["apikey"] = "demo"
+        demo_df, demo_raw, demo_err = _call_twelvedata(demo_params)
+        if demo_df is not None:
+            log(f"[TWELVEDATA] {api_symbol}: usando fallback demo")
+            return demo_df, demo_raw
+        if demo_err is not None:
+            err = demo_err
+
+    # 4) Gold/commodities: Twelve Data free não cobre commodities; usa Yahoo como fallback só para XAUUSD
+    if symbol_internal == "XAUUSD":
+        yahoo_df, yahoo_raw = _fetch_yahoo_symbol(symbol_internal, interval=interval, outputsize=outputsize)
+        if yahoo_df is not None:
+            log("[MARKET DATA] XAUUSD obtido via fallback Yahoo Finance")
+            return yahoo_df, yahoo_raw
+
+    log(f"[TWELVEDATA] {api_symbol}: falha ao obter candles ({type(err).__name__ if err else 'erro'})")
     return None, None
 
 
@@ -389,7 +493,14 @@ def _refresh_cache_worker():
                     with _cache_lock:
                         if sym_internal in _cache:
                             updated[sym_internal] = _cache[sym_internal]
-                    log(f"[TWELVEDATA] {sym_td}: dados insuficientes ou indisponíveis")
+                            log(f"[TWELVEDATA] {sym_td}: usando cache antigo")
+                            continue
+
+                    # XAUUSD não pertence ao plano free da Twelve Data; o fallback pode falhar sem afetar o restante.
+                    if sym_internal == "XAUUSD":
+                        log(f"[TWELVEDATA] {sym_td}: indisponível na Twelve Data free; usando fallback quando possível")
+                    else:
+                        log(f"[TWELVEDATA] {sym_td}: dados insuficientes ou indisponíveis")
                     continue
 
                 df = _normalize_cache_df(df)
