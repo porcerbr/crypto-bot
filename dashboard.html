@@ -1122,10 +1122,16 @@
                 </div>
 
                 <!-- Chips -->
-                <div class="badge-row">
-                    ${t.score ? `<span class="chip blue">Score ${t.score}/13</span>` : ''}
-                    ${t.rr ? `<span class="chip green">RR 1:${t.rr}</span>` : ''}
-                    ${t.ai_confidence ? `<span class="chip purple">🤖 IA ${t.ai_confidence}/10</span>` : ''}
+                <div class="badge-row" style="justify-content:space-between;align-items:center">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        ${t.score ? `<span class="chip blue">Score ${t.score}/13</span>` : ''}
+                        ${t.rr ? `<span class="chip green">RR 1:${t.rr}</span>` : ''}
+                        ${t.ai_confidence ? `<span class="chip purple">🤖 IA ${t.ai_confidence}/10</span>` : ''}
+                    </div>
+                    <button class="btn danger" style="font-size:12px;padding:6px 14px"
+                        onclick="closeTrade('${t.symbol}')">
+                        🔴 Fechar Trade
+                    </button>
                 </div>
             </div>`;
         }).join('');
@@ -1362,6 +1368,27 @@
     }
 
     // ── Execute / Reject ─────────────────────────────────────────
+    async function closeTrade(symbol) {
+        if (!confirm(`Fechar trade de ${symbol} pelo preço atual?`)) return;
+        try {
+            const r = await fetch(API + '/close_trade', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ symbol })
+            });
+            const res = await r.json();
+            if (res.ok) {
+                toast(`✅ ${res.message}`);
+                fetchStatus();
+                fetchHistory();
+            } else {
+                toast(res.message || 'Erro ao fechar trade', 'err');
+            }
+        } catch(e) {
+            toast('Erro de conexão', 'err');
+        }
+    }
+
     async function execute(pid) {
         const input = document.getElementById('amt-' + pid);
         const amount = parseFloat(input ? input.value : 0);
