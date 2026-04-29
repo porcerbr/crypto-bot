@@ -163,12 +163,34 @@ def create_api(bot):
 
     @app.route("/api/force-save", methods=["POST"])
     def force_save():
-        """Força salvamento do estado imediatamente."""
         from db import save_state
         try:
             save_state(bot)
             return jsonify({"ok": True, "message": "Estado salvo com sucesso"})
         except Exception as e:
             return jsonify({"ok": False, "message": str(e)}), 500
+
+    @app.route("/api/ai_params")
+    def ai_params():
+        """Retorna parâmetros aprendidos pela IA (regime, bias, etc.)."""
+        try:
+            from ai_validator import load_ai_params
+            return jsonify(load_ai_params())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/confluence")
+    def confluence():
+        """Retorna snapshot de confluência de todos os pares."""
+        try:
+            from signals import get_confluence_snapshot
+            from utils import get_allowed_symbols
+            snapshot = get_confluence_snapshot()
+            allowed  = get_allowed_symbols(bot.balance)
+            for item in snapshot:
+                item["locked"] = item["symbol"] not in allowed
+            return jsonify(snapshot)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
