@@ -416,31 +416,46 @@ def weekly_learning(bot) -> dict | None:
             conf_stats[bucket]["wins"] += 1
 
     conf_summary = [
-        f"Confian\u00e7a {bucket}/10: WR {round(s['wins']/s['total']*100)}% ({s['total']} trades)"
+        f"Confiança {bucket}/10: WR {round(s['wins']/s['total']*100)}% ({s['total']} trades)"
         for bucket, s in sorted(conf_stats.items())
     ]
 
+    pair_lines = chr(10).join(pair_summary)
+    conf_lines = chr(10).join(conf_summary) if conf_summary else "dados insuficientes ainda"
+    strategic_context = params.get("opus_summary") or "ainda não disponível"
+    recent_trades = [
+        (
+            h.get("symbol"),
+            h.get("dir"),
+            h.get("result"),
+            f"PnL=${h.get('pnl', 0)}",
+            f"ADX={h.get('adx', 0)}",
+            f"conf={h.get('ai_confidence', 0)}",
+        )
+        for h in history[-15:]
+    ]
+
     user_msg = f"""
-=== RELAT\u00d3RIO SEMANAL ===
+=== RELATÓRIO SEMANAL ===
 
 Performance: WR {wr}% ({bot.wins}W/{bot.losses}L) | P&L ${total_pnl} | Saldo ${round(bot.balance, 2)}
-WR \u00faltimos 30 trades: {recent_wr}%
+WR últimos 30 trades: {recent_wr}%
 
 Por par:
-{chr(10).join(pair_summary)}
+{pair_lines}
 
-WR por confian\u00e7a da IA (feedback loop):
-{chr(10).join(conf_summary) if conf_summary else 'dados insuficientes ainda'}
+WR por confiança da IA (feedback loop):
+{conf_lines}
 
-Par\u00e2metros atuais:
+Parâmetros atuais:
   min_confluence={params['min_confluence']} | min_adx={params['min_adx']}
   min_rr={params['min_rr']} | session_strictness={params['session_strictness']}
   blocked_pairs={params['blocked_pairs']}
 
-Contexto estrat\u00e9gico: {params.get('opus_summary') or 'ainda n\u00e3o dispon\u00edvel'}
+Contexto estratégico: {strategic_context}
 
-\u00daltimos 15 trades:
-{[(h['symbol'], h['dir'], h['result'], f"PnL=${h['pnl']}", f"ADX={h.get('adx',0)}", f"conf={h.get('ai_confidence',0)}") for h in history[-15:]]}
+Últimos 15 trades:
+{recent_trades}
 """.strip()
 
     log("[AI] Aprendizado semanal iniciado...")
