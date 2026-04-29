@@ -440,7 +440,7 @@ Par\u00e2metros atuais:
 Contexto estrat\u00e9gico: {params.get('opus_summary') or 'ainda n\u00e3o dispon\u00edvel'}
 
 \u00daltimos 15 trades:
-{[(h['symbol'], h['dir'], h['result'], 'PnL=$' + str(h['pnl']), 'ADX=' + str(h.get('adx', 0)), 'conf=' + str(h.get('ai_confidence', 0))) for h in history[-15:]]}
+{[(h['symbol'], h['dir'], h['result'], f"PnL=${h['pnl']}", f"ADX={h.get('adx',0)}", f"conf={h.get('ai_confidence',0)}") for h in history[-15:]]}
 """.strip()
 
     log("[AI] Aprendizado semanal iniciado...")
