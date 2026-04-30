@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import random
+from performance import calculate_metrics_from_history
 
 GENOME_KEYS = [
     "MIN_CONFLUENCE", "ADX_MIN", "ATR_MULT_SL", "ATR_MULT_TP",
@@ -15,12 +18,14 @@ RANGES = {
     "GATILHO_COOLDOWN": (120, 900),
 }
 
+
 def random_genome():
     return {
         k: (random.randint(*RANGES[k]) if isinstance(RANGES[k][0], int)
             else round(random.uniform(*RANGES[k]), 2))
         for k in GENOME_KEYS
     }
+
 
 def crossover(g1, g2):
     child = {}
@@ -32,6 +37,7 @@ def crossover(g1, g2):
                     else round(random.uniform(*RANGES[k]), 2))
     return child
 
+
 def fitness(genome, history):
     if not history:
         return 0.0
@@ -40,6 +46,7 @@ def fitness(genome, history):
     wr = wins / total if total else 0.0
     avg_pnl = sum(h.get("pnl_money", 0.0) for h in history) / total
     return wr * 0.6 + avg_pnl / 100.0 * 0.4
+
 
 def evolve(population, history):
     if not population:
