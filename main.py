@@ -1,16 +1,15 @@
-
 """
-main.py \u2014 Entrypoint do Sniper Bot (somente sinais).
+main.py — Entrypoint do Sniper Bot (somente sinais).
 
 Responsabilidades:
-  \u2022 Carregar estado (state.json \u2192 mem\u00f3ria do bot)
-  \u2022 Disparar thread do loop principal
-  \u2022 Subir API Flask (dashboard e endpoints)
-  \u2022 Agendar heartbeat, relat\u00f3rio di\u00e1rio, aprendizado semanal e mensal
-  \u2022 Processar comandos do Telegram (/executar_, /confluencia)
+  • Carregar estado (state.json → memória do bot)
+  • Disparar thread do loop principal
+  • Subir API Flask (dashboard e endpoints)
+  • Agendar heartbeat, relatório diário, aprendizado semanal e mensal
+  • Processar comandos do Telegram (/executar_, /confluencia)
 
-\u26a0\ufe0f  Este bot \u00e9 SINALIZADOR: ele N\u00c3O executa ordens em corretora real.
-    Todos os c\u00e1lculos de saldo / P&L s\u00e3o simulados para fins de estat\u00edstica.
+⚠️  Este bot é SINALIZADOR: ele NÃO executa ordens em corretora real.
+    Todos os cálculos de saldo / P&L são simulados para fins de estatística.
 """
 
 import sys
@@ -18,6 +17,7 @@ import time
 import threading
 import traceback
 import os
+import schedule
 from datetime import datetime, timezone
 
 import requests
@@ -29,91 +29,113 @@ from bot import TradingBot
 from signals import scan
 from api import create_api
 
-# Pandas .ewm() em s\u00e9ries longas pode aprofundar a pilha \u2014 aumenta o limite
+# Pandas .ewm() em séries longas pode aprofundar a pilha — aumenta o limite
 sys.setrecursionlimit(5000)
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# CONFIGURA\u00c7\u00d5ES DE CICLO
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURAÇÕES DE CICLO
+# ═══════════════════════════════════════════════════════════════════════════════
 HEARTBEAT_INTERVAL  = 3600          # 1 h
 DAILY_REPORT_HOUR   = 21            # 21:00 UTC
 WEEK_SECS           = 7  * 24 * 3600
 MONTH_SECS          = 30 * 24 * 3600
-NEAR_CHECK_INTERVAL = 600           # 10 min
+SCAN_INTERVAL       = 60            # Padrão do Config
 STARTUP_NOTIFICATION = True
 
+# Agendador de tarefas assíncronas
+scheduler_thread = None
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# NOTIFICA\u00c7\u00d5ES
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NOTIFICAÇÕES
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def send_startup_notification(bot):
-    """Envia notifica\u00e7\u00e3o de inicializa\u00e7\u00e3o com resumo do estado."""
+    """Envia notificação de inicialização com resumo do estado."""
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
     msg = (
-        "\ud83d\ude80 SNIPER BOT INICIADO\
+        "🚀 SNIPER BOT INICIADO\
 "
         "------------------------------\
 "
-        f"\ud83d\udcb0 Saldo simulado: ${round(bot.balance, 2)}\
+        f"💰 Saldo simulado: ${round(bot.balance, 2)}\
 "
-        f"\ud83d\udcca Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\
+        f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\
 "
-        f"\ud83d\udcc8 Trades ativos: {len(bot.active_trades)}\
+        f"📈 Trades ativos: {len(bot.active_trades)}\
 "
-        f"\u23f3 Pendentes: {len(bot.pending_trades)}\
+        f"⏳ Pendentes: {len(bot.pending_trades)}\
 "
-        f"\u26a1 Alavancagem: {bot.get_current_leverage()}x\
+        f"⚡ Alavancagem: {bot.get_current_leverage()}x\
 "
     )
-    msg += "\u26d4 Status: PAUSADO (circuit breaker)\
-" if bot.is_paused() else "\u2705 Status: OPERANDO\
+    if bot.is_paused():
+        msg += "🚫 Status: PAUSADO (circuit breaker)\
 "
-    msg += f"\ud83d\udd50 Iniciado: {datetime.now().strftime('%d/%m %H:%M UTC')}"
+    else:
+        msg += "✅ Status: OPERANDO\
+"
+    
+    msg += f"🕐 Iniciado: {datetime.now().strftime('%d/%m %H:%M UTC')}"
 
     bot.send(msg)
     append_log("startup", {"balance": bot.balance, "winrate": wr})
 
 
 def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None = None):
-    """Heartbeat peri\u00f3dico confirmando que o bot est\u00e1 vivo, incluindo regime atual."""
+    """
+    Heartbeat periódico confirmando que o bot está vivo.
+    Inclui informações do regime de mercado em tempo real.
+    """
     total = bot.wins + bot.losses
     wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
 
     regime_info = regime_info or {}
-    live_regime = regime_info.get("live_regime", "neutral")
+    live_regime = (regime_info.get("live_regime") or "neutral").upper()
     avg_adx     = regime_info.get("avg_adx", 0)
     eff_conf    = regime_info.get("effective_conf", Config.MIN_CONFLUENCE)
 
+    # Validação: Se avg_adx é 0, regime pode estar inválido
+    regime_status = ""
+    if avg_adx == 0:
+        regime_status = " ⚠️ (dados insuficientes)"
+    
     emoji = {
-        "ranging":  "\u3030\ufe0f",
-        "trending": "\ud83d\udcc8",
-        "neutral":  "\u27a1\ufe0f",
-        "volatile": "\u26a1",
-    }.get(live_regime, "\u27a1\ufe0f")
+        "RANGING":  "〰️",
+        "TRENDING": "📈",
+        "NEUTRAL":  "➡️",
+        "VOLATILE": "⚡",
+    }.get(live_regime, "➡️")
 
     bot.send(
-        "\ud83d\udc93 HEARTBEAT \u2014 Bot operando\
+        "💓 HEARTBEAT — Bot operando\
 "
         "------------------------------\
 "
-        f"\ud83d\udcb0 Saldo: ${round(bot.balance, 2)}\
+        f"💰 Saldo: ${round(bot.balance, 2)}\
 "
-        f"\ud83d\udcca WR: {wr}% | {bot.wins}W / {bot.losses}L\
+        f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L\
 "
-        f"\ud83d\udcc8 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\
+        f"📈 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\
 "
-        f"{emoji} Regime: {live_regime.upper()} (ADX={avg_adx})\
+        f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\
 "
-        f"\ud83c\udfaf Conflu\u00eancia m\u00ednima efetiva: {eff_conf} pts"
+        f"🎯 Confluência mínima efetiva: {eff_conf} pts"
     )
-    append_log("heartbeat", {"balance": bot.balance, "winrate": wr, "regime": live_regime})
+    
+    append_log("heartbeat", {
+        "balance": bot.balance,
+        "winrate": wr,
+        "regime": live_regime,
+        "adx": avg_adx,
+        "confluence": eff_conf,
+    })
 
 
 def send_daily_report(bot):
-    """Relat\u00f3rio di\u00e1rio de performance."""
+    """Relatório diário de performance."""
     metrics = calculate_metrics(bot)
 
     now = datetime.now(timezone.utc)
@@ -136,11 +158,11 @@ def send_daily_report(bot):
             continue
 
     msg = (
-        f"\ud83d\udcca RELAT\u00d3RIO DI\u00c1RIO \u2014 {now.strftime('%d/%m/%Y')}\
+        f"📊 RELATÓRIO DIÁRIO — {now.strftime('%d/%m/%Y')}\
 "
         "------------------------------\
 "
-        "\ud83d\udcc8 Hoje:\
+        "📈 Hoje:\
 "
         f"   Trades: {day_trades} ({day_wins}W / {day_losses}L)\
 "
@@ -148,7 +170,7 @@ def send_daily_report(bot):
 "
         "\
 "
-        "\ud83d\udcb0 Geral:\
+        "💰 Geral:\
 "
         f"   Saldo: ${round(bot.balance, 2)}\
 "
@@ -168,22 +190,22 @@ def send_daily_report(bot):
 
 
 def send_error_notification(bot, error_msg: str, traceback_str: str = ""):
-    """Notifica\u00e7\u00e3o de erro/crash \u2014 tolerante a falhas do pr\u00f3prio send."""
+    """Notificação de erro/crash — tolerante a falhas do próprio send."""
     msg = (
-        "\ud83d\udea8 ERRO NO BOT\
+        "🚨 ERRO NO BOT\
 "
         "------------------------------\
 "
-        f"\u274c {error_msg[:200]}\
+        f"❌ {error_msg[:200]}\
 "
     )
     if traceback_str:
         msg += f"\
-\ud83d\udccb Traceback:\
+📋 Traceback:\
 {traceback_str[:500]}\
 "
     msg += f"\
-\ud83d\udd50 {datetime.now().strftime('%d/%m %H:%M:%S UTC')}"
+🕐 {datetime.now().strftime('%d/%m %H:%M:%S UTC')}"
     try:
         bot.send(msg)
     except Exception:
@@ -197,7 +219,7 @@ def _send_confluence_report(bot):
     from ai_validator import load_ai_params
     from utils import get_allowed_symbols
 
-    bot.send("\u23f3 Calculando conflu\u00eancia...")
+    bot.send("⏳ Calculando confluência...")
     try:
         snapshot        = get_confluence_snapshot()
         ai_params       = load_ai_params()
@@ -206,9 +228,9 @@ def _send_confluence_report(bot):
         allowed_symbols = get_allowed_symbols(bot.balance)
 
         lines = [
-            f"\ud83d\udcca CONFLU\u00caNCIA \u2014 {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",
-            f"Regime: {live_regime.upper()} | M\u00ednimo: {min_conf} pts",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+            f"📊 CONFLUÊNCIA — {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",
+            f"Regime: {live_regime.upper()} | Mínimo: {min_conf} pts",
+            "─────────────────────────────────",
         ]
 
         for item in snapshot:
@@ -216,20 +238,20 @@ def _send_confluence_report(bot):
             total  = item["total"]
             direc  = item["best_dir"]
             sym    = item["symbol"]
-            bar    = "\ud83d\udfe2" * min(score, 10) + "\u26aa" * max(0, min(total, 10) - score)
-            h4     = "\u2705" if item["h4_aligned"] else "\u274c"
+            bar    = "🟢" * min(score, 10) + "⚪" * max(0, min(total, 10) - score)
+            h4     = "✅" if item["h4_aligned"] else "❌"
             locked = sym not in allowed_symbols
 
             if locked:
-                status = "\ud83d\udd12"
+                status = "🔒"
             elif score >= min_conf:
-                status = "\ud83d\udd25 SINAL"
+                status = "🔥 SINAL"
             elif score >= min_conf - 2:
-                status = "\u26a1 QUASE"
+                status = "⚡ QUASE"
             elif score >= min_conf - 4:
-                status = "\ud83d\udc40 WATCH"
+                status = "👀 WATCH"
             else:
-                status = "\ud83d\udca4"
+                status = "😴"
 
             lines.append(
                 f"{status} {sym} {direc} {score}/{total}"
@@ -240,30 +262,106 @@ def _send_confluence_report(bot):
                 f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
             )
 
-        lines.append("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-        lines.append("\ud83d\udd12 = par bloqueado pelo tier de capital atual.")
+        lines.append("─────────────────────────────────")
+        lines.append("🔒 = par bloqueado pelo tier de capital atual.")
         lines.append("Use /confluencia para atualizar.")
         bot.send("\
 ".join(lines))
     except Exception as e:
-        bot.send(f"\u274c Erro ao calcular conflu\u00eancia: {e}")
+        bot.send(f"❌ Erro ao calcular confluência: {e}")
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEDULER DE TAREFAS ASSÍNCRONAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _run_scheduler():
+    """Thread que executa tarefas agendadas sem bloquear loop principal."""
+    while True:
+        try:
+            schedule.run_pending()
+            time.sleep(1)
+        except Exception as e:
+            log(f"[SCHEDULER] Erro: {e}")
+
+
+def _schedule_weekly_learning(bot):
+    """Wrapper assíncrono para aprendizado semanal."""
+    def task():
+        try:
+            from ai_validator import weekly_learning
+            result = weekly_learning(bot)
+            if result:
+                bot.send(
+                    "🧠 APRENDIZADO SEMANAL\
+"
+                    "------------------------------\
+"
+                    f"{result.get('last_suggestion','')}\
+\
+"
+                    f"Min confluence: {result['min_confluence']} | "
+                    f"Min ADX: {result['min_adx']} | "
+                    f"Min RR: {result['min_rr']}\
+"
+                    f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
+                )
+                log("[LAYER2] Aprendizado concluído")
+        except Exception as e:
+            log(f"[LAYER2] Erro: {e}")
+            append_log("error", {"type": "weekly_learning", "error": str(e)})
+    
+    return task
+
+
+def _schedule_monthly_analysis(bot):
+    """Wrapper assíncrono para análise mensal."""
+    def task():
+        try:
+            from ai_validator import monthly_deep_analysis
+            result = monthly_deep_analysis(bot)
+            if result:
+                regime_pairs = result.get("regime_pairs", {})
+                regime_txt   = " | ".join(f"{k}:{v}" for k, v in list(regime_pairs.items())[:5])
+                bot.send(
+                    "🔮 ANÁLISE MENSAL (Estratégica)\
+"
+                    "------------------------------\
+"
+                    f"{result.get('opus_summary','')}\
+\
+"
+                    f"Regime: {result.get('market_regime','?').upper()} | "
+                    f"Viés: {result.get('strategy_bias','?').upper()}\
+"
+                    f"Sessões favoritas: {', '.join(result.get('favored_sessions',[])) or '—'}\
+"
+                    f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\
+\
+"
+                    f"Por par: {regime_txt}"
+                )
+                log("[LAYER3] Análise mensal concluída")
+        except Exception as e:
+            log(f"[LAYER3] Erro: {e}")
+            append_log("error", {"type": "monthly_analysis", "error": str(e)})
+    
+    return task
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LOOP PRINCIPAL
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def bot_loop(bot):
-    last_heartbeat        = 0.0
-    last_daily_report     = None
-    last_weekly_learning  = 0.0
-    last_monthly_analysis = 0.0
-    last_near_check       = 0.0
+    """Loop principal otimizado sem bloqueios de API (agora em scheduler)."""
+    last_heartbeat = 0.0
+    last_daily_report = None
 
     while True:
         now = datetime.now(timezone.utc)
 
-        # \u2500\u2500 HEARTBEAT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # ── HEARTBEAT ──
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
                 from ai_validator import check_live_regime, load_ai_params
@@ -274,7 +372,7 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[HEARTBEAT] Erro: {e}")
 
-        # \u2500\u2500 RELAT\u00d3RIO DI\u00c1RIO \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # ── RELATÓRIO DIÁRIO ──
         if now.hour == DAILY_REPORT_HOUR and last_daily_report != now.date():
             try:
                 send_daily_report(bot)
@@ -282,72 +380,12 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
 
-        # \u2500\u2500 APRENDIZADO SEMANAL (Gemini Flash \u2014 Layer 2) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        if time.time() - last_weekly_learning >= WEEK_SECS:
-            try:
-                from ai_validator import weekly_learning
-                result = weekly_learning(bot)
-                if result:
-                    bot.send(
-                        "\ud83e\udde0 APRENDIZADO SEMANAL\
-"
-                        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
-"
-                        f"{result.get('last_suggestion','')}\
-\
-"
-                        f"Min confluence: {result['min_confluence']} | "
-                        f"Min ADX: {result['min_adx']} | "
-                        f"Min RR: {result['min_rr']}\
-"
-                        f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
-                    )
-                last_weekly_learning = time.time()
-            except Exception as e:
-                log(f"[LAYER2] Erro no aprendizado semanal: {e}")
-
-        # \u2500\u2500 AN\u00c1LISE MENSAL (Gemini Flash \u2014 Layer 3) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        if time.time() - last_monthly_analysis >= MONTH_SECS:
-            try:
-                from ai_validator import monthly_deep_analysis
-                result = monthly_deep_analysis(bot)
-                if result:
-                    regime_pairs = result.get("regime_pairs", {})
-                    regime_txt   = " | ".join(f"{k}:{v}" for k, v in regime_pairs.items())
-                    bot.send(
-                        "\ud83d\udd2e AN\u00c1LISE MENSAL (Estrat\u00e9gica)\
-"
-                        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
-"
-                        f"{result.get('opus_summary','')}\
-\
-"
-                        f"Regime: {result.get('market_regime','?').upper()} | "
-                        f"Vi\u00e9s: {result.get('strategy_bias','?').upper()}\
-"
-                        f"Sess\u00f5es favoritas: {', '.join(result.get('favored_sessions',[])) or '\u2014'}\
-"
-                        f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\
-\
-"
-                        f"Por par:\
-{regime_txt}"
-                    )
-                last_monthly_analysis = time.time()
-            except Exception as e:
-                log(f"[LAYER3] Erro na an\u00e1lise mensal: {e}")
-
-        # \u2500\u2500 SCAN / MONITOR \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # ── SCAN / MONITOR (BLOCKING) ──
         if not bot.is_paused():
             try:
                 bot.expire_pending_signals(max_age_seconds=Config.PENDING_EXPIRY_SECONDS)
                 scan(bot)
                 bot.monitor_trades()
-
-                if time.time() - last_near_check >= NEAR_CHECK_INTERVAL:
-                    from signals import check_near_signals
-                    check_near_signals(bot)
-                    last_near_check = time.time()
 
             except Exception as e:
                 error_msg = str(e)
@@ -356,7 +394,7 @@ def bot_loop(bot):
                 send_error_notification(bot, error_msg, tb)
                 append_log("loop_error", {"error": error_msg})
 
-        # \u2500\u2500 COMANDOS TELEGRAM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # ── COMANDOS TELEGRAM ──
         try:
             url  = (
                 f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
@@ -374,49 +412,57 @@ def bot_loop(bot):
                                 try:
                                     pid    = int(parts[1])
                                     amount = float(parts[2])
-                                    bot.execute_pending(pid, amount)
+                                    ok, msg = bot.execute_pending(pid, amount)
+                                    if ok:
+                                        bot.send(f"✅ {msg}")
+                                    else:
+                                        bot.send(f"❌ {msg}")
                                 except ValueError:
-                                    bot.send("\u274c Formato inv\u00e1lido. Use /executar_<id>_<valor>")
+                                    bot.send("❌ Formato inválido. Use /executar_<id>_<valor>")
 
-                        elif txt in ("/confluencia", "/conflu\u00eancia"):
+                        elif txt in ("/confluencia", "/confluência"):
                             _send_confluence_report(bot)
 
                         elif txt == "/status":
                             send_heartbeat(bot)
 
                     bot.last_id = u["update_id"]
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"[TELEGRAM] Erro ao buscar updates: {e}")
 
         time.sleep(Config.SCAN_INTERVAL)
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 # ENTRYPOINT
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    log("Iniciando Sniper Bot v2 (Forex + Gold H1 \u2014 modo sinalizador)")
+    """Entrypoint com scheduler para tarefas assíncronas."""
+    global scheduler_thread
+    
+    log("Iniciando Sniper Bot v2 (Forex + Gold H1 — modo sinalizador)")
+    log(f"Versão Python: {sys.version.split()[0]}")
+    
     bot = TradingBot()
 
     # 1. Carrega estado persistido
     state_loaded = load_state(bot)
 
-    # 2. \ud83d\udd34 FIX: for\u00e7a refresh inicial dos dados de mercado antes do primeiro scan,
-    #    para evitar que o bot fique "cego" nos primeiros ciclos caso o cache esteja vazio.
+    # 2. Refresh inicial de mercado
     try:
         from analysis import force_initial_refresh
         log("Executando refresh inicial de mercado (Twelve Data)...")
-        force_initial_refresh()
+        force_initial_refresh(blocking=True)
     except Exception as e:
         log(f"[INIT] Falha no refresh inicial: {e}")
 
-    # 3. Notifica\u00e7\u00e3o de startup
+    # 3. Notificação de startup
     if STARTUP_NOTIFICATION:
         try:
             send_startup_notification(bot)
         except Exception as e:
-            log(f"[STARTUP] Erro ao enviar notifica\u00e7\u00e3o: {e}")
+            log(f"[STARTUP] Erro ao enviar notificação: {e}")
 
     append_log("init", {
         "balance":      bot.balance,
@@ -425,15 +471,42 @@ def main():
         "signal_only":  Config.BOT_IS_SIGNAL_ONLY,
     })
 
-    # 4. Sobe thread do loop principal
-    threading.Thread(target=bot_loop, args=(bot,), daemon=True).start()
+    # 4. Inicia scheduler de tarefas assíncronas
+    log("[SCHEDULER] Iniciando agendador de tarefas")
+    schedule.every().week.do(_schedule_weekly_learning(bot))
+    schedule.every().month.do(_schedule_monthly_analysis(bot))
+    
+    scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name="scheduler")
+    scheduler_thread.start()
+    log("[SCHEDULER] Thread agendadora iniciada")
 
-    # 5. Sobe API Flask
+    # 5. Inicia loop principal em thread separada
+    log("[BOT] Iniciando loop principal")
+    threading.Thread(target=bot_loop, args=(bot,), daemon=True, name="bot-loop").start()
+
+    # 6. Sobe API Flask
     app  = create_api(bot)
     port = int(os.environ.get("PORT", 8080))
     log(f"API HTTP escutando em 0.0.0.0:{port}")
-    app.run(host="0.0.0.0", port=port)
+    
+    try:
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    except KeyboardInterrupt:
+        log("Bot interrompido pelo usuário")
+    except Exception as e:
+        log(f"Erro fatal na API: {e}")
+        send_error_notification(bot, f"API crash: {e}", traceback.format_exc())
 
 
 if __name__ == "__main__":
+    # Validação de configuração
+    errors = Config.validate()
+    if errors:
+        print("\n⚠️  PROBLEMAS DE CONFIGURAÇÃO:\n")
+        for err in errors:
+            print(f"  {err}")
+        print("\nDefina as variáveis de ambiente e tente novamente.\n")
+        if any("❌" in err for err in errors):
+            sys.exit(1)
+    
     main()
