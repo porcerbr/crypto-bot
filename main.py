@@ -446,6 +446,14 @@ def main():
     
     bot = TradingBot()
 
+    import analysis
+
+    # Garante que não haja refresh concorrente pendente (ex.: import do Flask)
+    if hasattr(analysis, '_refresh_in_progress'):
+        analysis._refresh_in_progress.clear()
+
+    analysis.force_initial_refresh(blocking=True)
+
     # 1. Carrega estado persistido
     state_loaded = load_state(bot)
 
@@ -485,18 +493,20 @@ def main():
     threading.Thread(target=bot_loop, args=(bot,), daemon=True, name="bot-loop").start()
 
     # 6. Sobe API Flask
-    app  = create_api(bot)
-    port = int(os.environ.get("PORT", 8080))
-    log(f"API HTTP escutando em 0.0.0.0:{port}")
-    
+    import sys
     try:
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         log("Bot interrompido pelo usuário")
+        sys.exit(0)
     except Exception as e:
-        log(f"Erro fatal na API: {e}")
-        send_error_notification(bot, f"API crash: {e}", traceback.format_exc())
-
+        log(f"❌ Erro fatal na API: {e}")
+        traceback.print_exc()
+        try:
+            send_error_notification(bot, f"API crash: {e}", traceback.format_exc())
+        except:
+            pass
+        sys.exit(1)
 
 if __name__ == "__main__":
     # Validação de configuração
