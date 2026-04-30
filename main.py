@@ -425,7 +425,7 @@ def main():
     # 4. Inicia scheduler de tarefas assíncronas
     log("[SCHEDULER] Iniciando agendador de tarefas")
     schedule.every().week.do(_schedule_weekly_learning(bot))
-    schedule.every().month.do(_schedule_monthly_analysis(bot))
+    schedule.every(30).days.do(_schedule_monthly_analysis(bot))
     
     scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name="scheduler")
     scheduler_thread.start()
