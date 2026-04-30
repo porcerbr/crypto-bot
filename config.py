@@ -62,6 +62,12 @@ class Config:
     # Exige apenas um apoio mínimo de contexto (SMC ou H4), em vez de exigir tudo.
     MIN_SUPPORT_CHECKS = 1
 
+    # Quando SMC/H4 estiverem fracos, o bot ainda pode aprovar sinais técnicos fortes.
+    ALLOW_TECHNICAL_ONLY_FALLBACK = True
+    TECHNICAL_ONLY_MIN_SCORE = 7
+    TECHNICAL_ONLY_MIN_RR = 1.8
+    TECHNICAL_ONLY_MIN_ADX = 20
+
     # ═══════════════════════════════════════════════════════════════════════════════
     # ALAVANCAGEM
     # ═══════════════════════════════════════════════════════════════════════════════
