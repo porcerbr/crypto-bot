@@ -30,6 +30,9 @@ _refresh_in_progress = threading.Event()
 _invalid_candle_logged: dict = {}
 _INVALID_LOG_COOLDOWN = 10 * 60
 
+# Intervalo entre requisições individuais (em segundos) para respeitar o tier gratuito
+FETCH_DELAY_SECONDS = 8.0   # 8 créditos/minuto → ~8s entre chamadas
+
 
 def _log_invalid_candle(symbol: str):
     now = time.time()
@@ -41,32 +44,50 @@ def _log_invalid_candle(symbol: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 # REFRESH DE CACHE (thread separada)
 # ═══════════════════════════════════════════════════════════════════════════════
-def _fetch_batch(symbols_td: list[str]) -> dict:
-    """Faz UMA chamada batch ao Twelve Data e retorna o JSON."""
+def _fetch_single(symbol_td: str) -> dict | None:
+    """
+    Busca dados de UM símbolo na Twelve Data.
+    Retorna o dicionário parseado ou None em caso de falha/erro.
+    """
     if not Config.TWELVE_DATA_API_KEY:
-        return {}
+        return None
     try:
         resp = requests.get(
             "https://api.twelvedata.com/time_series",
             params={
-                "symbol":     ",".join(symbols_td),
+                "symbol":     symbol_td,
                 "interval":   "1h",
                 "outputsize": 800,
                 "apikey":     Config.TWELVE_DATA_API_KEY,
                 "format":     "JSON",
                 "timezone":   "UTC",
             },
-            timeout=30,
+            timeout=15,
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+        # Verifica se a API retornou erro (ex.: limite de créditos, símbolo inválido)
+        if data.get("status") == "error":
+            log(f"[TWELVEDATA] Erro em {symbol_td}: {data.get('message', 'erro desconhecido')}")
+            return None
+
+        # Verifica se veio sem a chave 'values'
+        if "values" not in data or not data.get("values"):
+            log(f"[TWELVEDATA] {symbol_td}: resposta sem candles")
+            return None
+
+        return data
+    except requests.exceptions.Timeout:
+        log(f"[TWELVEDATA] Timeout em {symbol_td}")
+        return None
     except Exception as e:
-        log(f"[TWELVEDATA] Erro no batch: {type(e).__name__}: {str(e)[:100]}")
-        return {}
+        log(f"[TWELVEDATA] Falha em {symbol_td}: {type(e).__name__}: {str(e)[:100]}")
+        return None
 
 
 def _refresh_cache_worker():
-    """Executa o refresh em thread separada para não bloquear o loop principal."""
+    """Executa o refresh em thread separada, buscando cada símbolo individualmente."""
     global _last_refresh
 
     if not Config.TWELVE_DATA_API_KEY:
@@ -75,36 +96,26 @@ def _refresh_cache_worker():
         return
 
     try:
-        items = list(TD_SYMBOLS.items())
-        # Free tier: 8 créditos/minuto. 11 símbolos = 2 batches de 8+3
-        batches = [items[:8], items[8:]]
-        merged = {}
-
-        for batch_idx, batch in enumerate(batches):
-            if batch_idx > 0:
-                log("[TWELVEDATA] Aguardando 61s entre batches (free tier)...")
-                time.sleep(61)
-
-            symbols_td = [sym_td for _, sym_td in batch]
-            data = _fetch_batch(symbols_td)
-            if data:
-                merged.update(data)
-                log(f"[TWELVEDATA] Batch {batch_idx + 1}/2 OK ({len(batch)} pares)")
-
         ok_count = 0
         new_data = {}
         now = time.time()
+        total_symbols = len(TD_SYMBOLS)
 
-        for sym_internal, sym_td in TD_SYMBOLS.items():
-            sym_data = merged.get(sym_td, {})
+        for idx, (sym_internal, sym_td) in enumerate(TD_SYMBOLS.items(), start=1):
+            # Respeita o delay entre chamadas, exceto na primeira
+            if idx > 1:
+                time.sleep(FETCH_DELAY_SECONDS)
 
-            if sym_data.get("status") == "error":
-                log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
+            log(f"[TWELVEDATA] Buscando {sym_internal} ({idx}/{total_symbols})...")
+            data = _fetch_single(sym_td)
+
+            if data is None:
+                log(f"[TWELVEDATA] {sym_internal}: ignorado (erro na requisição)")
                 continue
 
-            values = sym_data.get("values", [])
-            if not values or len(values) < 50:
-                log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
+            values = data.get("values", [])
+            if len(values) < 50:
+                log(f"[TWELVEDATA] {sym_internal}: dados insuficientes ({len(values)} candles)")
                 continue
 
             try:
@@ -121,10 +132,11 @@ def _refresh_cache_worker():
 
                 new_data[sym_internal] = (now, df)
                 ok_count += 1
+                log(f"[TWELVEDATA] {sym_internal}: OK ({len(df)} candles)")
             except Exception as e:
-                log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
+                log(f"[TWELVEDATA] Erro ao processar {sym_internal}: {e}")
 
-        # Commita tudo de uma vez no cache (mantém dados antigos dos pares que falharam)
+        # Atualiza o cache de uma vez, mantendo dados antigos dos que falharam
         with _cache_lock:
             _cache.update(new_data)
             _last_refresh = now
@@ -167,7 +179,7 @@ def force_initial_refresh(blocking: bool = True):
     """
     _trigger_refresh_if_needed()
     if blocking and _refresh_thread is not None:
-        _refresh_thread.join(timeout=180)
+        _refresh_thread.join(timeout=300)   # timeout maior para o novo método
 
 
 def _get_df(symbol: str):
