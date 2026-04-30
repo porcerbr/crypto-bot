@@ -336,13 +336,15 @@ Sua tarefa: avaliar se um sinal técnico deve ser enviado ao trader ou rejeitado
 Rejeite se:
 - ADX < 18 (mercado sem direção)
 - RSI > 72 em BUY ou RSI < 28 em SELL (zona extrema oposta)
-- H4 desalinhado com H1 (sem confluência multi-timeframe)
 - Últimos 3 trades no par todos LOSS
-- FVG e OB ambos inativos
+- FVG e OB ambos inativos E o score técnico estiver fraco
+
+H4 desalinhado deve reduzir a confiança, não travar sozinho, quando o setup técnico estiver forte.
 
 Aprove com alta confiança (>= 8) se:
 - FVG ativo + OB ativo + sweep confirmado + H4 alinhado
 - ADX >= 25 e MACD confirmando direção
+- Ou score técnico forte com RR mínimo e sem bloqueio de risco
 - WR recente do par >= 55%
 
 Responda SOMENTE com JSON válido, sem texto adicional:
