@@ -38,17 +38,122 @@ def _is_safe_to_trade(bot, symbol):
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
     # 5. Filtro de sessão — só opera na janela de liquidez do par
-    if Config.USE_SESSION_FILTER and not is_good_session(symbol):
+    if not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
     # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
-    if Config.USE_AVOID_HOURS:
-        avoid_hours = load_ai_params().get("avoid_hours_utc", [])
-        if avoid_hours and datetime.utcnow().hour in avoid_hours:
-            return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
+    avoid_hours = load_ai_params().get("avoid_hours_utc", [])
+    if avoid_hours and datetime.utcnow().hour in avoid_hours:
+        return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
 
     return True, ""
+
+
+def _count_true(*values) -> int:
+    return sum(1 for v in values if bool(v))
+
+
+def _strategy_profile(res, direction, mtf, checks, bias="balanced"):
+    """
+    Escolhe o modo operacional mais adequado para o contexto atual.
+    Retorna dict com: name, reason, min_score, allowed.
+    """
+    price = res.get("price", 0)
+    ema200 = res.get("ema200", 0)
+    ema9   = res.get("ema9", 0)
+    ema21  = res.get("ema21", 0)
+    rsi    = res.get("rsi", 50)
+    adx    = res.get("adx", 0)
+    upper  = res.get("upper", float("inf"))
+    lower  = res.get("lower", 0)
+    macd_bull = bool(res.get("macd_bull"))
+    macd_bear = bool(res.get("macd_bear"))
+    candle_bull = bool(res.get("candle_bull", False))
+    candle_bear = bool(res.get("candle_bear", False))
+
+    check_map = {nm: ok for nm, ok in checks}
+    h4_aligned = check_map.get("MTF H4 alinhado", False)
+    h4 = mtf.get("h4", {}) if mtf else {}
+    h4_above = h4.get("price", 0) > h4.get("ema200", float("inf")) if h4 else False
+    h4_below = h4.get("price", float("inf")) < h4.get("ema200", 0) if h4 else False
+
+    if direction == "BUY":
+        has_fvg = check_map.get("FVG Bullish ativo", False)
+        has_ob  = check_map.get("Order Block Bullish", False)
+        has_sweep = check_map.get("Liquidity Sweep Bullish", False)
+        trend_core = _count_true(price > ema200, ema9 > ema21, macd_bull, adx >= Config.STRATEGY_MIN_ADX_TREND, candle_bull)
+        pullback_core = _count_true(price > ema200, ema9 >= ema21, 35 <= rsi <= 60, price <= lower * 1.02, has_fvg or has_ob or has_sweep)
+        reversal_core = _count_true(price < ema200, rsi <= 35, has_fvg or has_ob or has_sweep, candle_bull, adx <= Config.STRATEGY_MAX_ADX_REVERSAL)
+    else:
+        has_fvg = check_map.get("FVG Bearish ativo", False)
+        has_ob  = check_map.get("Order Block Bearish", False)
+        has_sweep = check_map.get("Liquidity Sweep Bearish", False)
+        trend_core = _count_true(price < ema200, ema9 < ema21, macd_bear, adx >= Config.STRATEGY_MIN_ADX_TREND, candle_bear)
+        pullback_core = _count_true(price < ema200, ema9 <= ema21, 40 <= rsi <= 65, price >= upper * 0.98, has_fvg or has_ob or has_sweep)
+        reversal_core = _count_true(price > ema200, rsi >= 65, has_fvg or has_ob or has_sweep, candle_bear, adx <= Config.STRATEGY_MAX_ADX_REVERSAL)
+
+    if bias == "conservative":
+        priority = ["trend", "pullback", "reversal"]
+    elif bias == "aggressive":
+        priority = ["pullback", "trend", "reversal"]
+    else:
+        priority = list(getattr(Config, "STRATEGY_PRIORITY", ["trend", "pullback", "reversal"]))
+
+    profiles = {
+        "trend": {
+            "core": trend_core,
+            "smc_bonus": _count_true(has_fvg, has_ob, has_sweep, h4_aligned, h4_above if direction == "BUY" else h4_below),
+            "allowed": trend_core >= Config.STRATEGY_MIN_CORE["trend"],
+            "min_score": Config.STRATEGY_MIN_SCORE["trend"],
+            "reason": "continuidade de tendência",
+        },
+        "pullback": {
+            "core": pullback_core,
+            "smc_bonus": _count_true(has_fvg, has_ob, has_sweep, h4_aligned),
+            "allowed": pullback_core >= Config.STRATEGY_MIN_CORE["pullback"],
+            "min_score": Config.STRATEGY_MIN_SCORE["pullback"],
+            "reason": "pullback com retração controlada",
+        },
+        "reversal": {
+            "core": reversal_core,
+            "smc_bonus": _count_true(has_fvg, has_ob, has_sweep, not h4_aligned),
+            "allowed": reversal_core >= Config.STRATEGY_MIN_CORE["reversal"],
+            "min_score": Config.STRATEGY_MIN_SCORE["reversal"],
+            "reason": "reversão com exaustão e liquidez",
+        },
+    }
+
+    mode = getattr(Config, "STRATEGY_MODE", "adaptive")
+    if mode == "trend_only":
+        priority = ["trend"]
+    elif mode == "pullback_only":
+        priority = ["pullback", "trend"]
+    elif mode == "reversal_only":
+        priority = ["reversal"]
+
+    chosen = None
+    for name in priority:
+        p = profiles[name]
+        if not p["allowed"]:
+            continue
+        if name == "trend" and adx < Config.STRATEGY_MIN_ADX_TREND:
+            continue
+        if name == "reversal" and not Config.STRATEGY_ALLOW_COUNTERTREND:
+            continue
+        if p["core"] + p["smc_bonus"] < p["min_score"]:
+            continue
+        chosen = {
+            "name": name,
+            "reason": p["reason"],
+            "core": p["core"],
+            "smc_bonus": p["smc_bonus"],
+            "min_score": p["min_score"],
+            "h4_aligned": h4_aligned,
+        }
+        break
+
+    return chosen
 
 
 def calc_confluence(res, direction, mtf=None):
@@ -225,10 +330,7 @@ def scan(bot):
     if len(bot.active_trades) >= max_trades:
         return
 
-    if Config.USE_NEWS_FILTER and is_high_impact_news_window(
-        minutes_before=Config.NEWS_MINUTES_BEFORE,
-        minutes_after=Config.NEWS_MINUTES_AFTER,
-    ):
+    if is_high_impact_news_window(minutes_before=15, minutes_after=30):
         return
     if is_weekend():
         return
@@ -332,7 +434,7 @@ def scan(bot):
 
         # live_confluence já tem o ajuste de regime embutido (calculado no heartbeat)
         live_conf = ai_params.get("live_confluence", base_conf)
-        effective_min_conf = max(5, min(8, live_conf + bias_adj))
+        effective_min_conf = max(6, min(9, live_conf + bias_adj))
 
         if sc < effective_min_conf:
             log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
@@ -343,42 +445,20 @@ def scan(bot):
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
             continue
 
-        # ── Apoio SMC / MTF ───────────────────────────────────────
-        # Não bloqueia sinais tecnicamente fortes só porque FVG/OB/H4 não apareceram ao mesmo tempo.
-        check_map = {nm: ok for nm, ok in checks}
+        # ── Seleção de estratégia: tendência, pullback ou reversão ───────
+        strategy = _strategy_profile(res, direction, mtf, checks, bias=bias)
+        if not strategy:
+            log(f"[STRAT] {sym} {direction}: sem contexto suficiente para trend/pullback/reversal")
+            continue
 
-        has_fvg = check_map.get(
-            "FVG Bullish ativo" if direction == "BUY" else "FVG Bearish ativo", False)
-        has_ob = check_map.get(
-            "OB Bullish ativo" if direction == "BUY" else "Order Block Bearish", False)
-        has_h4 = check_map.get("MTF H4 alinhado", False)
-
-        smc_ok = has_fvg or has_ob
-        support_checks = int(smc_ok) + int(has_h4)
-
-        tech_floor = getattr(Config, "TECHNICAL_ONLY_MIN_SCORE", 7)
-        tech_rr_floor = getattr(Config, "TECHNICAL_ONLY_MIN_RR", 1.8)
-        tech_adx_floor = getattr(Config, "TECHNICAL_ONLY_MIN_ADX", 20)
-
-        # Se não houver apoio SMC/H4 suficiente, só deixa passar quando a leitura técnica estiver forte.
-        if support_checks < Config.MIN_SUPPORT_CHECKS:
-            technical_override = (
-                getattr(Config, "ALLOW_TECHNICAL_ONLY_FALLBACK", True)
-                and sc >= tech_floor
-                and rr >= tech_rr_floor
-                and res.get("adx", 0) >= tech_adx_floor
-            )
-
-            if not technical_override:
-                reason = []
-                if not smc_ok:
-                    reason.append("sem FVG/OB ativo")
-                if not has_h4:
-                    reason.append("H4 desalinhado")
-                log(f"[SUPPORT] {sym} {direction}: apoio insuficiente — {', '.join(reason)}")
-                continue
-
-            log(f"[SUPPORT] {sym} {direction}: sem SMC/H4 forte, mas técnica compensou (score={sc}, rr={rr})")
+        # Estratégia escolhida vira metadado do sinal, não um bloqueio cego.
+        # SMC e H4 continuam valendo como bônus/confirmadores.
+        if strategy["name"] == "trend":
+            log(f"[STRAT] {sym} {direction}: modo TREND | core={strategy['core']} | bônus={strategy['smc_bonus']} | H4={'✅' if strategy['h4_aligned'] else '⚪'}")
+        elif strategy["name"] == "pullback":
+            log(f"[STRAT] {sym} {direction}: modo PULLBACK | core={strategy['core']} | bônus={strategy['smc_bonus']} | H4={'✅' if strategy['h4_aligned'] else '⚪'}")
+        else:
+            log(f"[STRAT] {sym} {direction}: modo REVERSAL | core={strategy['core']} | bônus={strategy['smc_bonus']} | H4={'✅' if strategy['h4_aligned'] else '⚪'}")
 
         # Pares bloqueados pela IA (baseado em aprendizado)
         if sym in ai_params.get("blocked_pairs", []):
@@ -412,6 +492,10 @@ def scan(bot):
             "atr": atr,
             "mtf_aligned": mtf.get("aligned", False),
             "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
+            "strategy": strategy["name"],
+            "strategy_reason": strategy["reason"],
+            "strategy_core": strategy["core"],
+            "strategy_bonus": strategy["smc_bonus"],
             "sl_source": sl_src,
             "tp_source": tp_src,
         }
