@@ -236,7 +236,14 @@ def get_dynamic_max_trades(balance: float) -> int:
 
 
 def get_allowed_symbols(balance: float) -> list:
-    """Lista de símbolos permitidos para o capital atual."""
+    """Lista de símbolos permitidos para o capital atual.
+
+    Quando ENFORCE_ASSET_TIERS está desligado, o bot analisa todos os ativos
+    configurados e usa os tiers apenas como referência de risco.
+    """
+    if not getattr(Config, "ENFORCE_ASSET_TIERS", True):
+        return list(Config.FXGOLD_ASSETS.keys())
+
     allowed = []
     for tier in sorted(Config.ASSET_TIERS.keys()):
         if balance >= Config.ASSET_TIERS[tier]["min_balance"]:

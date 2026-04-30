@@ -26,6 +26,15 @@ _last_refresh: float = 0.0
 _refresh_thread: threading.Thread = None
 _refresh_in_progress = threading.Event()
 
+# Estratégia de refresh: prioriza símbolos líquidos e rotaciona o restante.
+_REFRESH_CURSOR = 0
+_PRIORITY_SYMBOLS = list(getattr(Config, "ANALYSIS_PRIORITY_SYMBOLS", ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]))
+_BATCH_SIZE = int(getattr(Config, "ANALYSIS_SYMBOL_BATCH_SIZE", 6))
+
+# Cache do MTF para não recalcular indicadores a cada varredura do loop.
+_mtf_cache: dict[str, tuple[float, int, str, dict]] = {}
+_MTF_CACHE_TTL = int(getattr(Config, "MTF_CACHE_TTL", 45))
+
 # Cooldown de log para candle inválido
 _invalid_candle_logged: dict = {}
 _INVALID_LOG_COOLDOWN = 10 * 60
@@ -57,7 +66,7 @@ def _fetch_single(symbol_td: str) -> dict | None:
             params={
                 "symbol":     symbol_td,
                 "interval":   "1h",
-                "outputsize": 800,
+                "outputsize": 300,
                 "apikey":     Config.TWELVE_DATA_API_KEY,
                 "format":     "JSON",
                 "timezone":   "UTC",
@@ -99,9 +108,32 @@ def _refresh_cache_worker():
         ok_count = 0
         new_data = {}
         now = time.time()
-        total_symbols = len(TD_SYMBOLS)
 
-        for idx, (sym_internal, sym_td) in enumerate(TD_SYMBOLS.items(), start=1):
+        global _REFRESH_CURSOR
+        all_symbols = list(TD_SYMBOLS.items())
+        priority = [(s, TD_SYMBOLS[s]) for s in _PRIORITY_SYMBOLS if s in TD_SYMBOLS]
+        remaining = [(s, td) for s, td in all_symbols if s not in _PRIORITY_SYMBOLS]
+
+        selected: list[tuple[str, str]] = []
+        seen = set()
+        for item in priority:
+            if item[0] not in seen:
+                selected.append(item)
+                seen.add(item[0])
+
+        batch_remaining = max(0, _BATCH_SIZE - len(selected))
+        if remaining and batch_remaining > 0:
+            start = _REFRESH_CURSOR % len(remaining)
+            for off in range(batch_remaining):
+                sym_item = remaining[(start + off) % len(remaining)]
+                if sym_item[0] not in seen:
+                    selected.append(sym_item)
+                    seen.add(sym_item[0])
+            _REFRESH_CURSOR = (start + batch_remaining) % len(remaining)
+
+        total_symbols = len(selected) if selected else len(TD_SYMBOLS)
+
+        for idx, (sym_internal, sym_td) in enumerate(selected, start=1):
             # Respeita o delay entre chamadas, exceto na primeira
             if idx > 1:
                 time.sleep(FETCH_DELAY_SECONDS)
@@ -467,6 +499,8 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
 
 def get_multi_timeframe(symbol: str) -> dict:
     """Retorna análise H1 + H4 (H4 resampleado do H1 em cache)."""
+    global _mtf_cache
+
     mtf = {"h1": None, "h4": None, "aligned": False, "h4_cenario": "NEUTRO"}
 
     df = _get_df(symbol)
@@ -478,6 +512,11 @@ def get_multi_timeframe(symbol: str) -> dict:
     if not _validate_last_candle(df):
         _log_invalid_candle(symbol)
         return mtf
+
+    cache_key = (len(df), str(df.index[-1]))
+    cached = _mtf_cache.get(symbol)
+    if cached and (time.time() - cached[0] < _MTF_CACHE_TTL) and cached[1] == cache_key[0] and cached[2] == cache_key[1]:
+        return cached[3]
 
     h1 = _calc_indicators(df)
     h1["fvg"]   = _detect_fvg(df, Config.FVG_LOOKBACK)
@@ -499,4 +538,5 @@ def get_multi_timeframe(symbol: str) -> dict:
     else:
         log(f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)")
 
+    _mtf_cache[symbol] = (time.time(), cache_key[0], cache_key[1], mtf)
     return mtf

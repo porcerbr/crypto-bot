@@ -36,6 +36,13 @@ _RATE_LIMIT  = 12
 _RATE_WINDOW = 60
 _call_times: deque = deque()
 
+# Cache leve para não reler o JSON a cada validação.
+_AI_PARAMS_CACHE: dict | None = None
+_AI_PARAMS_CACHE_TS: float = 0.0
+
+# Bloqueio temporário quando Gemini retorna 429.
+_GEMINI_DISABLED_UNTIL: float = 0.0
+
 
 def _rate_limit_wait():
     """Bloqueia até haver espaço na janela deslizante de 60s."""
@@ -60,7 +67,17 @@ def _rate_limit_wait():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_ai_params() -> dict:
-    """Carrega parâmetros aprendidos de ai_params.json."""
+    """Carrega parâmetros aprendidos de ai_params.json com cache curto."""
+    global _AI_PARAMS_CACHE, _AI_PARAMS_CACHE_TS
+
+    try:
+        from config import Config
+        ttl = int(getattr(Config, "AI_PARAMS_CACHE_TTL", 60))
+    except Exception:
+        ttl = 60
+
+    if _AI_PARAMS_CACHE is not None and (time.time() - _AI_PARAMS_CACHE_TS) < ttl:
+        return dict(_AI_PARAMS_CACHE)
     defaults = {
         # Camada 2 — Aprendizado semanal
         "min_confluence":      7,
@@ -68,7 +85,6 @@ def load_ai_params() -> dict:
         "session_strictness":  "normal",
         "min_adx":             20,
         "min_rr":              1.5,
-        "favored_strategies":  ["trend", "pullback", "reversal"],
         "last_suggestion":     None,
         # Camada 3 — Análise mensal
         "market_regime":       "neutral",
@@ -86,23 +102,34 @@ def load_ai_params() -> dict:
         "updated_at":          None,
     }
     if not os.path.exists(AI_PARAMS_FILE):
-        return defaults
+        _AI_PARAMS_CACHE = dict(defaults)
+        _AI_PARAMS_CACHE_TS = time.time()
+        return dict(defaults)
     try:
         with open(AI_PARAMS_FILE) as f:
             stored = json.load(f)
-        return {**defaults, **stored}
+        merged = {**defaults, **stored}
+        _AI_PARAMS_CACHE = dict(merged)
+        _AI_PARAMS_CACHE_TS = time.time()
+        return dict(merged)
     except Exception as e:
         log(f"[AI] Erro ao carregar ai_params.json: {e}")
-        return defaults
+        _AI_PARAMS_CACHE = dict(defaults)
+        _AI_PARAMS_CACHE_TS = time.time()
+        return dict(defaults)
 
 
 def save_ai_params(params: dict):
     """Salva parâmetros aprendidos em ai_params.json."""
+    global _AI_PARAMS_CACHE, _AI_PARAMS_CACHE_TS
+
     params["updated_at"] = datetime.now(timezone.utc).isoformat()
     tmp = AI_PARAMS_FILE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(params, f, indent=2, ensure_ascii=False)
     os.replace(tmp, AI_PARAMS_FILE)
+    _AI_PARAMS_CACHE = dict(params)
+    _AI_PARAMS_CACHE_TS = time.time()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -133,8 +160,13 @@ def _call_gemini(
     Retorna:
     - String com a resposta, ou None se falhar após retries
     """
+    global _GEMINI_DISABLED_UNTIL
+
     api_key = _get_api_key()
     if not api_key:
+        return None
+
+    if _GEMINI_DISABLED_UNTIL and time.time() < _GEMINI_DISABLED_UNTIL:
         return None
 
     url  = _GEMINI_URL.format(model=_MODEL_FLASH)
@@ -171,11 +203,11 @@ def _call_gemini(
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             if status == 429:
-                log("[AI] Gemini 429 — aguardando 65s")
+                from config import Config
+                cooldown = int(getattr(Config, "GEMINI_COOLDOWN_AFTER_429", 1800))
+                _GEMINI_DISABLED_UNTIL = time.time() + cooldown
+                log(f"[AI] Gemini 429 — pausando validação por {cooldown//60}min")
                 _call_times.clear()
-                time.sleep(65)
-                if attempt == 0:
-                    continue
                 return None
             elif status >= 500:
                 log(f"[AI] Gemini erro servidor {status}")
@@ -266,124 +298,61 @@ def _build_pair_stats(history: list) -> tuple[list[str], dict]:
 # FALLBACK TÉCNICO - Sem IA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _get_technical_fallback_score(h1: dict, direction: str, strategy: str = "trend") -> tuple[int, str]:
+def _get_technical_fallback_score(h1: dict, direction: str) -> tuple[int, str]:
     """
     Fallback 100% técnico quando IA cai.
     Retorna (score, motivo).
-
-    Score máximo sem IA: 9 pontos para trend/pullback e 10 para reversal.
+    
+    Score máximo sem IA: 9 pontos
     """
     price = h1.get("price", 0)
-    ema200 = h1.get("ema200", 0)
-    ema9 = h1.get("ema9", 0)
-    ema21 = h1.get("ema21", 0)
-    rsi = h1.get("rsi", 50)
-    adx = h1.get("adx", 0)
-    upper = h1.get("upper", float("inf"))
-    lower = h1.get("lower", 0)
-    macd_bull = bool(h1.get("macd_bull"))
-    macd_bear = bool(h1.get("macd_bear"))
-    candle_bull = bool(h1.get("candle_bull"))
-    candle_bear = bool(h1.get("candle_bear"))
-    fvg_active = any(f.get("active") for f in (h1.get("fvg", {}) or {}).get("bullish" if direction == "BUY" else "bearish", []))
-    ob_active = any(o.get("active") for o in (h1.get("ob", {}) or {}).get("bullish" if direction == "BUY" else "bearish", []))
-    sweep = (h1.get("sweep", {}) or {})
-    sweep_active = bool(sweep.get("bullish" if direction == "BUY" else "bearish", False))
-
+    
     score = 0
     reasons = []
-    strategy = (strategy or "trend").lower()
-
+    
+    # ── Trend (4 pontos) ──
     if direction == "BUY":
-        if price > ema200:
+        if price > h1.get("ema200", 0):
             score += 2
             reasons.append("Preço > EMA200")
-        if ema9 > ema21:
+        if h1.get("ema9", 0) > h1.get("ema21", 0):
             score += 1
             reasons.append("EMA9 > EMA21")
-        if macd_bull:
-            score += 1
-            reasons.append("MACD bullish")
-        if adx > 25:
-            score += 2
-            reasons.append("ADX > 25")
-        elif adx > 20:
-            score += 1
-            reasons.append("ADX > 20")
-        if candle_bull:
-            score += 1
-            reasons.append("Candle bullish")
-
-        if strategy == "pullback":
-            if rsi < 60:
-                score += 1
-                reasons.append("RSI saudável")
-            if price <= lower * 1.02:
-                score += 1
-                reasons.append("Preço na zona de retração")
-            if fvg_active or ob_active or sweep_active:
-                score += 1
-                reasons.append("SMC de pullback")
-
-        elif strategy == "reversal":
-            if price < ema200:
-                score += 1
-                reasons.append("Preço abaixo da EMA200")
-            if rsi <= 35:
-                score += 1
-                reasons.append("RSI extremo favorável")
-            if fvg_active or ob_active or sweep_active:
-                score += 2
-                reasons.append("SMC de reversão")
-            if adx <= 28:
-                score += 1
-                reasons.append("ADX moderado")
-
     else:
-        if price < ema200:
+        if price < h1.get("ema200", float('inf')):
             score += 2
             reasons.append("Preço < EMA200")
-        if ema9 < ema21:
+        if h1.get("ema9", 0) < h1.get("ema21", 0):
             score += 1
             reasons.append("EMA9 < EMA21")
-        if macd_bear:
-            score += 1
-            reasons.append("MACD bearish")
-        if adx > 25:
-            score += 2
-            reasons.append("ADX > 25")
-        elif adx > 20:
-            score += 1
-            reasons.append("ADX > 20")
-        if candle_bear:
-            score += 1
-            reasons.append("Candle bearish")
-
-        if strategy == "pullback":
-            if rsi > 40:
-                score += 1
-                reasons.append("RSI saudável")
-            if price >= upper * 0.98:
-                score += 1
-                reasons.append("Preço na zona de retração")
-            if fvg_active or ob_active or sweep_active:
-                score += 1
-                reasons.append("SMC de pullback")
-
-        elif strategy == "reversal":
-            if price > ema200:
-                score += 1
-                reasons.append("Preço acima da EMA200")
-            if rsi >= 65:
-                score += 1
-                reasons.append("RSI extremo favorável")
-            if fvg_active or ob_active or sweep_active:
-                score += 2
-                reasons.append("SMC de reversão")
-            if adx <= 28:
-                score += 1
-                reasons.append("ADX moderado")
-
+    
+    # ── Momentum (1 ponto) ──
+    if h1.get("macd_bull") and direction == "BUY":
+        score += 1
+        reasons.append("MACD bullish")
+    elif h1.get("macd_bear") and direction == "SELL":
+        score += 1
+        reasons.append("MACD bearish")
+    
+    # ── Force (3 pontos) ──
+    if h1.get("adx", 0) > 25:
+        score += 3
+        reasons.append("ADX > 25")
+    elif h1.get("adx", 0) > 20:
+        score += 2
+        reasons.append("ADX > 20")
+    elif h1.get("adx", 0) > 15:
+        score += 1
+        reasons.append("ADX > 15")
+    
+    # ── Candle (1 ponto) ──
+    if direction == "BUY" and h1.get("candle_bull"):
+        score += 1
+        reasons.append("Candle bullish")
+    elif direction == "SELL" and h1.get("candle_bear"):
+        score += 1
+        reasons.append("Candle bearish")
+    
     reason = " | ".join(reasons) if reasons else "Nenhuma confirmação técnica"
     return score, reason
 
@@ -393,24 +362,20 @@ def _get_technical_fallback_score(h1: dict, direction: str, strategy: str = "tre
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _VALIDATOR_SYSTEM = """
-Você é um validador de sinais forex/ouro especializado em SMC, tendência, pullback e reversão.
+Você é um validador de sinais forex/ouro especializado em SMC (Smart Money Concepts).
 
 Sua tarefa: avaliar se um sinal técnico deve ser enviado ao trader ou rejeitado.
 
-Regras gerais de rejeição:
+Rejeite se:
 - ADX < 18 (mercado sem direção)
-- RSI extremamente contra a direção do setup
+- RSI > 72 em BUY ou RSI < 28 em SELL (zona extrema oposta)
+- H4 desalinhado com H1 (sem confluência multi-timeframe)
 - Últimos 3 trades no par todos LOSS
-- Sinal fraco sem nenhuma confirmação técnica relevante
-
-Regras por estratégia:
-- trend: prefira continuidade, EMA200 alinhada e MACD a favor.
-- pullback: aceite pequenas divergências de H4 se a tendência principal continuar intacta.
-- reversal: aceite contra-tendência apenas com RSI extremo + reação de preço + contexto SMC/liquidez.
+- FVG e OB ambos inativos
 
 Aprove com alta confiança (>= 8) se:
-- o modo estratégico do sinal faz sentido com o contexto do mercado
-- houver boa combinação entre direção, momentum e estrutura
+- FVG ativo + OB ativo + sweep confirmado + H4 alinhado
+- ADX >= 25 e MACD confirmando direção
 - WR recente do par >= 55%
 
 Responda SOMENTE com JSON válido, sem texto adicional:
@@ -457,11 +422,10 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     ai_params   = load_ai_params()
     regime_info = ai_params.get("regime_pairs", {}).get(sym, ai_params.get("market_regime", "neutral"))
     bias        = ai_params.get("strategy_bias", "balanced")
-    strategy    = (signal.get("strategy") or "trend").lower()
 
     # ── FALLBACK: Se IA não está configurada ──
     if not api_key:
-        tech_score, tech_reason = _get_technical_fallback_score(h1, direction, strategy)
+        tech_score, tech_reason = _get_technical_fallback_score(h1, direction)
         approved = tech_score >= 5  # Score mínimo técnico
         reason = f"[FALLBACK TÉCNICO] {tech_score}/9: {tech_reason}"
         log(f"[GEMINI] {sym} {direction} → {'✅' if approved else '❌'} {reason}")
@@ -482,7 +446,7 @@ Indicadores H1:
 - Sweep bull: {sweep.get('bullish')} | bear: {sweep.get('bearish')}
 
 H4: alinhado={indicators.get('aligned',False)} | cenário={indicators.get('h4_cenario','NEUTRO')}
-Regime do par: {regime_info} | Viés estratégico: {bias} | Modo do sinal: {strategy}
+Regime do par: {regime_info} | Viés estratégico: {bias}
 
 Histórico par ({len(pair_history)} trades): WR {pair_wr}% | Últimos: {last_results}
 WR geral do bot: {round(bot.wins / max(bot.wins + bot.losses, 1) * 100, 1)}%
@@ -494,18 +458,16 @@ Trades ativos: {len(bot.active_trades)}
 
     # ── FALLBACK: Se Gemini falhou ──
     if result is None:
-        tech_score, tech_reason = _get_technical_fallback_score(h1, direction, strategy)
+        tech_score, tech_reason = _get_technical_fallback_score(h1, direction)
         
         # Banca pequena: conservador
-        if strategy == "reversal":
-            threshold = 5 if bot.balance <= 500 else 4
-        elif strategy == "pullback":
-            threshold = 5 if bot.balance <= 500 else 4
+        if bot.balance <= 500:
+            approved = tech_score >= 6  # Score mais alto
+            reason = f"[IA INDISPONÍVEL] Fallback técnico: {tech_score}/9: {tech_reason}"
+        # Banca grande: permite
         else:
-            threshold = 6 if bot.balance <= 500 else 5
-
-        approved = tech_score >= threshold
-        reason = f"[IA INDISPONÍVEL] Fallback técnico ({strategy}): {tech_score}/10: {tech_reason}"
+            approved = tech_score >= 5
+            reason = f"[IA INDISPONÍVEL] Fallback técnico: {tech_score}/9: {tech_reason}"
         
         log(f"[GEMINI] {sym} {direction} → {'✅' if approved else '❌'} {reason}")
         return approved, reason

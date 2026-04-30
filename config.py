@@ -80,32 +80,6 @@ class Config:
     USE_LIQUIDITY_FOR_TP = True
     USE_FVG_FOR_TP     = True
 
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # ESTRATÉGIA MULTIMODO
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # adaptive      -> escolhe tendência, pullback ou reversão conforme o contexto
-    # trend_only    -> prioriza continuidade de tendência
-    # pullback_only -> prioriza correções na direção principal
-    # reversal_only -> prioriza reversões com exaustão/liquidez
-    STRATEGY_MODE = "adaptive"
-    STRATEGY_PRIORITY = ["trend", "pullback", "reversal"]
-    STRATEGY_MIN_SCORE = {
-        "trend": 6,
-        "pullback": 5,
-        "reversal": 4,
-    }
-    STRATEGY_MIN_CORE = {
-        "trend": 3,
-        "pullback": 2,
-        "reversal": 2,
-    }
-    STRATEGY_MIN_ADX_TREND = 20
-    STRATEGY_MAX_ADX_REVERSAL = 28
-    STRATEGY_ALLOW_COUNTERTREND = True
-    STRATEGY_REQUIRE_SMC_CONFIRMATION = False
-    STRATEGY_REQUIRE_H4 = False
-
     # Turtle Position Sizing
     ATR_RISK_PCT       = 1.0
     ATR_MULT_FOR_RISK  = 2.0
@@ -144,10 +118,10 @@ class Config:
         "mtf_ema200":      1,  # H4 > EMA200 (ou <)
     }
     CONFLUENCE_MAX_SCORE = 21  # soma dos pesos acima
-    MIN_CONFLUENCE_WEIGHTED = 9   # score mínimo para gerar sinal (default, pode ser ajustado pela IA)
+    MIN_CONFLUENCE_WEIGHTED = 10  # score mínimo para gerar sinal (default, pode ser ajustado pela IA)
 
     # Legado — mantido para compatibilidade
-    MIN_CONFLUENCE = 5
+    MIN_CONFLUENCE = 6
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # PRÉ-SINAL / RADAR PREMIUM
@@ -221,6 +195,25 @@ class Config:
                                              "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "USDJPY"]},
         3: {"min_balance": 2000, "symbols": list(FXGOLD_ASSETS.keys())},
     }
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # PERFORMANCE / THROTTLING
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # Mantém tiers como referência de risco, mas não bloqueia o pipeline de análise.
+    ENFORCE_ASSET_TIERS = False
+
+    # Cache de parâmetros aprendidos (evita abrir ai_params.json a cada ciclo)
+    AI_PARAMS_CACHE_TTL = int(os.getenv("AI_PARAMS_CACHE_TTL", "60"))
+
+    # Evita travar o fluxo quando Gemini responde 429
+    GEMINI_COOLDOWN_AFTER_429 = int(os.getenv("GEMINI_COOLDOWN_AFTER_429", "1800"))
+
+    # Cache do MTF (recalcula só quando o candle muda ou o TTL expira)
+    MTF_CACHE_TTL = int(os.getenv("MTF_CACHE_TTL", "45"))
+
+    # Twelve Data: prioriza os principais pares e rotaciona o restante aos poucos.
+    ANALYSIS_SYMBOL_BATCH_SIZE = int(os.getenv("ANALYSIS_SYMBOL_BATCH_SIZE", "6"))
+    ANALYSIS_PRIORITY_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 
     # Risco máximo absoluto (USD) por trade
     MAX_RISK_ABSOLUTE_USD = {
