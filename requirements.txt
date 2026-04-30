@@ -4,3 +4,4 @@ pandas
 flask
 flask-cors
 pywebpush
+schedule>=1.2.0
