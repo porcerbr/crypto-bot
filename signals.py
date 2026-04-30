@@ -2,7 +2,9 @@ import time
 import random
 from datetime import datetime
 from config import Config
-from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair, is_good_session
+from utils import (log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair,
+                   is_good_session, get_kill_zone, is_price_in_ote,
+                   get_allowed_symbols)
 from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
@@ -105,6 +107,32 @@ def calc_confluence(res, direction, mtf=None):
                 checks.append(("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf'))))
             else:
                 checks.append(("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0)))
+
+        # ── Daily Bias (D1) ───────────────────────────────────
+        # Profissionais só operam a favor do bias diário
+        daily_bias = mtf.get("daily_bias", "NEUTRO")
+        if direction == "BUY":
+            checks.append(("Daily Bias ALTA (D1)", daily_bias == "ALTA"))
+        else:
+            checks.append(("Daily Bias BAIXA (D1)", daily_bias == "BAIXA"))
+
+        # ── Kill Zone ─────────────────────────────────────────
+        # Janelas institucionais: London Open, NY Open, London Close, Asia
+        # Fora da Kill Zone o sinal ainda pode passar, mas perde 1 ponto
+        sym = res.get("symbol", "")
+        kill_zone = get_kill_zone(sym)
+        checks.append((f"Kill Zone ({kill_zone or 'fora'})", kill_zone is not None))
+
+        # ── OTE — Optimal Trade Entry (Fibonacci 62-79%) ──────
+        # Verifica se o preço está no retrace ideal de Fibonacci
+        sweep = res.get("sweep", {})
+        sh    = sweep.get("swing_high")
+        sl_sw = sweep.get("swing_low")
+        if sh and sl_sw:
+            ote_ok = is_price_in_ote(price, sh, sl_sw, direction)
+        else:
+            ote_ok = False
+        checks.append(("OTE Fibonacci (62-79%)", ote_ok))
 
     score = sum(1 for _, ok in checks if ok)
     passed = score >= Config.MIN_CONFLUENCE
@@ -343,22 +371,21 @@ def scan(bot):
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
             continue
 
-        # ── Filtro SMC obrigatório ───────────────────────────────
+        # ── Filtro SMC + Daily Bias obrigatório ─────────────────────
         # Para entrar, o sinal DEVE ter:
-        #   (FVG ativo OU Order Block ativo) E H4 alinhado com H1
-        # Sem isso, os checks técnicos (EMA, MACD, RSI) sozinhos
-        # não são suficientes — é exatamente o tipo de sinal fraco
-        # que o backtest mostrou como alta taxa de LOSS.
+        #   (FVG ativo OU Order Block ativo) E H4 alinhado E Daily Bias correto
         check_map = {nm: ok for nm, ok in checks}
 
         has_fvg = check_map.get(
             "FVG Bullish ativo" if direction == "BUY" else "FVG Bearish ativo", False)
         has_ob  = check_map.get(
-            "OB Bullish ativo"  if direction == "BUY" else "Order Block Bearish", False)
+            "Order Block Bullish" if direction == "BUY" else "Order Block Bearish", False)
         has_h4  = check_map.get("MTF H4 alinhado", False)
+        has_daily = check_map.get(
+            "Daily Bias ALTA (D1)" if direction == "BUY" else "Daily Bias BAIXA (D1)", False)
 
-        smc_ok    = has_fvg or has_ob    # pelo menos 1 zona SMC ativa
-        quality   = smc_ok and has_h4   # E H4 confirmando
+        smc_ok  = has_fvg or has_ob
+        quality = smc_ok and has_h4 and has_daily
 
         if not quality:
             reason = []
@@ -366,7 +393,9 @@ def scan(bot):
                 reason.append("sem FVG/OB ativo")
             if not has_h4:
                 reason.append("H4 desalinhado")
-            log(f"[SMC] {sym} {direction}: filtro SMC bloqueou — {', '.join(reason)}")
+            if not has_daily:
+                reason.append("Daily Bias contrário")
+            log(f"[SMC] {sym} {direction}: filtro bloqueou — {', '.join(reason)}")
             continue
 
         # Pares bloqueados pela IA (baseado em aprendizado)
@@ -401,6 +430,9 @@ def scan(bot):
             "atr": atr,
             "mtf_aligned": mtf.get("aligned", False),
             "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
+            "daily_bias": mtf.get("daily_bias", "NEUTRO"),
+            "kill_zone": get_kill_zone(sym),
+            "ote_active": check_map.get("OTE Fibonacci (62-79%)", False),
             "sl_source": sl_src,
             "tp_source": tp_src,
         }
