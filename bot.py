@@ -306,114 +306,103 @@ class TradingBot:
     # FECHAMENTO DE TRADE (P&L unificado)
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     def close_trade(self, trade: dict, exit_price: float, result: str):
-        with self._lock:
-            if trade not in self.active_trades:
-                return  # j\u00e1 foi fechado
+    with self._lock:
+        if trade not in self.active_trades:
+            return  # já foi fechado
 
-            symbol = trade["symbol"]
-            margin = trade["margin_required"]
-            lot = trade["lot"]
-            entry = trade["entry"]
-            commission = trade.get("commission", 0)
-            direction = trade["dir"]
+        symbol = trade["symbol"]
+        margin = trade["margin_required"]
+        lot = trade["lot"]
+        entry = trade["entry"]
+        commission = trade.get("commission", 0)
+        direction = trade["dir"]
 
-            # Atualiza cota\u00e7\u00e3o USDJPY se necess\u00e1rio (pares JPY)
-            if is_jpy_pair(symbol) and self._usdjpy_price <= 0:
-                self._update_usdjpy()
+        if is_jpy_pair(symbol) and self._usdjpy_price <= 0:
+            self._update_usdjpy()
 
-            # P&L unificado \u2014 mesma fun\u00e7\u00e3o do dashboard
-            profit = calc_pnl_usd(
-                symbol=symbol,
-                direction=direction,
-                entry=entry,
-                exit_price=exit_price,
-                lot=lot,
-                usdjpy_price=self._usdjpy_price or 150.0,
-                commission=commission,
-            )
+        profit = calc_pnl_usd(
+            symbol=symbol,
+            direction=direction,
+            entry=entry,
+            exit_price=exit_price,
+            lot=lot,
+            usdjpy_price=self._usdjpy_price or 150.0,
+            commission=commission,
+        )
 
-            self.balance += margin + profit
-            self.balance = round(self.balance, 2)
+        self.balance += margin + profit
+        self.balance = round(self.balance, 2)
 
-            closed_at_iso = datetime.now(timezone.utc).isoformat()
-            self.history.append({
-                "symbol":        symbol,
-                "dir":           direction,
-                "result":        result,
-                "pnl":           round(profit, 2),
-                "closed_at":     datetime.now().strftime("%d/%m %H:%M"),
-                "closed_ts_iso": closed_at_iso,
-                "opened_at":     trade.get("opened_at", ""),
-                "opened_ts_iso": trade.get("opened_ts_iso", ""),
-                "adx":           trade.get("adx", 0),
-                "ai_approved":   trade.get("ai_approved", True),
-                "ai_confidence": trade.get("ai_confidence", 0),
-                "entry":         entry,
-                "exit":          exit_price,
-                "lot":           lot,
-            })
+        closed_at_iso = datetime.now(timezone.utc).isoformat()
+        self.history.append({
+            "symbol":        symbol,
+            "dir":           direction,
+            "result":        result,
+            "pnl":           round(profit, 2),
+            "closed_at":     datetime.now().strftime("%d/%m %H:%M"),
+            "closed_ts_iso": closed_at_iso,
+            "opened_at":     trade.get("opened_at", ""),
+            "opened_ts_iso": trade.get("opened_ts_iso", ""),
+            "adx":           trade.get("adx", 0),
+            "ai_approved":   trade.get("ai_approved", True),
+            "ai_confidence": trade.get("ai_confidence", 0),
+            "entry":         entry,
+            "exit":          exit_price,
+            "lot":           lot,
+        })
 
-            if result == "WIN":
-                self.wins += 1
-                self.consecutive_losses = 0
-            else:
-                self.losses += 1
-                self.consecutive_losses += 1
-                cooldown = get_dynamic_cooldown(self.balance)
-                self.asset_cooldown[symbol] = time.time() + cooldown
-                if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
-                    self.paused_until = time.time() + Config.PAUSE_DURATION
-                    self.send(
-                        f"\u26d4 CIRCUIT BREAKER \u2014 {Config.MAX_CONSECUTIVE_LOSSES} losses "
-                        f"consecutivos. Pausa de {Config.PAUSE_DURATION // 60}min."
-                    )
+        if result == "WIN":
+            self.wins += 1
+            self.consecutive_losses = 0
+        else:
+            self.losses += 1
+            self.consecutive_losses += 1
+            cooldown = get_dynamic_cooldown(self.balance)
+            self.asset_cooldown[symbol] = time.time() + cooldown
+            if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
+                self.paused_until = time.time() + Config.PAUSE_DURATION
+                self.send(
+                    f"⛔ CIRCUIT BREAKER — {Config.MAX_CONSECUTIVE_LOSSES} losses "
+                    f"consecutivos. Pausa de {Config.PAUSE_DURATION // 60}min."
+                )
 
-            self.active_trades.remove(trade)
+        self.active_trades.remove(trade)
 
-            # \u2500\u2500 Notifica\u00e7\u00e3o enriquecida \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-            total = self.wins + self.losses
-            new_wr = round(self.wins / total * 100, 1) if total > 0 else 0
+        total = self.wins + self.losses
+        new_wr = round(self.wins / total * 100, 1) if total > 0 else 0
 
-            pips = calc_pnl_pips(symbol, direction, entry, exit_price)
+        pips = calc_pnl_pips(symbol, direction, entry, exit_price)
 
-            # Dura\u00e7\u00e3o do trade
-            duration_str = "\u2014"
-            try:
-                opened_iso = trade.get("opened_ts_iso")
-                if opened_iso:
-                    opened_dt = datetime.fromisoformat(opened_iso)
-                    delta = datetime.now(timezone.utc) - opened_dt
-                    total_min = int(delta.total_seconds() // 60)
-                    h, m = divmod(total_min, 60)
-                    duration_str = f"{h}h {m}min" if h > 0 else f"{m}min"
-            except Exception:
-                pass
+        duration_str = "—"
+        try:
+            opened_iso = trade.get("opened_ts_iso")
+            if opened_iso:
+                opened_dt = datetime.fromisoformat(opened_iso)
+                delta = datetime.now(timezone.utc) - opened_dt
+                total_min = int(delta.total_seconds() // 60)
+                h, m = divmod(total_min, 60)
+                duration_str = f"{h}h {m}min" if h > 0 else f"{m}min"
+        except Exception:
+            pass
 
-            pnl_sign  = "+" if profit >= 0 else ""
-            pips_sign = "+" if pips >= 0 else ""
-            emoji     = "\u2705" if result == "WIN" else "\u274c"
-            wr_emoji  = "\ud83d\udcc8" if new_wr >= 55 else "\ud83d\udcca"
+        pnl_sign = "+" if profit >= 0 else ""
+        pips_sign = "+" if pips >= 0 else ""
+        emoji = "✅" if result == "WIN" else "❌"
+        wr_emoji = "📈" if new_wr >= 55 else "📊"
 
-            self.send(
-                f"{emoji} TRADE FECHADO \u2014 {symbol} {direction}\
-"
-                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
-"
-                f"\ud83d\udccd Entrada: {fmt(entry)} \u2192 Sa\u00edda: {fmt(exit_price)}\
-"
-                f"\ud83d\udcb0 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)\
-"
-                f"\u23f1 Dura\u00e7\u00e3o: {duration_str}\
-"
-                f"\ud83d\udcbc Lote: {lot} | Margem liberada: ${round(margin, 2)}\
-"
-                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
-"
-                f"\ud83c\udfe6 Saldo: ${round(self.balance, 2)}\
-"
-                f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L)"
-            )
-            save_state(self)
+        self.send(
+            f"{emoji} TRADE FECHADO — {symbol} {direction}\n"
+            f"────────────────────────────────\n"
+            f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}\n"
+            f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)\n"
+            f"⏱ Duração: {duration_str}\n"
+            f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}\n"
+            f"────────────────────────────────\n"
+            f"🏦 Saldo: ${round(self.balance, 2)}\n"
+            f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L)"
+        )
+        save_state(self)
+
 
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     # COMUNICA\u00c7\u00c3O
