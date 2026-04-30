@@ -1,5 +1,4 @@
 import time
-import random
 from datetime import datetime, timezone
 from config import Config
 from utils import (
@@ -61,7 +60,7 @@ def _is_safe_to_trade(bot, symbol: str) -> tuple[bool, str]:
 def calc_confluence(res: dict, direction: str, mtf: dict = None) -> tuple[int, int, list, bool, int]:
     """
     Calcula score de confluência com pesos.
-    Retorna (score_ponderado, total_checks, checks, passed, min_required).
+    Retorna (score_ponderado, max_score_ponderado, checks, passed, min_required).
     """
     weights = Config.CONFLUENCE_WEIGHTS
     price = res["price"]
@@ -128,25 +127,29 @@ def calc_confluence(res: dict, direction: str, mtf: dict = None) -> tuple[int, i
 
     min_required = getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE)
     passed = weighted_score >= min_required
-    return weighted_score, len(checks), checks, passed, min_required
-
+    return weighted_score, max_score, checks, passed, min_required
 # ═══════════════════════════════════════════════════════════════════════════════
 # SL/TP BASEADOS EM SMC
 # ═══════════════════════════════════════════════════════════════════════════════
 def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: float):
     """
     Retorna (sl, tp, rr, sl_source, tp_source).
+
+    Regras:
+    - SL: usa OB quando disponível; senão ATR/fallback.
+    - TP: usa o nível mais próximo e válido de liquidez/FVG.
+    - TP final sempre é limitado por MAX_TP_SL_RATIO.
     """
     sl = None
     tp = None
     sl_source = "atr"
     tp_source = "atr"
 
-    ob    = res.get("ob", {}) or {}
+    ob = res.get("ob", {}) or {}
     sweep = res.get("sweep", {}) or {}
-    fvg   = res.get("fvg", {}) or {}
+    fvg = res.get("fvg", {}) or {}
 
-    # ── SL: extremo do Order Block ───────────────────────────────
+    # SL: extremo do Order Block
     if Config.USE_OB_FOR_SL:
         if direction == "BUY":
             obs = ob.get("bullish", [])
@@ -165,7 +168,6 @@ def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: floa
                     sl = round(best_ob["high"] + buffer, 5)
                     sl_source = "ob"
 
-    # Fallback ATR
     if sl is None:
         if atr and atr > 0:
             if direction == "BUY":
@@ -173,43 +175,12 @@ def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: floa
             else:
                 sl = round(entry + Config.ATR_SL_MULT * atr, 5)
         else:
-            if direction == "BUY":
-                sl = round(entry * 0.995, 5)
-            else:
-                sl = round(entry * 1.005, 5)
+            sl = round(entry * 0.995, 5) if direction == "BUY" else round(entry * 1.005, 5)
 
-    # ── TP: liquidity pool H4 → FVG → ATR ───────────────────────
-    if Config.USE_LIQUIDITY_FOR_TP and mtf:
-        h4_sweep = (mtf.get("h4") or {}).get("sweep", {}) or {}
-        if direction == "BUY" and h4_sweep.get("swing_high"):
-            tp = round(h4_sweep["swing_high"], 5)
-            tp_source = "liquidity"
-        elif direction == "SELL" and h4_sweep.get("swing_low"):
-            tp = round(h4_sweep["swing_low"], 5)
-            tp_source = "liquidity"
+    dist_sl = abs(entry - sl)
+    if dist_sl <= 0:
+        return None, None, 0, sl_source, tp_source
 
-    if tp is None and Config.USE_FVG_FOR_TP:
-        if direction == "BUY":
-            valid = [f for f in fvg.get("bullish", []) if f["top"] > entry]
-            if valid:
-                tp = round(max(f["top"] for f in valid), 5)
-                tp_source = "fvg"
-        else:
-            valid = [f for f in fvg.get("bearish", []) if f["bottom"] < entry]
-            if valid:
-                tp = round(min(f["bottom"] for f in valid), 5)
-                tp_source = "fvg"
-
-    if tp is None:
-        if atr and atr > 0:
-            if direction == "BUY":
-                tp = round(entry + Config.ATR_TP_MULT * atr, 5)
-            else:
-                tp = round(entry - Config.ATR_TP_MULT * atr, 5)
-        else:
-            tp = round(entry * (1.01 if direction == "BUY" else 0.99), 5)
-
-    # ── R:R dinâmico baseado em SMC score ───────────────────────
     side = "bullish" if direction == "BUY" else "bearish"
     smc_checks = sum(1 for ok in [
         any(f.get("active") for f in fvg.get(side, [])),
@@ -221,7 +192,78 @@ def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: floa
     rr_target = Config.TP_SL_RATIO_BASE + (smc_checks * Config.TP_SL_RATIO_STEP)
     rr_target = min(rr_target, Config.MAX_TP_SL_RATIO)
 
-    # Validações finais
+    candidates = []
+
+    def add_candidate(level, source):
+        if level is None:
+            return
+        try:
+            level = float(level)
+        except (TypeError, ValueError):
+            return
+        if direction == "BUY" and level <= entry:
+            return
+        if direction == "SELL" and level >= entry:
+            return
+        rr_candidate = abs(level - entry) / dist_sl
+        if rr_candidate <= 0:
+            return
+        candidates.append({"tp": round(level, 5), "rr": rr_candidate, "source": source})
+
+    if Config.USE_LIQUIDITY_FOR_TP and mtf:
+        h4_sweep = (mtf.get("h4") or {}).get("sweep", {}) or {}
+        if direction == "BUY":
+            swing_high = h4_sweep.get("swing_high")
+            if swing_high is not None:
+                add_candidate(swing_high, "liquidity")
+        else:
+            swing_low = h4_sweep.get("swing_low")
+            if swing_low is not None:
+                add_candidate(swing_low, "liquidity")
+
+    if Config.USE_FVG_FOR_TP:
+        if direction == "BUY":
+            valid = []
+            for f in fvg.get("bullish", []):
+                top = f.get("top")
+                try:
+                    if top is not None and float(top) > entry:
+                        valid.append(float(top))
+                except (TypeError, ValueError):
+                    continue
+            if valid:
+                add_candidate(min(valid), "fvg")
+        else:
+            valid = []
+            for f in fvg.get("bearish", []):
+                bottom = f.get("bottom")
+                try:
+                    if bottom is not None and float(bottom) < entry:
+                        valid.append(float(bottom))
+                except (TypeError, ValueError):
+                    continue
+            if valid:
+                add_candidate(max(valid), "fvg")
+
+    if atr and atr > 0:
+        atr_tp = entry + (Config.ATR_TP_MULT * atr) if direction == "BUY" else entry - (Config.ATR_TP_MULT * atr)
+    else:
+        atr_tp = entry + (rr_target * dist_sl) if direction == "BUY" else entry - (rr_target * dist_sl)
+    add_candidate(atr_tp, "atr")
+
+    max_rr_cap = float(Config.MAX_TP_SL_RATIO)
+    min_rr_target = float(Config.TP_SL_RATIO_BASE)
+
+    sane_candidates = [c for c in candidates if min_rr_target <= c["rr"] <= max_rr_cap]
+
+    if sane_candidates:
+        chosen = min(sane_candidates, key=lambda c: abs(c["rr"] - rr_target))
+        tp = chosen["tp"]
+        tp_source = chosen["source"]
+    else:
+        tp = round(entry + (max_rr_cap * dist_sl), 5) if direction == "BUY" else round(entry - (max_rr_cap * dist_sl), 5)
+        tp_source = "rr_cap"
+
     if direction == "BUY":
         if sl >= entry or tp <= entry:
             return None, None, 0, sl_source, tp_source
@@ -229,24 +271,14 @@ def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: floa
         if sl <= entry or tp >= entry:
             return None, None, 0, sl_source, tp_source
 
-    dist_sl = abs(entry - sl)
-    dist_tp = abs(tp - entry)
-    if dist_sl <= 0:
-        return None, None, 0, sl_source, tp_source
+    rr_real = round(abs(tp - entry) / dist_sl, 2)
 
-    rr_real = round(dist_tp / dist_sl, 2)
-
-    if rr_target > rr_real:
-        if direction == "BUY":
-            tp = round(entry + rr_target * dist_sl, 5)
-        else:
-            tp = round(entry - rr_target * dist_sl, 5)
-        tp_source = "rr_dynamic"
-        rr_real = rr_target
+    if rr_real > max_rr_cap:
+        tp = round(entry + (max_rr_cap * dist_sl), 5) if direction == "BUY" else round(entry - (max_rr_cap * dist_sl), 5)
+        tp_source = "rr_cap"
+        rr_real = round(max_rr_cap, 2)
 
     return sl, tp, rr_real, sl_source, tp_source
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # SCAN PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -305,7 +337,7 @@ def scan(bot):
             log(f"[SMC] {sym}: SL/TP inválido, descartado")
             continue
 
-        if rr < min_rr or score < effective_min_conf:
+        if rr < min_rr or rr > Config.MAX_TP_SL_RATIO or score < effective_min_conf:
             continue
 
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
@@ -356,7 +388,7 @@ def scan(bot):
             "tp_pips":            tp_pips,
             "rr":                 rr,
             "score":              score,
-            "max_score":          getattr(Config, "CONFLUENCE_MAX_SCORE", total_checks),
+            "max_score":          total_checks,
             "checks":             [{"name": nm, "ok": ok} for nm, ok in checks],
             "min_lot_margin":     round(min_lot_margin, 2),
             "risk_001_lot":       round(risk_001_lot, 2),
