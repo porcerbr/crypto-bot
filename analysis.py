@@ -1,4 +1,5 @@
 import time
+import threading
 import requests
 import pandas as pd
 from datetime import datetime, timezone
@@ -21,9 +22,10 @@ _INVALID_LOG_COOLDOWN = 10 * 60  # loga no máximo 1x a cada 10 min por símbolo
 def _log_invalid_candle(symbol: str):
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        _log_invalid_candle(symbol)
+        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
         _invalid_candle_logged[symbol] = now
 _cache: dict = {}
+_cache_lock = threading.Lock()
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
 
