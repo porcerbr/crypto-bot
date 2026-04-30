@@ -235,17 +235,40 @@ class Config:
     # VALIDA\u00c7\u00c3O
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @classmethod
-    def validate(cls) -> list:
-        """Retorna lista de erros de configura\u00e7\u00e3o. Vazia = tudo OK."""
-        errors = []
-        if not cls.BOT_TOKEN:
-            errors.append("TELEGRAM_TOKEN n\u00e3o configurado")
-        if not cls.CHAT_ID:
-            errors.append("TELEGRAM_CHAT_ID n\u00e3o configurado")
-        if not cls.TWELVE_DATA_API_KEY:
-            errors.append("TWELVE_DATA_API_KEY n\u00e3o configurado (obrigat\u00f3rio para obter candles)")
-        if not cls.GEMINI_API_KEY:
-            errors.append("AVISO: GEMINI_API_KEY n\u00e3o configurado \u2014 IA desativada")
-        if cls.INITIAL_BALANCE <= 0:
-            errors.append(f"START_BALANCE inv\u00e1lido: {cls.INITIAL_BALANCE}")
-        return errors
+    # Em config.py, localize o método validate() e substitua por:
+
+@classmethod
+def validate(cls) -> list:
+    """
+    Retorna lista de erros de configuração.
+    Lista vazia = tudo OK.
+    ❌ = erro crítico (exit)
+    ⚠️  = aviso (continua)
+    """
+    errors = []
+    
+    if not cls.BOT_TOKEN:
+        errors.append("❌ TELEGRAM_TOKEN não configurado")
+    if not cls.CHAT_ID:
+        errors.append("❌ TELEGRAM_CHAT_ID não configurado")
+    if not cls.TWELVE_DATA_API_KEY:
+        errors.append("❌ TWELVE_DATA_API_KEY não configurado (obrigatório)")
+    
+    # ⚠️ Aviso, não erro
+    if not cls.GEMINI_API_KEY:
+        errors.append("⚠️  GEMINI_API_KEY não configurado — IA desativada (usando fallback técnico)")
+    
+    if cls.INITIAL_BALANCE <= 0:
+        errors.append(f"❌ START_BALANCE inválido: {cls.INITIAL_BALANCE}")
+    
+    # Validação de limites
+    if cls.MARGIN_CALL_PCT <= cls.STOP_OUT_PCT:
+        errors.append(f"❌ MARGIN_CALL_PCT ({cls.MARGIN_CALL_PCT}) <= STOP_OUT_PCT ({cls.STOP_OUT_PCT})")
+    
+    if cls.DEFAULT_LEVERAGE < 1:
+        errors.append(f"❌ DEFAULT_LEVERAGE deve ser >= 1")
+    
+    if cls.MAX_CONSECUTIVE_LOSSES < 1:
+        errors.append(f"❌ MAX_CONSECUTIVE_LOSSES deve ser >= 1")
+    
+    return errors
