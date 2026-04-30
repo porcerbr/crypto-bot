@@ -38,14 +38,15 @@ def _is_safe_to_trade(bot, symbol):
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
     # 5. Filtro de sessão — só opera na janela de liquidez do par
-    if not is_good_session(symbol):
+    if Config.USE_SESSION_FILTER and not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
     # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
-    avoid_hours = load_ai_params().get("avoid_hours_utc", [])
-    if avoid_hours and datetime.utcnow().hour in avoid_hours:
-        return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
+    if Config.USE_AVOID_HOURS:
+        avoid_hours = load_ai_params().get("avoid_hours_utc", [])
+        if avoid_hours and datetime.utcnow().hour in avoid_hours:
+            return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
 
     return True, ""
 
@@ -224,7 +225,10 @@ def scan(bot):
     if len(bot.active_trades) >= max_trades:
         return
 
-    if is_high_impact_news_window(minutes_before=15, minutes_after=30):
+    if Config.USE_NEWS_FILTER and is_high_impact_news_window(
+        minutes_before=Config.NEWS_MINUTES_BEFORE,
+        minutes_after=Config.NEWS_MINUTES_AFTER,
+    ):
         return
     if is_weekend():
         return
@@ -328,7 +332,7 @@ def scan(bot):
 
         # live_confluence já tem o ajuste de regime embutido (calculado no heartbeat)
         live_conf = ai_params.get("live_confluence", base_conf)
-        effective_min_conf = max(6, min(9, live_conf + bias_adj))
+        effective_min_conf = max(5, min(8, live_conf + bias_adj))
 
         if sc < effective_min_conf:
             log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
@@ -339,30 +343,26 @@ def scan(bot):
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
             continue
 
-        # ── Filtro SMC obrigatório ───────────────────────────────
-        # Para entrar, o sinal DEVE ter:
-        #   (FVG ativo OU Order Block ativo) E H4 alinhado com H1
-        # Sem isso, os checks técnicos (EMA, MACD, RSI) sozinhos
-        # não são suficientes — é exatamente o tipo de sinal fraco
-        # que o backtest mostrou como alta taxa de LOSS.
+        # ── Apoio SMC / MTF ───────────────────────────────────────
+        # Mantém o bot profissional sem exigir que tudo aconteça ao mesmo tempo.
         check_map = {nm: ok for nm, ok in checks}
 
         has_fvg = check_map.get(
             "FVG Bullish ativo" if direction == "BUY" else "FVG Bearish ativo", False)
-        has_ob  = check_map.get(
-            "OB Bullish ativo"  if direction == "BUY" else "Order Block Bearish", False)
-        has_h4  = check_map.get("MTF H4 alinhado", False)
+        has_ob = check_map.get(
+            "OB Bullish ativo" if direction == "BUY" else "Order Block Bearish", False)
+        has_h4 = check_map.get("MTF H4 alinhado", False)
 
-        smc_ok    = has_fvg or has_ob    # pelo menos 1 zona SMC ativa
-        quality   = smc_ok and has_h4   # E H4 confirmando
+        smc_ok = has_fvg or has_ob
+        support_checks = int(smc_ok) + int(has_h4)
 
-        if not quality:
+        if support_checks < Config.MIN_SUPPORT_CHECKS:
             reason = []
             if not smc_ok:
                 reason.append("sem FVG/OB ativo")
             if not has_h4:
                 reason.append("H4 desalinhado")
-            log(f"[SMC] {sym} {direction}: filtro SMC bloqueou — {', '.join(reason)}")
+            log(f"[SUPPORT] {sym} {direction}: apoio insuficiente — {', '.join(reason)}")
             continue
 
         # Pares bloqueados pela IA (baseado em aprendizado)
