@@ -124,6 +124,13 @@ class Config:
     MIN_CONFLUENCE = 6
 
     # ═══════════════════════════════════════════════════════════════════════════════
+    # PRÉ-SINAL / RADAR PREMIUM
+    # ═══════════════════════════════════════════════════════════════════════════════
+    PRE_SIGNAL_COOLDOWN = 1800   # 30 minutos entre alertas do mesmo par/direção
+    PRE_SIGNAL_GAP = 2           # quantos pontos abaixo do mínimo ainda viram "quase sinal"
+    PRE_SIGNAL_MAX_AGE = 14400   # 4 horas: tempo máximo para confirmar o pré-sinal
+
+    # ═══════════════════════════════════════════════════════════════════════════════
     # CAPITAL E RISCO
     # ═══════════════════════════════════════════════════════════════════════════════
     INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
