@@ -1,316 +1,242 @@
 import time
-from datetime import datetime, timezone
+import random
+from datetime import datetime
 from config import Config
-from utils import (
-    log, is_jpy_pair, is_good_session, pip_factor,
-    get_dynamic_max_trades, is_symbol_allowed, is_weekend_gap_risk,
-    get_allowed_symbols, get_dynamic_cooldown, get_dynamic_leverage,
-)
+from utils import log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair, is_good_session
 from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
-from ai_validator import load_ai_params, validate_signal
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SAFETY CHECK
-# ═══════════════════════════════════════════════════════════════════════════════
-def _is_safe_to_trade(bot, symbol: str) -> tuple[bool, str]:
-    """Retorna (True, "") se seguro, ou (False, "motivo") se bloqueado."""
-    # 1. Limite de trades ativos por banca
+def _is_safe_to_trade(bot, symbol):
+    """
+    Verificações de segurança consolidadas.
+    Retorna (True, "") se seguro, ou (False, "motivo") se bloqueado.
+    """
+    from utils import (
+        get_dynamic_max_trades, is_symbol_allowed, is_weekend_gap_risk,
+        get_allowed_symbols, get_dynamic_cooldown
+    )
+
+    # 1. Verifica limite de trades ativos por banca
     max_trades = get_dynamic_max_trades(bot.balance)
     if len(bot.active_trades) >= max_trades:
         return False, f"Limite de {max_trades} trade(s) ativo(s)"
 
-    # 2. Tier de ativos permitidos
+    # 2. Verifica se ativo é permitido para banca atual
     if not is_symbol_allowed(symbol, bot.balance):
         allowed = get_allowed_symbols(bot.balance)
         return False, f"Ativo bloqueado. Permitidos: {', '.join(allowed)}"
 
-    # 3. Fim de semana / gap
+    # 3. Proteção de fim de semana / gap
     if is_weekend_gap_risk():
         return False, "Proteção de fim de semana/gap ativa"
 
-    # 4. Cooldown dinâmico após loss
+    # 4. Cooldown dinâmico
     cooldown = get_dynamic_cooldown(bot.balance)
-    last_loss_ts = bot.asset_cooldown.get(symbol, 0)
-    if time.time() < last_loss_ts:
-        return False, f"Cooldown ativo ({cooldown // 60}min)"
+    if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
+        return False, f"Cooldown ativo ({cooldown//60}min)"
 
-    # 5. Sessão principal do par
+    # 5. Filtro de sessão — só opera na janela de liquidez do par
     if not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
-    # 6. Horas bloqueadas pela IA (Opus mensal)
-    ai_params = load_ai_params()
-    avoid_hours = ai_params.get("avoid_hours_utc", [])
-    if avoid_hours and datetime.now(timezone.utc).hour in avoid_hours:
-        return False, f"Hora bloqueada pela IA ({datetime.now(timezone.utc).hour}h UTC)"
-
-    # 7. Pares bloqueados por aprendizado
-    if symbol in ai_params.get("blocked_pairs", []):
-        return False, "Par bloqueado pela IA (WR baixo)"
+    # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
+    from ai_validator import load_ai_params
+    avoid_hours = load_ai_params().get("avoid_hours_utc", [])
+    if avoid_hours and datetime.utcnow().hour in avoid_hours:
+        return False, f"Hora bloqueada pelo Opus ({datetime.utcnow().hour}h UTC)"
 
     return True, ""
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CONFLUÊNCIA
-# ═══════════════════════════════════════════════════════════════════════════════
-def calc_confluence(res: dict, direction: str, mtf: dict = None) -> tuple[int, int, list, bool, int]:
-    """
-    Calcula score de confluência com pesos.
-    Retorna (score_ponderado, max_score_ponderado, checks, passed, min_required).
-    """
-    weights = Config.CONFLUENCE_WEIGHTS
+def calc_confluence(res, direction, mtf=None):
+    checks = []
     price = res["price"]
-    checks: list[tuple[str, bool]] = []
-    weighted_score = 0
-    max_score = 0
 
-    def add_check(label: str, ok: bool, weight_key: str):
-        nonlocal weighted_score, max_score
-        weight = int(weights.get(weight_key, 1))
-        max_score += weight
-        if ok:
-            weighted_score += weight
-        checks.append((label, ok))
-
+    # Técnicos base
     if direction == "BUY":
-        add_check("Preço > EMA200",                res["price"] > res["ema200"], "ema200")
-        add_check("EMA9 > EMA21",                  res["ema9"] > res["ema21"], "ema9_21")
-        add_check("MACD bullish",                  bool(res.get("macd_bull")), "macd")
-        add_check("RSI entre 40-65",               40 < res["rsi"] < 65, "rsi")
-        add_check("ADX > 25",                      res["adx"] > 25, "adx")
-        add_check("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01, "bands")
-        add_check("Candle de força",               bool(res.get("candle_bull", False)), "candle")
+        checks = [
+            ("Preço > EMA200", res["price"] > res["ema200"]),
+            ("EMA9 > EMA21", res["ema9"] > res["ema21"]),
+            ("MACD bullish", res["macd_bull"]),
+            ("RSI entre 40-65", 40 < res["rsi"] < 65),
+            ("ADX > 25", res["adx"] > 25),
+            ("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01),
+            ("Candle de força", res.get("candle_bull", True)),
+        ]
     else:
-        add_check("Preço < EMA200",                res["price"] < res["ema200"], "ema200")
-        add_check("EMA9 < EMA21",                  res["ema9"] < res["ema21"], "ema9_21")
-        add_check("MACD bearish",                  bool(res.get("macd_bear")), "macd")
-        add_check("RSI entre 35-60",               35 < res["rsi"] < 60, "rsi")
-        add_check("ADX > 25",                      res["adx"] > 25, "adx")
-        add_check("Preço perto da banda superior", res["price"] > res["upper"] * 0.99, "bands")
-        add_check("Candle de força",               bool(res.get("candle_bear", False)), "candle")
+        checks = [
+            ("Preço < EMA200", res["price"] < res["ema200"]),
+            ("EMA9 < EMA21", res["ema9"] < res["ema21"]),
+            ("MACD bearish", res["macd_bear"]),
+            ("RSI entre 35-60", 35 < res["rsi"] < 60),
+            ("ADX > 25", res["adx"] > 25),
+            ("Preço perto da banda superior", res["price"] > res["upper"] * 0.99),
+            ("Candle de força", res.get("candle_bear", True)),
+        ]
 
-    fvg = res.get("fvg", {}) or {}
-    ob = res.get("ob", {}) or {}
-    sweep = res.get("sweep", {}) or {}
+    # SMC
+    fvg = res.get("fvg", {})
+    ob = res.get("ob", {})
+    sweep = res.get("sweep", {})
 
     if direction == "BUY":
         fvg_active = any(f.get("active") for f in fvg.get("bullish", []))
+        checks.append(("FVG Bullish ativo", fvg_active))
         ob_active = any(o.get("active") for o in ob.get("bullish", []))
-        swing_low = sweep.get("swing_low")
-        structure_ok = swing_low is not None and price > swing_low
-        add_check("FVG Bullish ativo", fvg_active, "fvg")
-        add_check("Order Block Bullish", ob_active, "ob")
-        add_check("Liquidity Sweep Bullish", bool(sweep.get("bullish")), "sweep")
-        add_check("Estrutura intacta", structure_ok, "structure")
+        checks.append(("Order Block Bullish", ob_active))
+        checks.append(("Liquidity Sweep Bullish", sweep.get("bullish", False)))
+        checks.append(("Estrutura intacta (acima SL)", price > sweep.get("swing_low", 0)))
     else:
         fvg_active = any(f.get("active") for f in fvg.get("bearish", []))
+        checks.append(("FVG Bearish ativo", fvg_active))
         ob_active = any(o.get("active") for o in ob.get("bearish", []))
-        swing_high = sweep.get("swing_high")
-        structure_ok = swing_high is not None and price < swing_high
-        add_check("FVG Bearish ativo", fvg_active, "fvg")
-        add_check("Order Block Bearish", ob_active, "ob")
-        add_check("Liquidity Sweep Bearish", bool(sweep.get("bearish")), "sweep")
-        add_check("Estrutura intacta", structure_ok, "structure")
+        checks.append(("Order Block Bearish", ob_active))
+        checks.append(("Liquidity Sweep Bearish", sweep.get("bearish", False)))
+        checks.append(("Estrutura intacta (abaixo SH)", price < sweep.get("swing_high", float('inf'))))
 
+    # MTF
     if mtf:
-        add_check("MTF H4 alinhado", bool(mtf.get("aligned", False)), "mtf_aligned")
-        h4 = mtf.get("h4", {}) or {}
+        checks.append(("MTF H4 alinhado", mtf.get("aligned", False)))
+        h4 = mtf.get("h4", {})
         if h4:
             if direction == "BUY":
-                add_check("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float("inf")), "mtf_ema200")
+                checks.append(("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf'))))
             else:
-                add_check("H4 < EMA200", h4.get("price", float("inf")) < h4.get("ema200", 0), "mtf_ema200")
+                checks.append(("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0)))
 
-    min_required = getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE)
-    passed = weighted_score >= min_required
-    return weighted_score, max_score, checks, passed, min_required
-# ═══════════════════════════════════════════════════════════════════════════════
-# SL/TP BASEADOS EM SMC
-# ═══════════════════════════════════════════════════════════════════════════════
-def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: float):
+    score = sum(1 for _, ok in checks if ok)
+    passed = score >= Config.MIN_CONFLUENCE
+    return score, len(checks), checks, passed, Config.MIN_CONFLUENCE
+
+def _get_smc_sl_tp(entry, direction, res, mtf, atr):
     """
-    Retorna (sl, tp, rr, sl_source, tp_source).
-
-    Regras:
-    - SL: usa OB quando disponível; senão ATR/fallback.
-    - TP: usa o nível mais próximo e válido de liquidez/FVG.
-    - TP final sempre é limitado por MAX_TP_SL_RATIO.
+    Retorna (sl, tp, rr, sl_source, tp_source) baseado em SMC.
+    sl_source/tp_source indicam o que definiu o nível ('ob', 'atr', 'liquidity', 'fvg').
     """
     sl = None
     tp = None
     sl_source = "atr"
     tp_source = "atr"
 
-    ob = res.get("ob", {}) or {}
-    sweep = res.get("sweep", {}) or {}
-    fvg = res.get("fvg", {}) or {}
+    ob = res.get("ob", {})
+    sweep = res.get("sweep", {})
+    fvg = res.get("fvg", {})
 
-    # SL: extremo do Order Block
+    # ── SL: extremo do Order Block (mais preciso) ────────────────
     if Config.USE_OB_FOR_SL:
         if direction == "BUY":
             obs = ob.get("bullish", [])
             if obs:
+                # OB bullish: SL no low do OB
                 best_ob = min(obs, key=lambda x: abs(x["low"] - entry))
                 if best_ob["low"] < entry:
-                    buffer = 0.5 * atr if atr and atr > 0 else abs(entry - best_ob["low"]) * 0.1
-                    sl = round(best_ob["low"] - buffer, 5)
+                    sl = round(best_ob["low"] - 0.8 * atr, 5)  # buffer de 0.5 ATR
                     sl_source = "ob"
         else:
             obs = ob.get("bearish", [])
             if obs:
                 best_ob = min(obs, key=lambda x: abs(x["high"] - entry))
                 if best_ob["high"] > entry:
-                    buffer = 0.5 * atr if atr and atr > 0 else abs(best_ob["high"] - entry) * 0.1
-                    sl = round(best_ob["high"] + buffer, 5)
+                    sl = round(best_ob["high"] + 0.8 * atr, 5)
                     sl_source = "ob"
 
-    if sl is None:
-        if atr and atr > 0:
-            if direction == "BUY":
-                sl = round(entry - Config.ATR_SL_MULT * atr, 5)
-            else:
-                sl = round(entry + Config.ATR_SL_MULT * atr, 5)
+    # Se não achou OB adequado, usa ATR
+    if sl is None and atr and atr > 0:
+        if direction == "BUY":
+            sl = round(entry - Config.ATR_SL_MULT * atr, 5)
         else:
-            sl = round(entry * 0.995, 5) if direction == "BUY" else round(entry * 1.005, 5)
+            sl = round(entry + Config.ATR_SL_MULT * atr, 5)
 
-    dist_sl = abs(entry - sl)
-    if dist_sl <= 0:
-        return None, None, 0, sl_source, tp_source
+    # ── TP: Liquidity Pool do H4 ou FVG ──────────────────────────
+    if Config.USE_LIQUIDITY_FOR_TP and mtf:
+        h4_sweep = mtf.get("h4", {}).get("sweep", {})
+        if direction == "BUY" and h4_sweep.get("swing_high"):
+            tp = round(h4_sweep["swing_high"], 5)
+            tp_source = "liquidity"
+        elif direction == "SELL" and h4_sweep.get("swing_low"):
+            tp = round(h4_sweep["swing_low"], 5)
+            tp_source = "liquidity"
 
-    side = "bullish" if direction == "BUY" else "bearish"
-    smc_checks = sum(1 for ok in [
-        any(f.get("active") for f in fvg.get(side, [])),
-        any(o.get("active") for o in ob.get(side, [])),
-        bool(sweep.get(side)),
-        bool(mtf.get("aligned") if mtf else False),
+    # Fallback para FVG do H1 se não achou liquidity H4
+    if tp is None and Config.USE_FVG_FOR_TP:
+        if direction == "BUY":
+            fvgs = fvg.get("bullish", [])
+            if fvgs:
+                # Alvo no topo do FVG mais próximo acima do preço
+                valid = [f for f in fvgs if f["top"] > entry]
+                if valid:
+                    tp = round(max(f["top"] for f in valid), 5)
+                    tp_source = "fvg"
+        else:
+            fvgs = fvg.get("bearish", [])
+            if fvgs:
+                valid = [f for f in fvgs if f["bottom"] < entry]
+                if valid:
+                    tp = round(min(f["bottom"] for f in valid), 5)
+                    tp_source = "fvg"
+
+    # Fallback ATR
+    if tp is None and atr and atr > 0:
+        if direction == "BUY":
+            tp = round(entry + Config.ATR_TP_MULT * atr, 5)
+        else:
+            tp = round(entry - Config.ATR_TP_MULT * atr, 5)
+
+    # ── R:R dinâmico baseado em score SMC ────────────────────────
+    smc_checks = sum(1 for nm, ok in [
+        ("FVG", any(f.get("active") for f in (fvg.get("bullish" if direction=="BUY" else "bearish", [])))),
+        ("OB", any(o.get("active") for o in (ob.get("bullish" if direction=="BUY" else "bearish", [])))),
+        ("Sweep", sweep.get("bullish" if direction=="BUY" else "bearish", False)),
+        ("MTF", mtf.get("aligned", False) if mtf else False),
     ] if ok)
 
-    rr_target = Config.TP_SL_RATIO_BASE + (smc_checks * Config.TP_SL_RATIO_STEP)
-    rr_target = min(rr_target, Config.MAX_TP_SL_RATIO)
+    rr = Config.TP_SL_RATIO_BASE + (smc_checks * Config.TP_SL_RATIO_STEP)
+    rr = min(rr, Config.MAX_TP_SL_RATIO)
 
-    candidates = []
-
-    def add_candidate(level, source):
-        if level is None:
-            return
-        try:
-            level = float(level)
-        except (TypeError, ValueError):
-            return
-        if direction == "BUY" and level <= entry:
-            return
-        if direction == "SELL" and level >= entry:
-            return
-        rr_candidate = abs(level - entry) / dist_sl
-        if rr_candidate <= 0:
-            return
-        candidates.append({"tp": round(level, 5), "rr": rr_candidate, "source": source})
-
-    if Config.USE_LIQUIDITY_FOR_TP and mtf:
-        h4_sweep = (mtf.get("h4") or {}).get("sweep", {}) or {}
-        if direction == "BUY":
-            swing_high = h4_sweep.get("swing_high")
-            if swing_high is not None:
-                add_candidate(swing_high, "liquidity")
+    # Se TP foi definido por SMC, recalcula RR real
+    if sl and tp and sl != entry:
+        dist_sl = abs(entry - sl)
+        dist_tp = abs(tp - entry)
+        rr_real = round(dist_tp / dist_sl, 2) if dist_sl > 0 else rr
+        # Se o SMC deu um RR melhor que o dinâmico, usa o SMC
+        if rr_real > rr:
+            rr = rr_real
         else:
-            swing_low = h4_sweep.get("swing_low")
-            if swing_low is not None:
-                add_candidate(swing_low, "liquidity")
+            # Se o dinâmico é maior, ajusta TP para bater o RR dinâmico
+            tp = round(entry + rr * dist_sl, 5) if direction == "BUY" else round(entry - rr * dist_sl, 5)
+            tp_source = "rr_dynamic"
 
-    if Config.USE_FVG_FOR_TP:
-        if direction == "BUY":
-            valid = []
-            for f in fvg.get("bullish", []):
-                top = f.get("top")
-                try:
-                    if top is not None and float(top) > entry:
-                        valid.append(float(top))
-                except (TypeError, ValueError):
-                    continue
-            if valid:
-                add_candidate(min(valid), "fvg")
-        else:
-            valid = []
-            for f in fvg.get("bearish", []):
-                bottom = f.get("bottom")
-                try:
-                    if bottom is not None and float(bottom) < entry:
-                        valid.append(float(bottom))
-                except (TypeError, ValueError):
-                    continue
-            if valid:
-                add_candidate(max(valid), "fvg")
+    return sl, tp, rr, sl_source, tp_source
 
-    if atr and atr > 0:
-        atr_tp = entry + (Config.ATR_TP_MULT * atr) if direction == "BUY" else entry - (Config.ATR_TP_MULT * atr)
-    else:
-        atr_tp = entry + (rr_target * dist_sl) if direction == "BUY" else entry - (rr_target * dist_sl)
-    add_candidate(atr_tp, "atr")
-
-    max_rr_cap = float(Config.MAX_TP_SL_RATIO)
-    min_rr_target = float(Config.TP_SL_RATIO_BASE)
-
-    sane_candidates = [c for c in candidates if min_rr_target <= c["rr"] <= max_rr_cap]
-
-    if sane_candidates:
-        chosen = min(sane_candidates, key=lambda c: abs(c["rr"] - rr_target))
-        tp = chosen["tp"]
-        tp_source = chosen["source"]
-    else:
-        tp = round(entry + (max_rr_cap * dist_sl), 5) if direction == "BUY" else round(entry - (max_rr_cap * dist_sl), 5)
-        tp_source = "rr_cap"
-
-    if direction == "BUY":
-        if sl >= entry or tp <= entry:
-            return None, None, 0, sl_source, tp_source
-    else:
-        if sl <= entry or tp >= entry:
-            return None, None, 0, sl_source, tp_source
-
-    rr_real = round(abs(tp - entry) / dist_sl, 2)
-
-    if rr_real > max_rr_cap:
-        tp = round(entry + (max_rr_cap * dist_sl), 5) if direction == "BUY" else round(entry - (max_rr_cap * dist_sl), 5)
-        tp_source = "rr_cap"
-        rr_real = round(max_rr_cap, 2)
-
-    return sl, tp, rr_real, sl_source, tp_source
-# ═══════════════════════════════════════════════════════════════════════════════
-# SCAN PRINCIPAL
-# ═══════════════════════════════════════════════════════════════════════════════
+def is_weekend():
+    return datetime.utcnow().weekday() >= 5
 
 def scan(bot):
+    # ── Verificações globais ─────────────────────────────────────
     if bot.is_paused():
         return
 
+    # NOVO: Verifica limite de trades por banca antes de tudo
+    from utils import get_dynamic_max_trades
     max_trades = get_dynamic_max_trades(bot.balance)
     if len(bot.active_trades) >= max_trades:
         return
 
     if is_high_impact_news_window(minutes_before=15, minutes_after=30):
         return
-
-    if is_weekend_gap_risk():
+    if is_weekend():
         return
 
-    ai_params = load_ai_params()
-    base_min_conf = int(ai_params.get("live_confluence", getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE)))
-    base_min_conf = max(base_min_conf, getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE))
+    symbols = list(Config.FXGOLD_ASSETS.keys())
+    random.shuffle(symbols)  # evita viés para o mesmo par toda vez
 
-    bias = ai_params.get("strategy_bias", "balanced")
-    bias_adj = {"conservative": 2, "aggressive": -1}.get(bias, 0)
-    effective_min_conf = max(1, base_min_conf + bias_adj)
-    min_rr = float(ai_params.get("min_rr", 1.5))
-
-    candidates: list[dict] = []
-    for sym in Config.FXGOLD_ASSETS.keys():
+    for sym in symbols:
+        # Verificações de segurança
         safe, reason = _is_safe_to_trade(bot, sym)
         if not safe:
-            if reason and "Cooldown" not in reason:
+            if reason and "Cooldown" not in reason:  # não loga cooldown toda hora
                 log(f"[SAFETY] {sym}: {reason}")
             continue
 
@@ -318,7 +244,7 @@ def scan(bot):
             continue
 
         mtf = get_multi_timeframe(sym)
-        if not mtf or not mtf.get("h1"):
+        if not mtf or not mtf["h1"]:
             continue
 
         res = mtf["h1"]
@@ -326,122 +252,192 @@ def scan(bot):
             continue
 
         direction = "BUY" if res["cenario"] == "ALTA" else "SELL"
-        score, total_checks, checks, passed, _ = calc_confluence(res, direction, mtf)
+        sc, tot_c, checks, passed, min_sc = calc_confluence(res, direction, mtf)
         if not passed:
             continue
 
-        entry = float(res.get("price", 0) or 0)
-        atr = float(res.get("atr", 0) or 0)
+        entry = res["price"]
+        atr = res.get("atr", 0)
+
+        # ── SL/TP com SMC ────────────────────────────────────────────
         sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
+
         if not sl or not tp:
             log(f"[SMC] {sym}: SL/TP inválido, descartado")
-            continue
-
-        if rr < min_rr or rr > Config.MAX_TP_SL_RATIO or score < effective_min_conf:
             continue
 
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
         tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
 
-        pf = pip_factor(sym)
-        sl_pips = round(abs(entry - sl) / pf)
-        tp_pips = round(abs(tp - entry) / pf)
+        # Distância em pips (JPY e ouro usam fator diferente)
+        if is_jpy_pair(sym):
+            pip_factor = 0.01
+        elif sym == "XAUUSD":
+            pip_factor = 0.01
+        else:
+            pip_factor = 0.0001
+        sl_pips = round(abs(entry - sl) / pip_factor)
+        tp_pips = round(abs(tp  - entry) / pip_factor)
 
+        # ── NOVO: Alavancagem dinâmica ───────────────────────────────
+        from utils import get_dynamic_leverage
         eff_lev = get_dynamic_leverage(bot.balance)
+
+        # Turtle Position Sizing com CAP de risco
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
-            sym,
-            entry,
-            sl,
-            bot.balance,
+            sym, entry, sl, bot.balance,
             risk_pct=Config.ATR_RISK_PCT,
             atr=atr,
-            atr_mult=Config.ATR_MULT_FOR_RISK,
+            atr_mult=Config.ATR_MULT_FOR_RISK
         )
 
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
+
         dist_sl = abs(entry - sl)
         cs_val = contract_size_for(sym)
         risk_001_lot = dist_sl * cs_val * 0.01
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
 
+        # Filtro de correlação
         est_risk_usd = suggested_risk_usd
         if is_jpy_pair(sym):
-            usdjpy = bot._usdjpy_price or 150.0
-            est_risk_usd = est_risk_usd / usdjpy if usdjpy > 0 else est_risk_usd
-
+            est_risk_usd = est_risk_usd / 150.0
         ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
         if not ok_corr:
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
             continue
 
-        pend = {
-            "pending_id":         bot.next_pending_id(),
-            "symbol":             sym,
-            "name":               Config.FXGOLD_ASSETS.get(sym, sym),
-            "dir":                direction,
-            "entry":              entry,
-            "sl":                 sl,
-            "tp":                 tp,
-            "sl_pct":             sl_pct,
-            "tp_pct":             tp_pct,
-            "sl_pips":            sl_pips,
-            "tp_pips":            tp_pips,
-            "rr":                 rr,
-            "score":              score,
-            "max_score":          total_checks,
-            "checks":             [{"name": nm, "ok": ok} for nm, ok in checks],
-            "min_lot_margin":     round(min_lot_margin, 2),
-            "risk_001_lot":       round(risk_001_lot, 2),
-            "risk_pct_001":       round(risk_pct_001, 2),
-            "suggested_lot":      suggested_lot,
-            "suggested_risk_usd": suggested_risk_usd,
-            "suggested_risk_pct": suggested_risk_pct,
-            "created_at":         datetime.now().strftime("%d/%m %H:%M"),
-            "created_ts":         time.time(),
-            "atr":                atr,
-            "adx":                res.get("adx", 0),
-            "mtf_aligned":        mtf.get("aligned", False),
-            "h4_cenario":         mtf.get("h4_cenario", "NEUTRO"),
-            "sl_source":          sl_src,
-            "tp_source":          tp_src,
-        }
-        candidates.append({"score": score, "rr": rr, "pend": pend, "mtf": mtf})
+        # Validação de segurança: RR mínimo dinâmico (padrão 1.5, ajustável pela IA)
+        from ai_validator import load_ai_params, validate_signal
+        ai_params  = load_ai_params()
+        min_rr     = ai_params.get("min_rr", 1.5)
 
-    if not candidates:
-        return
+        # Confluência mínima efetiva — combina 3 camadas:
+        # 1. Sonnet define base (min_confluence)
+        # 2. Opus ajusta pelo viés estratégico mensal (strategy_bias)
+        # 3. Regime em tempo real (live_confluence) ajusta pelo ADX atual
+        base_conf = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
+        bias      = ai_params.get("strategy_bias", "balanced")
 
-    candidates.sort(key=lambda c: (c["score"], c["rr"], c["pend"]["suggested_risk_pct"]), reverse=True)
+        if bias == "conservative":
+            bias_adj = +1
+        elif bias == "aggressive":
+            bias_adj = -1
+        else:
+            bias_adj = 0
 
-    for cand in candidates:
-        pend = cand["pend"]
-        mtf = cand["mtf"]
-        approved, ai_reason = validate_signal(pend, mtf, bot)
-        if not approved:
-            log(f"[AI] {pend['symbol']} {pend['dir']} rejeitado: {ai_reason}")
+        # live_confluence já tem o ajuste de regime embutido (calculado no heartbeat)
+        live_conf = ai_params.get("live_confluence", base_conf)
+        effective_min_conf = max(6, min(9, live_conf + bias_adj))
+
+        if sc < effective_min_conf:
+            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
+                f"(base={base_conf}, bias={bias}, regime={ai_params.get('live_regime','?')}), descartado")
             continue
 
+        if rr < min_rr:
+            log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
+            continue
+
+        # ── Filtro SMC obrigatório ───────────────────────────────
+        # Para entrar, o sinal DEVE ter:
+        #   (FVG ativo OU Order Block ativo) E H4 alinhado com H1
+        # Sem isso, os checks técnicos (EMA, MACD, RSI) sozinhos
+        # não são suficientes — é exatamente o tipo de sinal fraco
+        # que o backtest mostrou como alta taxa de LOSS.
+        check_map = {nm: ok for nm, ok in checks}
+
+        has_fvg = check_map.get(
+            "FVG Bullish ativo" if direction == "BUY" else "FVG Bearish ativo", False)
+        has_ob  = check_map.get(
+            "OB Bullish ativo"  if direction == "BUY" else "Order Block Bearish", False)
+        has_h4  = check_map.get("MTF H4 alinhado", False)
+
+        smc_ok    = has_fvg or has_ob    # pelo menos 1 zona SMC ativa
+        quality   = smc_ok and has_h4   # E H4 confirmando
+
+        if not quality:
+            reason = []
+            if not smc_ok:
+                reason.append("sem FVG/OB ativo")
+            if not has_h4:
+                reason.append("H4 desalinhado")
+            log(f"[SMC] {sym} {direction}: filtro SMC bloqueou — {', '.join(reason)}")
+            continue
+
+        # Pares bloqueados pela IA (baseado em aprendizado)
+        if sym in ai_params.get("blocked_pairs", []):
+            log(f"[AI] {sym} bloqueado por aprendizado — WR histórico muito baixo")
+            continue
+
+        pend = {
+            "pending_id": bot.next_pending_id(),
+            "symbol": sym,
+            "name": Config.FXGOLD_ASSETS.get(sym, sym),
+            "dir": direction,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "sl_pct": sl_pct,
+            "tp_pct": tp_pct,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
+            "rr": rr,
+            "score": sc,
+            "max_score": tot_c,
+            "checks": [{"name": nm, "ok": ok} for nm, ok in checks],
+            "min_lot_margin": round(min_lot_margin, 2),
+            "risk_001_lot": round(risk_001_lot, 2),
+            "risk_pct_001": round(risk_pct_001, 2),
+            "suggested_lot": suggested_lot,
+            "suggested_risk_usd": suggested_risk_usd,
+            "suggested_risk_pct": suggested_risk_pct,
+            "created_at": datetime.now().strftime("%d/%m %H:%M"),
+            "created_ts": time.time(),
+            "atr": atr,
+            "mtf_aligned": mtf.get("aligned", False),
+            "h4_cenario": mtf.get("h4_cenario", "NEUTRO"),
+            "sl_source": sl_src,
+            "tp_source": tp_src,
+        }
+
+        # ── Validação por IA ─────────────────────────────────────────
+        approved, ai_reason = validate_signal(pend, mtf, bot)
+        if not approved:
+            log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
+            bot.next_pending_id()
+            continue
+
+        # Extrai confiança do motivo (formato "IA (N/10): motivo")
         ai_confidence = 0
         try:
             if "IA (" in ai_reason:
                 ai_confidence = int(ai_reason.split("(")[1].split("/")[0])
-        except (ValueError, IndexError):
+        except Exception:
             pass
 
-        pend["ai_reason"] = ai_reason
-        pend["ai_approved"] = True
+        pend["ai_reason"]     = ai_reason
+        pend["ai_approved"]   = True
         pend["ai_confidence"] = ai_confidence
         bot.add_pending(pend)
-        return
-# ═══════════════════════════════════════════════════════════════════════════════
-# SNAPSHOT DE CONFLUÊNCIA (dashboard/telegram)
-# ═══════════════════════════════════════════════════════════════════════════════
+        break
+
+
+# ═══════════════════════════════════════════════════════════
+# SNAPSHOT DE CONFLUÊNCIA — sem gerar sinal
+# ═══════════════════════════════════════════════════════════
+
+# Cache do snapshot de confluência — evita recalcular a cada 60s
 _snapshot_cache: list = []
 _snapshot_ts: float  = 0.0
-_SNAPSHOT_TTL: int   = 600  # 10 min
+_SNAPSHOT_TTL: int   = 600  # 10 minutos
 
 
 def get_confluence_snapshot() -> list[dict]:
-    """Varre todos os pares e retorna score de confluência atual. Cacheado 10min."""
+    """
+    Varre todos os pares e retorna o score de confluência atual.
+    Resultado é cacheado por 10 minutos para não sobrecarregar o loop.
+    """
     global _snapshot_cache, _snapshot_ts
 
     if time.time() - _snapshot_ts < _SNAPSHOT_TTL and _snapshot_cache:
@@ -472,8 +468,8 @@ def get_confluence_snapshot() -> list[dict]:
                 "adx":         round(h1.get("adx", 0), 1),
                 "cenario":     h1.get("cenario", "NEUTRO"),
                 "h4_aligned":  mtf.get("aligned", False),
-                "buy_checks":  [{"name": n, "ok": ok} for n, ok in buy_checks],
-                "sell_checks": [{"name": n, "ok": ok} for n, ok in sell_checks],
+                "buy_checks":  buy_checks,
+                "sell_checks": sell_checks,
             })
         except Exception as e:
             log(f"[SNAPSHOT] Erro em {sym}: {e}")
@@ -485,61 +481,57 @@ def get_confluence_snapshot() -> list[dict]:
 
 
 def check_near_signals(bot) -> None:
-    """Alerta pares próximos do score mínimo (só os permitidos pelo tier)."""
-    ai_params = load_ai_params()
+    """
+    Verifica se algum par PERMITIDO está com score próximo do mínimo.
+    Só alerta pares que o bot pode realmente operar com o saldo atual.
+    """
+    from ai_validator import load_ai_params
+    from utils import get_allowed_symbols
+
+    ai_params      = load_ai_params()
     effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
-    near_threshold = effective_conf - 2
+    NEAR_THRESHOLD = effective_conf - 2
 
     if not hasattr(bot, "_near_signal_cooldown"):
         bot._near_signal_cooldown = {}
 
+    # Só pares liberados pelo nível de capital atual
     allowed_symbols = get_allowed_symbols(bot.balance)
-    now = time.time()
-    snapshot = get_confluence_snapshot()
+    now             = time.time()
+    snapshot        = get_confluence_snapshot()
 
     for item in snapshot:
-        sym = item["symbol"]
-        weighted_score = item["best_score"]
-        total_weighted = item["total"]
+        sym   = item["symbol"]
+        score = item["best_score"]
+        total = item["total"]
         direc = item["best_dir"]
 
+        # Ignora pares bloqueados pelo SAFETY
         if sym not in allowed_symbols:
             continue
-        if weighted_score < near_threshold or weighted_score >= effective_conf:
+
+        if score < NEAR_THRESHOLD or score >= effective_conf:
             continue
 
         last_alert = bot._near_signal_cooldown.get(sym, 0)
         if now - last_alert < 7200:
             continue
 
-        checks = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
-        display_score = sum(1 for c in checks if c["ok"])
-        total_checks = len(checks) if checks else 0
-        missing = [c["name"] for c in checks if not c["ok"]][:5]
+        checks  = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
+        missing = [name for name, ok in checks if not ok][:3]
 
-        bar_width = total_checks if total_checks > 0 else 13
-        filled = min(display_score, bar_width)
-        bars = "🟢" * filled + "⚪" * max(0, bar_width - filled)
-
-        h4_txt = "✅ Alinhado" if item["h4_aligned"] else "❌ Desalinhado"
-
-        msg = (
+        bars = "🟢" * score + "⚪" * (total - score)
+        msg  = (
             f"📊 QUASE SINAL — {sym}\n"
-            f"──────────────────────────\n"
-            f"Direção: {direc} | Score: {display_score}/{bar_width} | Técnico: {weighted_score}/{total_weighted}\n"
-            f"{bars}\n\n"
+            f"——————————————\n"
+            f"Direção: {direc} | Score: {score}/{total}\n"
+            f"{bars}\n"
             f"RSI: {item['rsi']} | ADX: {item['adx']}\n"
-            f"H4: {h4_txt}\n\n"
+            f"H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
+            f"❌ Falta confirmar:\n" +
+            "\n".join(f"  • {m}" for m in missing) +
+            f"\n\nFaltam {effective_conf - score} check(s) para virar sinal."
         )
-
-        if missing:
-            msg += "❌ Falta confirmar:\n"
-            for m in missing[:4]:
-                msg += f"  • {m}\n"
-
-        faltam = max(0, effective_conf - weighted_score)
-        msg += f"\nFaltam {faltam} check(s) para virar sinal."
-
         bot.send(msg)
         bot._near_signal_cooldown[sym] = now
-        log(f"[NEAR] {sym} {direc} {weighted_score}/{total_weighted} — alerta enviado")
+        log(f"[NEAR] {sym} {direc} {score}/{total} — alerta enviado")
