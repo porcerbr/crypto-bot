@@ -2,6 +2,7 @@
 import time
 import random
 from datetime import datetime, timezone
+from ai_validator import load_ai_params, validate_signal
 from config import Config
 from utils import (
     log, is_jpy_pair, is_good_session, pip_factor,
