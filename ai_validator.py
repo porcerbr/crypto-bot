@@ -23,9 +23,7 @@ from utils import log
 # Configuração do modelo
 # ═══════════════════════════════════════════════════════════════════════════════
 _MODEL_FLASH = "gemini-2.0-flash"
-_GEMINI_URL  = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-)
+_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 AI_PARAMS_FILE      = "ai_params.json"
 MIN_TRADES_TO_LEARN = 20
