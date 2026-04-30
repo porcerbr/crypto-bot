@@ -281,3 +281,52 @@ def is_price_in_ote(price: float, swing_high: float, swing_low: float,
     if not zone["valid"]:
         return False
     return zone["low"] <= price <= zone["high"]
+
+
+# ── P&L helpers ──────────────────────────────────────────────────────────────
+
+def pip_factor(symbol: str) -> float:
+    """
+    Retorna o valor de 1 pip para o símbolo.
+    Pares JPY e XAUUSD usam 0.01; demais pares forex usam 0.0001.
+    """
+    if is_jpy_pair(symbol) or symbol == "XAUUSD":
+        return 0.01
+    return 0.0001
+
+
+def calc_pnl_pips(symbol: str, direction: str, entry: float,
+                  exit_price: float) -> float:
+    """
+    Calcula o P&L em pips (positivo = lucro).
+    """
+    pf = pip_factor(symbol)
+    if direction == "BUY":
+        return round((exit_price - entry) / pf, 1)
+    return round((entry - exit_price) / pf, 1)
+
+
+def calc_pnl_usd(symbol: str, direction: str, entry: float,
+                 exit_price: float, lot: float,
+                 usdjpy_price: float = 0.0) -> float:
+    """
+    Calcula o P&L em USD, replicando a lógica usada em bot.close_trade.
+
+    Para pares JPY o lucro bruto está em JPY e é convertido para USD via
+    jpy_to_usd(). Para todos os outros pares o resultado já está em USD.
+    """
+    from risk import contract_size_for
+    cs = contract_size_for(symbol)
+
+    if direction == "BUY":
+        profit_raw = (exit_price - entry) * cs * lot
+    else:
+        profit_raw = (entry - exit_price) * cs * lot
+
+    if is_jpy_pair(symbol):
+        if usdjpy_price and usdjpy_price > 0:
+            return round(jpy_to_usd(profit_raw, usdjpy_price), 2)
+        # fallback: retorna o valor bruto em JPY (melhor que zero)
+        return round(profit_raw, 2)
+
+    return round(profit_raw, 2)
