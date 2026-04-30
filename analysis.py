@@ -112,6 +112,21 @@ def _refresh_cache():
     log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
 
 
+def force_initial_refresh(blocking: bool = True):
+    """
+    Força um refresh imediato do cache de análise no startup.
+
+    Quando blocking=True (padrão) a chamada é síncrona — o bot só
+    continua após o cache estar populado.  Se blocking=False o refresh
+    é disparado em uma thread separada para não travar o startup.
+    """
+    if blocking:
+        _refresh_cache()
+    else:
+        import threading
+        threading.Thread(target=_refresh_cache, daemon=True).start()
+
+
 def _get_df(symbol: str):
     """
     Retorna o DataFrame do cache para o símbolo.
