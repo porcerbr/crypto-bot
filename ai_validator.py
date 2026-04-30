@@ -36,13 +36,6 @@ _RATE_LIMIT  = 12
 _RATE_WINDOW = 60
 _call_times: deque = deque()
 
-# Cache leve para não reler o JSON a cada validação.
-_AI_PARAMS_CACHE: dict | None = None
-_AI_PARAMS_CACHE_TS: float = 0.0
-
-# Bloqueio temporário quando Gemini retorna 429.
-_GEMINI_DISABLED_UNTIL: float = 0.0
-
 
 def _rate_limit_wait():
     """Bloqueia até haver espaço na janela deslizante de 60s."""
@@ -67,17 +60,7 @@ def _rate_limit_wait():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_ai_params() -> dict:
-    """Carrega parâmetros aprendidos de ai_params.json com cache curto."""
-    global _AI_PARAMS_CACHE, _AI_PARAMS_CACHE_TS
-
-    try:
-        from config import Config
-        ttl = int(getattr(Config, "AI_PARAMS_CACHE_TTL", 60))
-    except Exception:
-        ttl = 60
-
-    if _AI_PARAMS_CACHE is not None and (time.time() - _AI_PARAMS_CACHE_TS) < ttl:
-        return dict(_AI_PARAMS_CACHE)
+    """Carrega parâmetros aprendidos de ai_params.json."""
     defaults = {
         # Camada 2 — Aprendizado semanal
         "min_confluence":      7,
@@ -102,34 +85,23 @@ def load_ai_params() -> dict:
         "updated_at":          None,
     }
     if not os.path.exists(AI_PARAMS_FILE):
-        _AI_PARAMS_CACHE = dict(defaults)
-        _AI_PARAMS_CACHE_TS = time.time()
-        return dict(defaults)
+        return defaults
     try:
         with open(AI_PARAMS_FILE) as f:
             stored = json.load(f)
-        merged = {**defaults, **stored}
-        _AI_PARAMS_CACHE = dict(merged)
-        _AI_PARAMS_CACHE_TS = time.time()
-        return dict(merged)
+        return {**defaults, **stored}
     except Exception as e:
         log(f"[AI] Erro ao carregar ai_params.json: {e}")
-        _AI_PARAMS_CACHE = dict(defaults)
-        _AI_PARAMS_CACHE_TS = time.time()
-        return dict(defaults)
+        return defaults
 
 
 def save_ai_params(params: dict):
     """Salva parâmetros aprendidos em ai_params.json."""
-    global _AI_PARAMS_CACHE, _AI_PARAMS_CACHE_TS
-
     params["updated_at"] = datetime.now(timezone.utc).isoformat()
     tmp = AI_PARAMS_FILE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(params, f, indent=2, ensure_ascii=False)
     os.replace(tmp, AI_PARAMS_FILE)
-    _AI_PARAMS_CACHE = dict(params)
-    _AI_PARAMS_CACHE_TS = time.time()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,13 +132,8 @@ def _call_gemini(
     Retorna:
     - String com a resposta, ou None se falhar após retries
     """
-    global _GEMINI_DISABLED_UNTIL
-
     api_key = _get_api_key()
     if not api_key:
-        return None
-
-    if _GEMINI_DISABLED_UNTIL and time.time() < _GEMINI_DISABLED_UNTIL:
         return None
 
     url  = _GEMINI_URL.format(model=_MODEL_FLASH)
@@ -203,11 +170,11 @@ def _call_gemini(
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             if status == 429:
-                from config import Config
-                cooldown = int(getattr(Config, "GEMINI_COOLDOWN_AFTER_429", 1800))
-                _GEMINI_DISABLED_UNTIL = time.time() + cooldown
-                log(f"[AI] Gemini 429 — pausando validação por {cooldown//60}min")
+                log("[AI] Gemini 429 — aguardando 65s")
                 _call_times.clear()
+                time.sleep(65)
+                if attempt == 0:
+                    continue
                 return None
             elif status >= 500:
                 log(f"[AI] Gemini erro servidor {status}")

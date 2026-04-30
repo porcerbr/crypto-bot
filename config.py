@@ -39,6 +39,12 @@ class Config:
     TIMEFRAME         = "1h"
     BOT_IS_SIGNAL_ONLY = True  # flag semântica exibida no dashboard
 
+    # Em modo sinalizador, sessão e notícias viram preferência de qualidade,
+    # não veto absoluto. Isso evita o bot ficar parado por longos períodos.
+    SESSION_HARD_BLOCK = False
+    NEWS_HARD_BLOCK = False
+    MAX_SYMBOLS_PER_REFRESH = 6
+
     FXGOLD_ASSETS = {
         "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY",
         "AUDUSD": "AUD/USD", "USDCAD": "USD/CAD", "USDCHF": "USD/CHF",
@@ -189,31 +195,12 @@ class Config:
 
     # Tier system de ativos
     ASSET_TIERS = {
-        0: {"min_balance": 0,    "symbols": ["EURUSD", "GBPUSD"]},
-        1: {"min_balance": 500,  "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]},
-        2: {"min_balance": 1000, "symbols": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF",
-                                             "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", "USDJPY"]},
+        # No modo sinalizador o bot monitora todo o universo desde o início.
+        0: {"min_balance": 0,    "symbols": list(FXGOLD_ASSETS.keys())},
+        1: {"min_balance": 500,  "symbols": list(FXGOLD_ASSETS.keys())},
+        2: {"min_balance": 1000, "symbols": list(FXGOLD_ASSETS.keys())},
         3: {"min_balance": 2000, "symbols": list(FXGOLD_ASSETS.keys())},
     }
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # PERFORMANCE / THROTTLING
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # Mantém tiers como referência de risco, mas não bloqueia o pipeline de análise.
-    ENFORCE_ASSET_TIERS = False
-
-    # Cache de parâmetros aprendidos (evita abrir ai_params.json a cada ciclo)
-    AI_PARAMS_CACHE_TTL = int(os.getenv("AI_PARAMS_CACHE_TTL", "60"))
-
-    # Evita travar o fluxo quando Gemini responde 429
-    GEMINI_COOLDOWN_AFTER_429 = int(os.getenv("GEMINI_COOLDOWN_AFTER_429", "1800"))
-
-    # Cache do MTF (recalcula só quando o candle muda ou o TTL expira)
-    MTF_CACHE_TTL = int(os.getenv("MTF_CACHE_TTL", "45"))
-
-    # Twelve Data: prioriza os principais pares e rotaciona o restante aos poucos.
-    ANALYSIS_SYMBOL_BATCH_SIZE = int(os.getenv("ANALYSIS_SYMBOL_BATCH_SIZE", "6"))
-    ANALYSIS_PRIORITY_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
 
     # Risco máximo absoluto (USD) por trade
     MAX_RISK_ABSOLUTE_USD = {

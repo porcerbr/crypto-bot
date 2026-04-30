@@ -3,6 +3,8 @@ import threading
 import requests
 import pandas as pd
 from datetime import datetime, timezone
+import json
+import os
 from config import Config
 from utils import log, asset_name
 
@@ -26,14 +28,10 @@ _last_refresh: float = 0.0
 _refresh_thread: threading.Thread = None
 _refresh_in_progress = threading.Event()
 
-# Estratégia de refresh: prioriza símbolos líquidos e rotaciona o restante.
-_REFRESH_CURSOR = 0
-_PRIORITY_SYMBOLS = list(getattr(Config, "ANALYSIS_PRIORITY_SYMBOLS", ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]))
-_BATCH_SIZE = int(getattr(Config, "ANALYSIS_SYMBOL_BATCH_SIZE", 6))
-
-# Cache do MTF para não recalcular indicadores a cada varredura do loop.
-_mtf_cache: dict[str, tuple[float, int, str, dict]] = {}
-_MTF_CACHE_TTL = int(getattr(Config, "MTF_CACHE_TTL", 45))
+# Cache persistente em disco para sobreviver a reinícios / falta de créditos.
+_CACHE_FILE = "market_cache.json"
+_td_rate_limited_until: float = 0.0
+_td_rate_limit_reason: str = ""
 
 # Cooldown de log para candle inválido
 _invalid_candle_logged: dict = {}
@@ -48,6 +46,76 @@ def _log_invalid_candle(symbol: str):
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
         log(f"[ANÁLISE] {symbol}: candle inválido ou incompleto, ignorando...")
         _invalid_candle_logged[symbol] = now
+
+
+def _next_utc_midnight_timestamp() -> float:
+    now = datetime.now(timezone.utc)
+    next_day = (now.replace(hour=0, minute=10, second=0, microsecond=0) + pd.Timedelta(days=1))
+    return next_day.timestamp()
+
+
+def _rate_limit_active() -> bool:
+    return _td_rate_limited_until > time.time()
+
+
+def _set_rate_limit(reason: str):
+    global _td_rate_limited_until, _td_rate_limit_reason
+    _td_rate_limit_reason = reason or "rate_limited"
+    _td_rate_limited_until = _next_utc_midnight_timestamp()
+    log(f"[TWELVEDATA] Limite diário detectado — novas tentativas suspensas até o próximo dia UTC ({reason})")
+
+
+def _serialize_cache_item(ts: float, df: pd.DataFrame) -> dict:
+    return {
+        "ts": ts,
+        "df": df.to_json(orient="split", date_format="iso"),
+    }
+
+
+def _persist_cache():
+    try:
+        with _cache_lock:
+            payload = {
+                "saved_at": time.time(),
+                "last_refresh": _last_refresh,
+                "items": {sym: _serialize_cache_item(ts, df) for sym, (ts, df) in _cache.items()},
+            }
+        tmp = _CACHE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, _CACHE_FILE)
+    except Exception as e:
+        log(f"[TWELVEDATA] Falha ao persistir cache: {e}")
+
+
+def _load_persisted_cache() -> bool:
+    global _last_refresh
+    if not os.path.exists(_CACHE_FILE):
+        return False
+    try:
+        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        items = payload.get("items", {})
+        if not items:
+            return False
+        loaded = {}
+        last_refresh = float(payload.get("last_refresh", 0.0) or 0.0)
+        for sym, item in items.items():
+            ts = float(item.get("ts", last_refresh or time.time()))
+            df = pd.read_json(item.get("df", ""), orient="split")
+            if not df.empty:
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index, utc=True)
+                loaded[sym] = (ts, df)
+        if loaded:
+            with _cache_lock:
+                _cache.update(loaded)
+                _last_refresh = last_refresh or max(ts for ts, _ in loaded.values())
+            log(f"[TWELVEDATA] Cache persistido carregado ({len(loaded)} pares)")
+            return True
+    except Exception as e:
+        log(f"[TWELVEDATA] Falha ao carregar cache persistido: {e}")
+    return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -66,19 +134,21 @@ def _fetch_single(symbol_td: str) -> dict | None:
             params={
                 "symbol":     symbol_td,
                 "interval":   "1h",
-                "outputsize": 300,
+                "outputsize": 800,
                 "apikey":     Config.TWELVE_DATA_API_KEY,
                 "format":     "JSON",
                 "timezone":   "UTC",
             },
             timeout=15,
         )
-        resp.raise_for_status()
         data = resp.json()
 
         # Verifica se a API retornou erro (ex.: limite de créditos, símbolo inválido)
-        if data.get("status") == "error":
-            log(f"[TWELVEDATA] Erro em {symbol_td}: {data.get('message', 'erro desconhecido')}")
+        if resp.status_code == 429 or data.get("status") == "error":
+            message = data.get('message', f'http_{resp.status_code}')
+            log(f"[TWELVEDATA] Erro em {symbol_td}: {message}")
+            if "credits" in message.lower() or resp.status_code == 429:
+                _set_rate_limit(message)
             return None
 
         # Verifica se veio sem a chave 'values'
@@ -104,45 +174,32 @@ def _refresh_cache_worker():
         _refresh_in_progress.clear()
         return
 
+    if _rate_limit_active():
+        log(f"[TWELVEDATA] Refresh suspenso por limite diário até {datetime.fromtimestamp(_td_rate_limited_until, tz=timezone.utc).isoformat()}")
+        _refresh_in_progress.clear()
+        return
+
     try:
         ok_count = 0
         new_data = {}
         now = time.time()
 
-        global _REFRESH_CURSOR
-        all_symbols = list(TD_SYMBOLS.items())
-        priority = [(s, TD_SYMBOLS[s]) for s in _PRIORITY_SYMBOLS if s in TD_SYMBOLS]
-        remaining = [(s, td) for s, td in all_symbols if s not in _PRIORITY_SYMBOLS]
+        priority = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+        ordered = priority + [s for s in TD_SYMBOLS.keys() if s not in priority]
+        ordered = ordered[:max(1, getattr(Config, "MAX_SYMBOLS_PER_REFRESH", len(ordered)))]
 
-        selected: list[tuple[str, str]] = []
-        seen = set()
-        for item in priority:
-            if item[0] not in seen:
-                selected.append(item)
-                seen.add(item[0])
-
-        batch_remaining = max(0, _BATCH_SIZE - len(selected))
-        if remaining and batch_remaining > 0:
-            start = _REFRESH_CURSOR % len(remaining)
-            for off in range(batch_remaining):
-                sym_item = remaining[(start + off) % len(remaining)]
-                if sym_item[0] not in seen:
-                    selected.append(sym_item)
-                    seen.add(sym_item[0])
-            _REFRESH_CURSOR = (start + batch_remaining) % len(remaining)
-
-        total_symbols = len(selected) if selected else len(TD_SYMBOLS)
-
-        for idx, (sym_internal, sym_td) in enumerate(selected, start=1):
-            # Respeita o delay entre chamadas, exceto na primeira
+        for idx, sym_internal in enumerate(ordered, start=1):
+            sym_td = TD_SYMBOLS[sym_internal]
             if idx > 1:
                 time.sleep(FETCH_DELAY_SECONDS)
 
-            log(f"[TWELVEDATA] Buscando {sym_internal} ({idx}/{total_symbols})...")
+            log(f"[TWELVEDATA] Buscando {sym_internal} ({idx}/{len(ordered)})...")
             data = _fetch_single(sym_td)
 
             if data is None:
                 log(f"[TWELVEDATA] {sym_internal}: ignorado (erro na requisição)")
+                if _rate_limit_active():
+                    break
                 continue
 
             values = data.get("values", [])
@@ -168,12 +225,19 @@ def _refresh_cache_worker():
             except Exception as e:
                 log(f"[TWELVEDATA] Erro ao processar {sym_internal}: {e}")
 
-        # Atualiza o cache de uma vez, mantendo dados antigos dos que falharam
-        with _cache_lock:
-            _cache.update(new_data)
-            _last_refresh = now
+            if _rate_limit_active():
+                break
 
-        log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
+        with _cache_lock:
+            if new_data:
+                _cache.update(new_data)
+                _last_refresh = now
+                _persist_cache()
+                log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(ordered)} pares OK")
+            elif _cache:
+                log(f"[TWELVEDATA] Nenhum dado novo; mantendo cache existente ({len(_cache)} pares)")
+            else:
+                log("[TWELVEDATA] Nenhum dado disponível e cache vazio")
 
     finally:
         _refresh_in_progress.clear()
@@ -184,10 +248,15 @@ def _trigger_refresh_if_needed():
     global _refresh_thread
 
     now = time.time()
+    if not _cache:
+        _load_persisted_cache()
+
     if now - _last_refresh < _CACHE_TTL:
         return  # cache ainda válido
 
-    # Se já tem refresh rolando, não dispara outro
+    if _rate_limit_active():
+        return
+
     if _refresh_in_progress.is_set():
         return
 
@@ -208,7 +277,15 @@ def force_initial_refresh(blocking: bool = True):
     """
     Chamado no startup do bot. Se blocking=True, aguarda o primeiro fetch
     completar antes de retornar (evita sinais com cache vazio).
+    Quando a API já bateu no limite diário, usa o cache persistido e não insiste.
     """
+    if not _cache:
+        _load_persisted_cache()
+
+    if _rate_limit_active() and _cache:
+        log("[TWELVEDATA] Usando cache persistido; refresh suspenso por limite diário.")
+        return
+
     _trigger_refresh_if_needed()
     if blocking and _refresh_thread is not None:
         _refresh_thread.join(timeout=300)   # timeout maior para o novo método
@@ -499,8 +576,6 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
 
 def get_multi_timeframe(symbol: str) -> dict:
     """Retorna análise H1 + H4 (H4 resampleado do H1 em cache)."""
-    global _mtf_cache
-
     mtf = {"h1": None, "h4": None, "aligned": False, "h4_cenario": "NEUTRO"}
 
     df = _get_df(symbol)
@@ -512,11 +587,6 @@ def get_multi_timeframe(symbol: str) -> dict:
     if not _validate_last_candle(df):
         _log_invalid_candle(symbol)
         return mtf
-
-    cache_key = (len(df), str(df.index[-1]))
-    cached = _mtf_cache.get(symbol)
-    if cached and (time.time() - cached[0] < _MTF_CACHE_TTL) and cached[1] == cache_key[0] and cached[2] == cache_key[1]:
-        return cached[3]
 
     h1 = _calc_indicators(df)
     h1["fvg"]   = _detect_fvg(df, Config.FVG_LOOKBACK)
@@ -538,5 +608,4 @@ def get_multi_timeframe(symbol: str) -> dict:
     else:
         log(f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)")
 
-    _mtf_cache[symbol] = (time.time(), cache_key[0], cache_key[1], mtf)
     return mtf

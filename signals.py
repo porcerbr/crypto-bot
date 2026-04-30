@@ -23,9 +23,8 @@ def _is_safe_to_trade(bot, symbol):
     if len(bot.active_trades) >= max_trades:
         return False, f"Limite de {max_trades} trade(s) ativo(s)"
 
-    # 2. Verifica se ativo é permitido para banca atual.
-    # Em modo performance, os tiers viram referência de risco — não um bloqueio duro.
-    if getattr(Config, "ENFORCE_ASSET_TIERS", True) and not is_symbol_allowed(symbol, bot.balance):
+    # 2. Verifica se ativo é permitido para banca atual
+    if not is_symbol_allowed(symbol, bot.balance):
         allowed = get_allowed_symbols(bot.balance)
         return False, f"Ativo bloqueado. Permitidos: {', '.join(allowed)}"
 
@@ -38,9 +37,11 @@ def _is_safe_to_trade(bot, symbol):
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
-    # 5. Filtro de sessão — só opera na janela de liquidez do par
+    # 5. Filtro de sessão — em modo performance vira preferência, não veto duro.
     if not is_good_session(symbol):
-        return False, "Fora da sessão principal"
+        if getattr(Config, "SESSION_HARD_BLOCK", False):
+            return False, "Fora da sessão principal"
+        log(f"[SAFETY] {symbol}: fora da sessão principal (soft mode)")
 
     # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
@@ -226,7 +227,9 @@ def scan(bot):
         return
 
     if is_high_impact_news_window(minutes_before=15, minutes_after=30):
-        return
+        if getattr(Config, "NEWS_HARD_BLOCK", False):
+            return
+        log("[NEWS] Janela de alto impacto ativa — scan em soft mode")
     if is_weekend():
         return
 
@@ -340,8 +343,12 @@ def scan(bot):
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
             continue
 
-        # ── Filtro SMC adaptativo ───────────────────────────────
-        # Em modo performance, SMC/H4 viram confirmação forte, não veto automático.
+        # ── Filtro SMC obrigatório ───────────────────────────────
+        # Para entrar, o sinal DEVE ter:
+        #   (FVG ativo OU Order Block ativo) E H4 alinhado com H1
+        # Sem isso, os checks técnicos (EMA, MACD, RSI) sozinhos
+        # não são suficientes — é exatamente o tipo de sinal fraco
+        # que o backtest mostrou como alta taxa de LOSS.
         check_map = {nm: ok for nm, ok in checks}
 
         has_fvg = check_map.get(
@@ -350,8 +357,8 @@ def scan(bot):
             "OB Bullish ativo"  if direction == "BUY" else "Order Block Bearish", False)
         has_h4  = check_map.get("MTF H4 alinhado", False)
 
-        smc_ok = has_fvg or has_ob
-        quality = smc_ok and has_h4
+        smc_ok    = has_fvg or has_ob    # pelo menos 1 zona SMC ativa
+        quality   = smc_ok and has_h4   # E H4 confirmando
 
         if not quality:
             reason = []
@@ -359,12 +366,8 @@ def scan(bot):
                 reason.append("sem FVG/OB ativo")
             if not has_h4:
                 reason.append("H4 desalinhado")
-
-            # Só bloqueia setups realmente fracos; setups fortes seguem como fallback técnico.
-            if sc < effective_min_conf + 1:
-                log(f"[SMC] {sym} {direction}: filtro SMC bloqueou — {', '.join(reason)}")
-                continue
-            log(f"[SMC] {sym} {direction}: fallback técnico liberado — {', '.join(reason)}")
+            log(f"[SMC] {sym} {direction}: filtro SMC bloqueou — {', '.join(reason)}")
+            continue
 
         # Pares bloqueados pela IA (baseado em aprendizado)
         if sym in ai_params.get("blocked_pairs", []):
