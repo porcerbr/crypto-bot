@@ -440,7 +440,6 @@ def main():
     port = int(os.environ.get("PORT", 8080))
     log(f"API HTTP escutando em 0.0.0.0:{port}")
     
-    import sys
     try:
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
     except KeyboardInterrupt:
