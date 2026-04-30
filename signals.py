@@ -37,11 +37,9 @@ def _is_safe_to_trade(bot, symbol):
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
-    # 5. Filtro de sessão — em modo performance vira preferência, não veto duro.
+    # 5. Filtro de sessão — só opera na janela de liquidez do par
     if not is_good_session(symbol):
-        if getattr(Config, "SESSION_HARD_BLOCK", False):
-            return False, "Fora da sessão principal"
-        log(f"[SAFETY] {symbol}: fora da sessão principal (soft mode)")
+        return False, "Fora da sessão principal"
 
     # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
@@ -227,9 +225,7 @@ def scan(bot):
         return
 
     if is_high_impact_news_window(minutes_before=15, minutes_after=30):
-        if getattr(Config, "NEWS_HARD_BLOCK", False):
-            return
-        log("[NEWS] Janela de alto impacto ativa — scan em soft mode")
+        return
     if is_weekend():
         return
 
@@ -298,14 +294,18 @@ def scan(bot):
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
 
         dist_sl = abs(entry - sl)
-        cs_val = contract_size_for(sym)
-        risk_001_lot = dist_sl * cs_val * 0.01
+        cs_val  = contract_size_for(sym)
+
+        # Risco com lote mínimo em USD — JPY precisa conversão
+        if is_jpy_pair(sym) and entry > 0:
+            risk_001_lot = (dist_sl * cs_val * 0.01) / entry
+        else:
+            risk_001_lot = dist_sl * cs_val * 0.01
+
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
 
         # Filtro de correlação
         est_risk_usd = suggested_risk_usd
-        if is_jpy_pair(sym):
-            est_risk_usd = est_risk_usd / 150.0
         ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
         if not ok_corr:
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
