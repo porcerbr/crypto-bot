@@ -75,7 +75,7 @@ def _refresh_cache_worker():
 
     if not Config.TWELVE_DATA_API_KEY:
         log("[TWELVEDATA] TWELVE_DATA_API_KEY n\u00e3o configurada.")
-        _refresh_in_progress.clear()
+        _refresh_in_progress.
         return
 
     try:
@@ -145,19 +145,22 @@ def _trigger_refresh_if_needed():
 
     now = time.time()
     if now - _last_refresh < _CACHE_TTL:
-        return  # cache ainda v\u00e1lido
+        return  # cache ainda válido
 
-    # Se j\u00e1 tem refresh rolando, n\u00e3o dispara outro
     if _refresh_in_progress.is_set():
-        return
+        return  # já tem refresh rodando
 
     _refresh_in_progress.set()
-    _refresh_thread = threading.Thread(
-        target=_refresh_cache_worker,
-        daemon=True,
-        name="td-refresh",
-    )
-    _refresh_thread.start()
+    try:
+        _refresh_thread = threading.Thread(
+            target=_refresh_cache_worker,
+            daemon=True,
+            name="td-refresh",
+        )
+        _refresh_thread.start()
+    except Exception as e:
+        log(f"[TWELVEDATA] Erro ao iniciar refresh: {e}")
+        _refresh_in_progress.clear()
 
 
 def force_initial_refresh(blocking: bool = True):
