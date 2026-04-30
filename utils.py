@@ -1,160 +1,30 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from config import Config
-import pandas as pd
-import math
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FORMATAÇÃO E LOG
-# ══════════════════════════════════════════════════════════════════════════════
 
 def fmt(value: float) -> str:
-    if value is None:
-        return "0"
-    if abs(value) >= 10000:
-        return f"{value:,.2f}"
-    if abs(value) >= 1000:
-        return f"{value:.2f}"
-    if abs(value) >= 10:
-        return f"{value:.4f}"
-    if abs(value) >= 1:
-        return f"{value:.5f}"
+    if value is None: return "0"
+    if abs(value) >= 10000: return f"{value:,.2f}"
+    if abs(value) >= 1000: return f"{value:.2f}"
+    if abs(value) >= 10: return f"{value:.4f}"
+    if abs(value) >= 1: return f"{value:.5f}"
     return f"{value:.6f}"
-
 
 def log(msg: str):
     now = datetime.now().strftime("%H:%M:%S")
     print(f"[{now}] {msg}", flush=True)
 
-
-def asset_name(symbol: str) -> str:
+def asset_name(symbol):
     return Config.FXGOLD_ASSETS.get(symbol, symbol)
 
-
-def is_jpy_pair(symbol: str) -> bool:
+def is_jpy_pair(symbol):
     return symbol.endswith("JPY")
 
-
-def jpy_to_usd(pnl_jpy: float, usdjpy_price: float) -> float:
-    """
-    Converte P&L em JPY para USD com validação de sanidade.
-    USDJPY normalmente oscila entre 100 e 160.
-    """
-    # Validação: USDJPY deve estar em range razoável
-    if usdjpy_price and 100 <= usdjpy_price <= 160:
-        return round(pnl_jpy / usdjpy_price, 2)
-    
-    # Fallback seguro
+def jpy_to_usd(pnl_jpy, usdjpy_price):
     if usdjpy_price and usdjpy_price > 0:
-        log(f"[USDJPY] Cotação suspeita: {usdjpy_price}, usando fallback 150.0")
-    return round(pnl_jpy / 150.0, 2)
+        return pnl_jpy / usdjpy_price
+    return 0.0
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PIP FACTOR E P&L UNIFICADO (usado em bot.py E api.py)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def pip_factor(symbol: str) -> float:
-    """Retorna o tamanho de 1 pip em unidades de preço."""
-    if is_jpy_pair(symbol) or symbol == "XAUUSD":
-        return 0.01
-    return 0.0001
-
-
-def contract_size(symbol: str) -> int:
-    """Tamanho do contrato por lote padrão (evita import circular com risk.py)."""
-    if symbol in Config.CONTRACT_SIZES_SPECIFIC:
-        return Config.CONTRACT_SIZES_SPECIFIC[symbol]
-    if symbol == "XAUUSD":
-        return Config.CONTRACT_SIZES["COMMODITIES"]
-    return Config.CONTRACT_SIZES.get("FOREX", 100000)
-
-
-def calc_pnl_usd(
-    symbol: str,
-    direction: str,
-    entry: float,
-    exit_price: float,
-    lot: float,
-    usdjpy_price: float = 150.0,
-    commission: float = 0.0,
-) -> float:
-    """
-    Cálculo UNIFICADO de P&L em USD com validação.
-    Usar tanto em bot.close_trade quanto em api.status (P&L flutuante).
-    
-    Parâmetros:
-    - symbol: Símbolo do ativo (EURUSD, USDJPY, etc)
-    - direction: BUY ou SELL
-    - entry: Preço de entrada
-    - exit_price: Preço de saída
-    - lot: Tamanho do lote em padrão (0.01 = 1000 unidades em forex)
-    - usdjpy_price: Cotação USDJPY para conversão de pares JPY
-    - commission: Comissão em USD
-    
-    Retorna:
-    - P&L em USD (positivo = lucro, negativo = perda)
-    """
-    # ── Validação de inputs ──
-    if entry is None or exit_price is None or lot is None:
-        log(f"[P&L] Valores None detectados: entry={entry}, exit={exit_price}, lot={lot}")
-        return 0.0
-    
-    try:
-        entry = float(entry)
-        exit_price = float(exit_price)
-        lot = float(lot)
-        commission = float(commission)
-    except (TypeError, ValueError):
-        log(f"[P&L] Conversão falhou: entry={entry}, exit={exit_price}, lot={lot}")
-        return 0.0
-    
-    # Validação: valores devem ser positivos e válidos
-    if entry <= 0 or exit_price <= 0 or lot <= 0:
-        log(f"[P&L] Valores inválidos: entry={entry}, exit={exit_price}, lot={lot}")
-        return 0.0
-    
-    # Verificar NaN ou infinito
-    if math.isnan(entry) or math.isinf(entry):
-        log(f"[P&L] Entry inválido (NaN/inf): {entry}")
-        return 0.0
-    if math.isnan(exit_price) or math.isinf(exit_price):
-        log(f"[P&L] Exit inválido (NaN/inf): {exit_price}")
-        return 0.0
-    
-    cs = contract_size(symbol)
-    
-    # Calcula P&L bruto
-    if direction == "BUY":
-        raw = (exit_price - entry) * cs * lot
-    else:
-        raw = (entry - exit_price) * cs * lot
-
-    # Subtrai comissão
-    raw -= commission
-
-    # Converte JPY para USD se necessário
-    if is_jpy_pair(symbol):
-        return jpy_to_usd(raw, usdjpy_price)
-    
-    return round(raw, 2)
-
-
-def calc_pnl_pips(symbol: str, direction: str, entry: float, exit_price: float) -> float:
-    """
-    Distância em pips entre entry e exit, com sinal (positivo = favor do trade).
-    """
-    pf = pip_factor(symbol)
-    if direction == "BUY":
-        return round((exit_price - entry) / pf, 1)
-    return round((entry - exit_price) / pf, 1)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ALAVANCAGEM
-# ══════════════════════════════════════════════════════════════════════════════
-
-def max_leverage(symbol: str, lot: float = 0.01) -> int:
+def max_leverage(symbol, lot=0.01):
     """
     Retorna a alavancagem efetiva.
     Se USE_FIXED_LEVERAGE = True, sempre retorna DEFAULT_LEVERAGE.
@@ -168,12 +38,7 @@ def max_leverage(symbol: str, lot: float = 0.01) -> int:
         return 1000 if lot <= 1.0 else 500
     return 1000 if lot <= 2.0 else 500
 
-
-def get_sl_tp_pct(leverage: int, rr: float = None) -> tuple[float, float]:
-    """
-    Calcula SL e TP em percentagem baseado na alavancagem.
-    Retorna (sl_pct, tp_pct).
-    """
+def get_sl_tp_pct(leverage, rr=None):
     sl = Config.SL_TP_BASE_MULTIPLIER / max(1, leverage)
     sl = min(Config.SL_MAX_PCT, max(Config.SL_MIN_PCT, sl))
     sl = round(sl, 2)
@@ -181,104 +46,78 @@ def get_sl_tp_pct(leverage: int, rr: float = None) -> tuple[float, float]:
     tp = round(sl * rr, 2)
     return sl, tp
 
-
-def get_sl_tp_atr(
-    entry: float,
-    atr: float,
-    direction: str,
-    atr_sl_mult: float = 1.5,
-    atr_tp_mult: float = 2.5,
-) -> tuple[float, float, float, float]:
-    """
-    Calcula SL e TP baseado em ATR.
-    Retorna (sl, tp, sl_dist, tp_dist).
-    """
-    if not atr or atr <= 0:
-        # Fallback: usa 0.5% como distância mínima
-        sl_dist = entry * 0.005
-        tp_dist = sl_dist * (atr_tp_mult / atr_sl_mult)
-    else:
-        sl_dist = atr * atr_sl_mult
-        tp_dist = atr * atr_tp_mult
-
+def get_sl_tp_atr(entry, atr, direction, atr_sl_mult=1.5, atr_tp_mult=2.5):
+    sl_dist = atr * atr_sl_mult
+    tp_dist = atr * atr_tp_mult
     if direction == "BUY":
         sl = round(entry - sl_dist, 5)
         tp = round(entry + tp_dist, 5)
     else:
         sl = round(entry + sl_dist, 5)
         tp = round(entry - tp_dist, 5)
-    
     return sl, tp, sl_dist, tp_dist
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SEGURANÇA DINÂMICA POR FAIXA DE SALDO
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+# NOVAS FUNÇÕES: SEGURANÇA DINÂMICA
+# ═══════════════════════════════════════════════════════════
 
-def _lookup_by_threshold(balance: float, table: dict, default):
-    """Helper: retorna o valor da primeira threshold >= balance."""
-    for threshold, value in sorted(table.items()):
-        if balance <= threshold:
-            return value
-    return default
-
-
-def get_dynamic_leverage(balance: float) -> int:
-    """Alavancagem baseada no capital atual."""
+def get_dynamic_leverage(balance):
+    """
+    Retorna alavancagem baseada no capital atual.
+    Se USE_DYNAMIC_LEVERAGE=False, retorna DEFAULT_LEVERAGE.
+    """
     if not Config.USE_DYNAMIC_LEVERAGE:
         return Config.DEFAULT_LEVERAGE
-    return _lookup_by_threshold(balance, Config.DYNAMIC_LEVERAGE_TABLE, Config.DEFAULT_LEVERAGE)
 
+    for threshold, lev in sorted(Config.DYNAMIC_LEVERAGE_TABLE.items()):
+        if balance <= threshold:
+            return lev
+    return Config.DEFAULT_LEVERAGE
 
-def get_dynamic_max_trades(balance: float) -> int:
-    """Máximo de trades ativos permitidos para o capital atual."""
-    return _lookup_by_threshold(balance, Config.DYNAMIC_MAX_TRADES, Config.MAX_TRADES)
+def get_dynamic_max_trades(balance):
+    """Retorna máximo de trades ativos permitidos para o capital atual."""
+    for threshold, max_t in sorted(Config.DYNAMIC_MAX_TRADES.items()):
+        if balance <= threshold:
+            return max_t
+    return Config.MAX_TRADES
 
-
-def get_allowed_symbols(balance: float) -> list:
-    """Lista de símbolos permitidos para o capital atual.
-
-    Em modo sinalizador, o universo de busca não deve ser travado pelo saldo.
-    O controle de risco já é feito por confluência, cooldown e limites de exposição.
-    """
-    if getattr(Config, "BOT_IS_SIGNAL_ONLY", False):
-        return list(Config.FXGOLD_ASSETS.keys())
-
+def get_allowed_symbols(balance):
+    """Retorna lista de símbolos permitidos para o capital atual."""
     allowed = []
     for tier in sorted(Config.ASSET_TIERS.keys()):
         if balance >= Config.ASSET_TIERS[tier]["min_balance"]:
             allowed = Config.ASSET_TIERS[tier]["symbols"]
     return allowed
 
+def get_max_risk_absolute(balance):
+    """Retorna risco máximo absoluto (USD) permitido por trade."""
+    for threshold, risk in sorted(Config.MAX_RISK_ABSOLUTE_USD.items()):
+        if balance <= threshold:
+            return risk
+    return 100.0
 
-def get_max_risk_absolute(balance: float) -> float:
-    """Risco máximo absoluto (USD) permitido por trade."""
-    return _lookup_by_threshold(balance, Config.MAX_RISK_ABSOLUTE_USD, 100.0)
+def get_min_free_margin_pct(balance):
+    """Retorna % mínima de margem livre obrigatória."""
+    for threshold, pct in sorted(Config.MIN_FREE_MARGIN_PCT.items()):
+        if balance <= threshold:
+            return pct
+    return 0.15
 
+def get_dynamic_cooldown(balance):
+    """Retorna cooldown em segundos após loss, baseado no capital."""
+    for threshold, cd in sorted(Config.DYNAMIC_COOLDOWN.items()):
+        if balance <= threshold:
+            return cd
+    return Config.ASSET_COOLDOWN
 
-def get_min_free_margin_pct(balance: float) -> float:
-    """% mínima de margem livre obrigatória."""
-    return _lookup_by_threshold(balance, Config.MIN_FREE_MARGIN_PCT, 0.15)
-
-
-def get_dynamic_cooldown(balance: float) -> int:
-    """Cooldown em segundos após loss, baseado no capital."""
-    return _lookup_by_threshold(balance, Config.DYNAMIC_COOLDOWN, Config.ASSET_COOLDOWN)
-
-
-def is_symbol_allowed(symbol: str, balance: float) -> bool:
-    """True se o símbolo é permitido para o capital atual."""
-    return symbol in get_allowed_symbols(balance)
-
-
-def is_weekend_gap_risk() -> bool:
+def is_weekend_gap_risk():
     """
-    True se estiver em período de alto risco de gap:
-    - Sexta após FRIDAY_NO_TRADE_AFTER_HOUR UTC
-    - Sábado inteiro
-    - Domingo antes de SUNDAY_NO_TRADE_BEFORE_HOUR UTC
+    Retorna True se estiver em período de alto risco de gap:
+    - Sexta após 20h UTC
+    - Domingo antes de 22h UTC
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     dow = now.weekday()  # 0=Seg, 4=Sex, 5=Sab, 6=Dom
     hour = now.hour
 
@@ -290,15 +129,15 @@ def is_weekend_gap_risk() -> bool:
         return True
     return False
 
+def is_symbol_allowed(symbol, balance):
+    """Verifica se o símbolo é permitido para o capital atual."""
+    allowed = get_allowed_symbols(balance)
+    return symbol in allowed
 
-def is_weekend() -> bool:
-    """True durante sábado inteiro ou domingo antes da abertura."""
-    return is_weekend_gap_risk() and datetime.now(timezone.utc).weekday() >= 5
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FILTRO DE SESSÃO POR PAR
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+# FILTRO DE SESSÃO
+# ═══════════════════════════════════════════════════════════
 # Cada par tem liquidez máxima em janelas específicas.
 # Sinais fora da sessão principal têm WR significativamente menor.
 #
@@ -306,38 +145,139 @@ def is_weekend() -> bool:
 #   New York:    12–21 UTC
 #   Overlap:     12–16 UTC  (maior volume, melhor para EUR/GBP)
 #   Ásia:        00–09 UTC  (melhor para JPY, AUD, NZD)
+#
+# Formato: lista de (hora_inicio, hora_fim) em UTC.
+# Para janelas que cruzam meia-noite, usa dois intervalos.
 
 _SESSION_WINDOWS: dict[str, list[tuple[int, int]]] = {
-    "EURUSD": [(7, 20)],
-    "GBPUSD": [(7, 20)],
-    "EURGBP": [(7, 18)],
-    "EURJPY": [(7, 20)],
-    "GBPJPY": [(7, 20)],
-    "USDJPY": [(0, 9), (12, 16)],
-    "USDCAD": [(12, 21)],
-    "USDCHF": [(7, 20)],
-    "AUDUSD": [(22, 24), (0, 14)],
-    "NZDUSD": [(21, 24), (0, 13)],
-    "XAUUSD": [(7, 21)],
+    "EURUSD": [(7, 20)],          # Londres + NY
+    "GBPUSD": [(7, 20)],          # Londres + NY
+    "EURGBP": [(7, 18)],          # Principalmente Londres
+    "EURJPY": [(7, 20)],          # Londres + NY
+    "GBPJPY": [(7, 20)],          # Londres + NY
+    "USDJPY": [(0, 9), (12, 16)], # Ásia + overlap London-NY
+    "USDCAD": [(12, 21)],         # NY (dados canadenses saem 13-15 UTC)
+    "USDCHF": [(7, 20)],          # Londres + NY
+    "AUDUSD": [(22, 24), (0, 14)],# Sydney + Ásia + Londres
+    "NZDUSD": [(21, 24), (0, 13)],# Sydney + Ásia + início Londres
+    "XAUUSD": [(7, 21)],          # Londres + NY (ouro segue ambas)
 }
 
 
 def is_good_session(symbol: str) -> bool:
     """
-    True se o horário atual (UTC) está dentro da janela
+    Retorna True se o horário atual (UTC) está dentro da janela
     de liquidez principal do par.
+    Fora da sessão, a probabilidade de fake breakouts aumenta.
     """
     windows = _SESSION_WINDOWS.get(symbol)
     if not windows:
         return True  # símbolo desconhecido: não bloqueia
 
-    hour = datetime.now(timezone.utc).hour
+    hour = datetime.utcnow().hour
     for start, end in windows:
         if start < end:
             if start <= hour < end:
                 return True
         else:
-            # intervalo que cruza meia-noite (ex: 22-2 = das 22 às 02)
             if hour >= start or hour < end:
                 return True
     return False
+
+
+# ═══════════════════════════════════════════════════════════
+# KILL ZONES — janelas institucionais precisas (ICT)
+# ═══════════════════════════════════════════════════════════
+# Traders profissionais focam nestas janelas onde o volume
+# institucional é máximo e os movimentos mais limpos.
+#
+#   London Open:  07:00–09:00 UTC  (maior liquidez europeia)
+#   NY Open:      13:00–15:00 UTC  (overlap + dados EUA)
+#   London Close: 15:00–16:00 UTC  (reversões frequentes)
+#   Asia Session: 00:00–03:00 UTC  (pares JPY e AUD/NZD)
+
+_KILL_ZONES = [
+    (7,  9,  "London Open"),
+    (13, 15, "NY Open"),
+    (15, 16, "London Close"),
+    (0,  3,  "Asia Session"),
+]
+
+# Score bônus por Kill Zone (adicionado ao check de confluência)
+_KILL_ZONE_PAIRS = {
+    "London Open":   ["EURUSD", "GBPUSD", "EURGBP", "EURJPY", "GBPJPY", "XAUUSD"],
+    "NY Open":       ["EURUSD", "GBPUSD", "USDCAD", "USDCHF", "XAUUSD", "USDJPY"],
+    "London Close":  ["EURUSD", "GBPUSD", "EURGBP"],
+    "Asia Session":  ["USDJPY", "AUDUSD", "NZDUSD", "EURJPY", "GBPJPY"],
+}
+
+
+def get_kill_zone(symbol: str) -> str | None:
+    """
+    Retorna o nome da Kill Zone ativa para o par, ou None se fora dela.
+    Fora de Kill Zone, o sinal é aceito mas sem bônus de score.
+    """
+    hour = datetime.utcnow().hour
+    for start, end, name in _KILL_ZONES:
+        in_window = (start <= hour < end) if start < end else (hour >= start or hour < end)
+        if in_window and symbol in _KILL_ZONE_PAIRS.get(name, []):
+            return name
+    return None
+
+
+def is_in_kill_zone(symbol: str) -> bool:
+    """Retorna True se o par está numa Kill Zone agora."""
+    return get_kill_zone(symbol) is not None
+
+
+# ═══════════════════════════════════════════════════════════
+# OTE — OPTIMAL TRADE ENTRY (Fibonacci 62-79%)
+# ═══════════════════════════════════════════════════════════
+# Conceito ICT: após um impulso direcional, o preço retorna
+# para a zona de 62-79% de Fibonacci antes de continuar.
+# Entrar nessa zona melhora o RR e reduz stops prematuros.
+
+def calc_ote_zone(swing_high: float, swing_low: float, direction: str) -> dict:
+    """
+    Calcula a zona OTE (Optimal Trade Entry) para um impulso.
+
+    BUY:  swing_low = início do impulso, swing_high = topo
+          OTE = retrace de 62-79% para cima (zona de compra)
+
+    SELL: swing_high = início do impulso, swing_low = fundo
+          OTE = retrace de 62-79% para baixo (zona de venda)
+
+    Retorna: {"low": ..., "high": ..., "mid": ..., "valid": bool}
+    """
+    rng = swing_high - swing_low
+    if rng <= 0:
+        return {"low": 0, "high": 0, "mid": 0, "valid": False}
+
+    if direction == "BUY":
+        # Retrace de alta: zona entre 62% e 79% do impulso de baixo para cima
+        ote_low  = swing_high - rng * 0.79   # 79% de retrace
+        ote_high = swing_high - rng * 0.62   # 62% de retrace
+    else:
+        # Retrace de baixa: zona entre 62% e 79% do impulso de cima para baixo
+        ote_low  = swing_low + rng * 0.62    # 62% de retrace
+        ote_high = swing_low + rng * 0.79    # 79% de retrace
+
+    ote_mid = (ote_low + ote_high) / 2
+    return {
+        "low":   round(ote_low,  5),
+        "high":  round(ote_high, 5),
+        "mid":   round(ote_mid,  5),
+        "valid": True,
+    }
+
+
+def is_price_in_ote(price: float, swing_high: float, swing_low: float,
+                    direction: str) -> bool:
+    """
+    Verifica se o preço atual está na zona OTE.
+    Retorna True se o preço está no retrace de 62-79%.
+    """
+    zone = calc_ote_zone(swing_high, swing_low, direction)
+    if not zone["valid"]:
+        return False
+    return zone["low"] <= price <= zone["high"]
