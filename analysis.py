@@ -1,4 +1,3 @@
-
 import time
 import threading
 import requests
@@ -7,9 +6,9 @@ from datetime import datetime, timezone
 from config import Config
 from utils import log, asset_name
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# Mapeamento interno \u2192 Twelve Data
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# Mapeamento interno → Twelve Data
+# ═══════════════════════════════════════════════════════════════════════════════
 TD_SYMBOLS = {
     "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY",
     "AUDUSD": "AUD/USD", "USDCAD": "USD/CAD", "USDCHF": "USD/CHF",
@@ -17,12 +16,9 @@ TD_SYMBOLS = {
     "GBPJPY": "GBP/JPY", "XAUUSD": "XAU/USD",
 }
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# CACHE E SINCRONIZA\u00c7\u00c3O
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# O refresh pode demorar ~65s (sleep entre batches do free tier),
-# ent\u00e3o roda numa thread separada. O loop principal l\u00ea o cache
-# sem bloquear, e recebe None se o cache ainda estiver vazio.
+# ═══════════════════════════════════════════════════════════════════════════════
+# CACHE E SINCRONIZAÇÃO
+# ═══════════════════════════════════════════════════════════════════════════════
 _cache: dict = {}
 _cache_lock = threading.RLock()
 _CACHE_TTL = 20 * 60          # 20 min
@@ -30,7 +26,7 @@ _last_refresh: float = 0.0
 _refresh_thread: threading.Thread = None
 _refresh_in_progress = threading.Event()
 
-# Cooldown de log para candle inv\u00e1lido
+# Cooldown de log para candle inválido
 _invalid_candle_logged: dict = {}
 _INVALID_LOG_COOLDOWN = 10 * 60
 
@@ -38,13 +34,13 @@ _INVALID_LOG_COOLDOWN = 10 * 60
 def _log_invalid_candle(symbol: str):
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        log(f"[AN\u00c1LISE] {symbol}: candle inv\u00e1lido ou incompleto, ignorando...")
+        log(f"[ANÁLISE] {symbol}: candle inválido ou incompleto, ignorando...")
         _invalid_candle_logged[symbol] = now
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 # REFRESH DE CACHE (thread separada)
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 def _fetch_batch(symbols_td: list[str]) -> dict:
     """Faz UMA chamada batch ao Twelve Data e retorna o JSON."""
     if not Config.TWELVE_DATA_API_KEY:
@@ -70,17 +66,17 @@ def _fetch_batch(symbols_td: list[str]) -> dict:
 
 
 def _refresh_cache_worker():
-    """Executa o refresh em thread separada para n\u00e3o bloquear o loop principal."""
+    """Executa o refresh em thread separada para não bloquear o loop principal."""
     global _last_refresh
 
     if not Config.TWELVE_DATA_API_KEY:
-        log("[TWELVEDATA] TWELVE_DATA_API_KEY n\u00e3o configurada.")
-        _refresh_in_progress.
+        log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada.")
+        _refresh_in_progress.clear()
         return
 
     try:
         items = list(TD_SYMBOLS.items())
-        # Free tier: 8 cr\u00e9ditos/minuto. 11 s\u00edmbolos = 2 batches de 8+3
+        # Free tier: 8 créditos/minuto. 11 símbolos = 2 batches de 8+3
         batches = [items[:8], items[8:]]
         merged = {}
 
@@ -128,12 +124,12 @@ def _refresh_cache_worker():
             except Exception as e:
                 log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
 
-        # Commita tudo de uma vez no cache (mant\u00e9m dados antigos dos pares que falharam)
+        # Commita tudo de uma vez no cache (mantém dados antigos dos pares que falharam)
         with _cache_lock:
             _cache.update(new_data)
             _last_refresh = now
 
-        log(f"[TWELVEDATA] Cache atualizado \u2014 {ok_count}/{len(TD_SYMBOLS)} pares OK")
+        log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
 
     finally:
         _refresh_in_progress.clear()
@@ -163,6 +159,7 @@ def _trigger_refresh_if_needed():
         log(f"[TWELVEDATA] Erro ao iniciar refresh: {e}")
         _refresh_in_progress.clear()
 
+
 def force_initial_refresh(blocking: bool = True):
     """
     Chamado no startup do bot. Se blocking=True, aguarda o primeiro fetch
@@ -174,7 +171,7 @@ def force_initial_refresh(blocking: bool = True):
 
 
 def _get_df(symbol: str):
-    """Retorna o DataFrame do cache. None se n\u00e3o dispon\u00edvel ainda."""
+    """Retorna o DataFrame do cache. None se não disponível ainda."""
     _trigger_refresh_if_needed()
     with _cache_lock:
         if symbol not in _cache:
@@ -184,7 +181,7 @@ def _get_df(symbol: str):
 
 
 def get_cached_price(symbol: str):
-    """\u00daltimo pre\u00e7o de fechamento do cache (sem trigger de refresh)."""
+    """Último preço de fechamento do cache (sem trigger de refresh)."""
     with _cache_lock:
         if symbol not in _cache:
             return None
@@ -195,15 +192,15 @@ def get_cached_price(symbol: str):
 
 
 def get_cache_age_seconds() -> float:
-    """Idade do \u00faltimo refresh (para exibir no dashboard)."""
+    """Idade do último refresh (para exibir no dashboard)."""
     if _last_refresh == 0:
         return float("inf")
     return time.time() - _last_refresh
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# HELPERS DE C\u00c1LCULO
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS DE CÁLCULO
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _resample_to_4h(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -215,7 +212,7 @@ def _resample_to_4h(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _strip_open_candle(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove o \u00faltimo candle se ainda n\u00e3o fechou."""
+    """Remove o último candle se ainda não fechou."""
     if df.empty:
         return df
     last_time = df.index[-1]
@@ -227,7 +224,7 @@ def _strip_open_candle(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _validate_last_candle(df: pd.DataFrame) -> bool:
-    """Rejeita candles an\u00f4malos ou de indecis\u00e3o."""
+    """Rejeita candles anômalos ou de indecisão."""
     if len(df) < 15:
         return False
     tr_temp = pd.concat([
@@ -240,15 +237,15 @@ def _validate_last_candle(df: pd.DataFrame) -> bool:
     last_body  = abs(df["Close"].iloc[-1] - df["Open"].iloc[-1])
     atr_mult   = getattr(Config, "ATR_ANOMALY_MULT", 2.5)
     if atr_temp > 0 and last_range > atr_mult * atr_temp:
-        return False   # candle an\u00f4malo
+        return False   # candle anômalo
     if atr_temp > 0 and last_body < 0.1 * atr_temp:
-        return False   # candle de indecis\u00e3o
+        return False   # candle de indecisão
     return True
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 # SMC: FVG, ORDER BLOCKS, LIQUIDITY SWEEPS
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _detect_fvg(df: pd.DataFrame, lookback: int = 20) -> dict:
     if len(df) < lookback + 3:
@@ -299,7 +296,7 @@ def _detect_order_blocks(df: pd.DataFrame, lookback: int = 15) -> dict:
     times = df.index
 
     for i in range(2, len(df)):
-        # Candle bearish \u2192 potencial bullish OB
+        # Candle bearish → potencial bullish OB
         if closes[i - 2] < opens[i - 2]:
             body    = closes[i - 1] - opens[i - 1]
             range_c = highs[i - 1] - lows[i - 1]
@@ -310,7 +307,7 @@ def _detect_order_blocks(df: pd.DataFrame, lookback: int = 15) -> dict:
                     "active": float(lows[i - 2]) <= closes[-1] <= float(highs[i - 2]),
                 })
 
-        # Candle bullish \u2192 potencial bearish OB
+        # Candle bullish → potencial bearish OB
         if closes[i - 2] > opens[i - 2]:
             body    = opens[i - 1] - closes[i - 1]
             range_c = highs[i - 1] - lows[i - 1]
@@ -343,9 +340,9 @@ def _detect_liquidity_sweeps(df: pd.DataFrame, swing_lookback: int = 10) -> dict
     }
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# INDICADORES CL\u00c1SSICOS
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# INDICADORES CLÁSSICOS
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _calc_indicators(df: pd.DataFrame) -> dict:
     closes = df["Close"]
@@ -402,7 +399,7 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
     elif price < float(ema200) and float(ema9) < float(ema21):
         cen = "BAIXA"
 
-    # Candle de for\u00e7a real: body >= 50% do range
+    # Candle de força real: body >= 50% do range
     last_body  = abs(float(closes.iloc[-1]) - float(opens.iloc[-1]))
     last_range = float(highs.iloc[-1]) - float(lows.iloc[-1])
     body_ratio = (last_body / last_range) if last_range > 0 else 0
@@ -431,15 +428,15 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
     }
 
 
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-# API P\u00daBLICA
-# \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+# ═══════════════════════════════════════════════════════════════════════════════
+# API PÚBLICA
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
-    """Retorna indicadores H1 para o s\u00edmbolo (usa cache interno)."""
+    """Retorna indicadores H1 para o símbolo (usa cache interno)."""
     df = _get_df(symbol)
     if df is None or len(df) < 50:
-        log(f"[AN\u00c1LISE] {symbol}: sem dados no cache")
+        log(f"[ANÁLISE] {symbol}: sem dados no cache")
         return None
 
     df = _strip_open_candle(df)
@@ -457,7 +454,7 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
 
 
 def get_multi_timeframe(symbol: str) -> dict:
-    """Retorna an\u00e1lise H1 + H4 (H4 resampleado do H1 em cache)."""
+    """Retorna análise H1 + H4 (H4 resampleado do H1 em cache)."""
     mtf = {"h1": None, "h4": None, "aligned": False, "h4_cenario": "NEUTRO"}
 
     df = _get_df(symbol)
