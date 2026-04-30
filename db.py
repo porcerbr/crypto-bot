@@ -1,6 +1,8 @@
 import json
 import os
 import time
+import math
+import pandas as pd
 from datetime import datetime
 from utils import log
 from config import Config
@@ -11,7 +13,7 @@ METRICS_FILE = "bot_metrics.json"
 
 
 def save_state(bot):
-    """Salva estado completo do bot em state.json"""
+    """Salva estado completo do bot em state.json com backup temporário."""
     data = {
         "mode": bot.mode,
         "timeframe": bot.timeframe,
@@ -38,14 +40,31 @@ def save_state(bot):
 
 
 def load_state(bot):
-    """Carrega estado do bot de state.json"""
+    """
+    Carrega estado do bot de state.json com validação.
+    Ordena o histórico cronologicamente para evitar problemas na equity curve.
+    """
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE) as f:
                 data = json.load(f)
+            
             for k, v in data.items():
                 if hasattr(bot, k) and k != "saved_at":
                     setattr(bot, k, v)
+            
+            # ── VALIDAÇÃO: Ordena histórico cronologicamente ──
+            if bot.history:
+                try:
+                    # Tenta ordenar por timestamp ISO primeiro, depois por formato legado
+                    bot.history = sorted(
+                        bot.history,
+                        key=lambda h: h.get('closed_ts_iso', '') or h.get('closed_at', '')
+                    )
+                    log(f"Histórico carregado e validado ({len(bot.history)} trades)")
+                except Exception as e:
+                    log(f"[WARN] Erro ao ordenar histórico: {e}")
+            
             saved_at = data.get("saved_at", "desconhecido")
             log("Estado carregado de " + str(saved_at))
             return True
@@ -97,7 +116,7 @@ def get_recent_logs(entry_type=None, hours=24, limit=100):
 
 
 def save_metrics(metrics):
-    """Salva metricas agregadas em arquivo separado."""
+    """Salva métricas agregadas em arquivo separado."""
     data = {
         "updated_at": datetime.now().isoformat(),
         **metrics
@@ -109,7 +128,7 @@ def save_metrics(metrics):
 
 
 def load_metrics():
-    """Carrega metricas salvas."""
+    """Carrega métricas salvas."""
     if os.path.exists(METRICS_FILE):
         try:
             with open(METRICS_FILE) as f:
@@ -119,13 +138,46 @@ def load_metrics():
     return {}
 
 
+def load_equity_curve():
+    """Carrega curva de equity do histórico (para dashboard)."""
+    # Será reconstruído no endpoint /api/equity_curve
+    return []
+
+
 def calculate_metrics(bot):
-    """Calcula metricas de performance do bot."""
+    """
+    Calcula métricas de performance do bot com validações de segurança.
+    
+    Retorna dicionário com:
+    - total_trades, winrate, wins, losses
+    - profit_factor, avg_win, avg_loss, expectancy
+    - max_drawdown_pct, current_balance, total_pnl
+    - active_trades_count, pending_trades_count
+    """
+    # ── Validação: histórico vazio ──
+    if not bot.history:
+        return {
+            "total_trades": 0,
+            "winrate": 0,
+            "wins": bot.wins,
+            "losses": bot.losses,
+            "profit_factor": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "expectancy": 0,
+            "max_drawdown_pct": 0,
+            "current_balance": round(bot.balance, 2),
+            "total_pnl": 0,
+            "active_trades_count": len(bot.active_trades),
+            "pending_trades_count": len(bot.pending_trades),
+        }
+    
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-    total_profit = sum(h["pnl"] for h in bot.history if h["result"] == "WIN")
-    total_loss = abs(sum(h["pnl"] for h in bot.history if h["result"] == "LOSS"))
+    # ── Win/Loss Amount ──
+    total_profit = sum(h.get("pnl", 0) for h in bot.history if h.get("result") == "WIN")
+    total_loss = abs(sum(h.get("pnl", 0) for h in bot.history if h.get("result") == "LOSS"))
     profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else 0
 
     avg_win = total_profit / bot.wins if bot.wins > 0 else 0
@@ -133,16 +185,28 @@ def calculate_metrics(bot):
 
     expectancy = round((wr/100 * avg_win) - ((100-wr)/100 * avg_loss), 2) if total > 0 else 0
 
+    # ── Drawdown com validação ──
     peak = Config.INITIAL_BALANCE
-    max_dd = 0
+    max_dd = 0.0
     running = Config.INITIAL_BALANCE
+    
     for h in bot.history:
-        running += h["pnl"]
+        pnl = h.get("pnl", 0)
+        
+        # Validação: PnL não deve ser NaN ou infinito
+        if isinstance(pnl, float):
+            if math.isnan(pnl) or math.isinf(pnl):
+                log(f"[METRICS] PnL inválido detectado: {pnl}")
+                continue
+        
+        running += pnl
         if running > peak:
             peak = running
-        dd = (peak - running) / peak if peak > 0 else 0
-        if dd > max_dd:
-            max_dd = dd
+        
+        if peak > 0:
+            dd = (peak - running) / peak
+            if dd > max_dd:
+                max_dd = dd
 
     return {
         "total_trades": total,
@@ -154,7 +218,7 @@ def calculate_metrics(bot):
         "avg_loss": round(avg_loss, 2),
         "expectancy": expectancy,
         "max_drawdown_pct": round(max_dd * 100, 2),
-        "current_balance": bot.balance,
+        "current_balance": round(bot.balance, 2),
         "total_pnl": round(bot.balance - Config.INITIAL_BALANCE, 2),
         "active_trades_count": len(bot.active_trades),
         "pending_trades_count": len(bot.pending_trades),
