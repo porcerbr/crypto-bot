@@ -147,8 +147,9 @@ def _trigger_refresh_if_needed():
     if now - _last_refresh < _CACHE_TTL:
         return  # cache ainda válido
 
+    # Se já tem refresh rolando, não dispara outro
     if _refresh_in_progress.is_set():
-        return  # já tem refresh rodando
+        return
 
     _refresh_in_progress.set()
     try:
@@ -161,7 +162,6 @@ def _trigger_refresh_if_needed():
     except Exception as e:
         log(f"[TWELVEDATA] Erro ao iniciar refresh: {e}")
         _refresh_in_progress.clear()
-
 
 def force_initial_refresh(blocking: bool = True):
     """
