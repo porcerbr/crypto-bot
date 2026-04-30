@@ -56,27 +56,18 @@ def send_startup_notification(bot):
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0
 
     msg = (
-        "🚀 SNIPER BOT INICIADO\
-"
-        "------------------------------\
-"
-        f"💰 Saldo simulado: ${round(bot.balance, 2)}\
-"
-        f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\
-"
-        f"📈 Trades ativos: {len(bot.active_trades)}\
-"
-        f"⏳ Pendentes: {len(bot.pending_trades)}\
-"
-        f"⚡ Alavancagem: {bot.get_current_leverage()}x\
-"
+        "🚀 SNIPER BOT INICIADO\n"
+        "------------------------------\n"
+        f"💰 Saldo simulado: ${round(bot.balance, 2)}\n"
+        f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\n"
+        f"📈 Trades ativos: {len(bot.active_trades)}\n"
+        f"⏳ Pendentes: {len(bot.pending_trades)}\n"
+        f"⚡ Alavancagem: {bot.get_current_leverage()}x\n"
     )
     if bot.is_paused():
-        msg += "🚫 Status: PAUSADO (circuit breaker)\
-"
+        msg += "🚫 Status: PAUSADO (circuit breaker)\n"
     else:
-        msg += "✅ Status: OPERANDO\
-"
+        msg += "✅ Status: OPERANDO\n"
     
     msg += f"🕐 Iniciado: {datetime.now().strftime('%d/%m %H:%M UTC')}"
 
@@ -97,7 +88,6 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
     avg_adx     = regime_info.get("avg_adx", 0)
     eff_conf    = regime_info.get("effective_conf", Config.MIN_CONFLUENCE)
 
-    # Validação: Se avg_adx é 0, regime pode estar inválido
     regime_status = ""
     if avg_adx == 0:
         regime_status = " ⚠️ (dados insuficientes)"
@@ -110,18 +100,12 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
     }.get(live_regime, "➡️")
 
     bot.send(
-        "💓 HEARTBEAT — Bot operando\
-"
-        "------------------------------\
-"
-        f"💰 Saldo: ${round(bot.balance, 2)}\
-"
-        f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L\
-"
-        f"📈 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\
-"
-        f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\
-"
+        "💓 HEARTBEAT — Bot operando\n"
+        "------------------------------\n"
+        f"💰 Saldo: ${round(bot.balance, 2)}\n"
+        f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L\n"
+        f"📈 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\n"
+        f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\n"
         f"🎯 Confluência mínima efetiva: {eff_conf} pts"
     )
     
@@ -158,30 +142,18 @@ def send_daily_report(bot):
             continue
 
     msg = (
-        f"📊 RELATÓRIO DIÁRIO — {now.strftime('%d/%m/%Y')}\
-"
-        "------------------------------\
-"
-        "📈 Hoje:\
-"
-        f"   Trades: {day_trades} ({day_wins}W / {day_losses}L)\
-"
-        f"   P&L: ${round(day_pnl, 2)}\
-"
-        "\
-"
-        "💰 Geral:\
-"
-        f"   Saldo: ${round(bot.balance, 2)}\
-"
-        f"   Total trades: {metrics['total_trades']}\
-"
-        f"   WR: {metrics['winrate']}%\
-"
-        f"   Profit Factor: {metrics['profit_factor']}\
-"
-        f"   Expectancy: ${metrics['expectancy']}/trade\
-"
+        f"📊 RELATÓRIO DIÁRIO — {now.strftime('%d/%m/%Y')}\n"
+        "------------------------------\n"
+        "📈 Hoje:\n"
+        f"   Trades: {day_trades} ({day_wins}W / {day_losses}L)\n"
+        f"   P&L: ${round(day_pnl, 2)}\n"
+        "\n"
+        "💰 Geral:\n"
+        f"   Saldo: ${round(bot.balance, 2)}\n"
+        f"   Total trades: {metrics['total_trades']}\n"
+        f"   WR: {metrics['winrate']}%\n"
+        f"   Profit Factor: {metrics['profit_factor']}\n"
+        f"   Expectancy: ${metrics['expectancy']}/trade\n"
         f"   Max Drawdown: {metrics['max_drawdown_pct']}%"
     )
     bot.send(msg)
@@ -192,20 +164,13 @@ def send_daily_report(bot):
 def send_error_notification(bot, error_msg: str, traceback_str: str = ""):
     """Notificação de erro/crash — tolerante a falhas do próprio send."""
     msg = (
-        "🚨 ERRO NO BOT\
-"
-        "------------------------------\
-"
-        f"❌ {error_msg[:200]}\
-"
+        "🚨 ERRO NO BOT\n"
+        "------------------------------\n"
+        f"❌ {error_msg[:200]}\n"
     )
     if traceback_str:
-        msg += f"\
-📋 Traceback:\
-{traceback_str[:500]}\
-"
-    msg += f"\
-🕐 {datetime.now().strftime('%d/%m %H:%M:%S UTC')}"
+        msg += f"\n📋 Traceback:\n{traceback_str[:500]}\n"
+    msg += f"\n🕐 {datetime.now().strftime('%d/%m %H:%M:%S UTC')}"
     try:
         bot.send(msg)
     except Exception:
@@ -255,18 +220,15 @@ def _send_confluence_report(bot):
 
             lines.append(
                 f"{status} {sym} {direc} {score}/{total}"
-                + (" (bloqueado)" if locked else "") + "\
-"
-                f"  {bar}\
-"
+                + (" (bloqueado)" if locked else "") + "\n"
+                f"  {bar}\n"
                 f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
             )
 
         lines.append("─────────────────────────────────")
         lines.append("🔒 = par bloqueado pelo tier de capital atual.")
         lines.append("Use /confluencia para atualizar.")
-        bot.send("\
-".join(lines))
+        bot.send("\n".join(lines))
     except Exception as e:
         bot.send(f"❌ Erro ao calcular confluência: {e}")
 
@@ -293,17 +255,12 @@ def _schedule_weekly_learning(bot):
             result = weekly_learning(bot)
             if result:
                 bot.send(
-                    "🧠 APRENDIZADO SEMANAL\
-"
-                    "------------------------------\
-"
-                    f"{result.get('last_suggestion','')}\
-\
-"
+                    "🧠 APRENDIZADO SEMANAL\n"
+                    "------------------------------\n"
+                    f"{result.get('last_suggestion','')}\n\n"
                     f"Min confluence: {result['min_confluence']} | "
                     f"Min ADX: {result['min_adx']} | "
-                    f"Min RR: {result['min_rr']}\
-"
+                    f"Min RR: {result['min_rr']}\n"
                     f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
                 )
                 log("[LAYER2] Aprendizado concluído")
@@ -324,21 +281,13 @@ def _schedule_monthly_analysis(bot):
                 regime_pairs = result.get("regime_pairs", {})
                 regime_txt   = " | ".join(f"{k}:{v}" for k, v in list(regime_pairs.items())[:5])
                 bot.send(
-                    "🔮 ANÁLISE MENSAL (Estratégica)\
-"
-                    "------------------------------\
-"
-                    f"{result.get('opus_summary','')}\
-\
-"
+                    "🔮 ANÁLISE MENSAL (Estratégica)\n"
+                    "------------------------------\n"
+                    f"{result.get('opus_summary','')}\n\n"
                     f"Regime: {result.get('market_regime','?').upper()} | "
-                    f"Viés: {result.get('strategy_bias','?').upper()}\
-"
-                    f"Sessões favoritas: {', '.join(result.get('favored_sessions',[])) or '—'}\
-"
-                    f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\
-\
-"
+                    f"Viés: {result.get('strategy_bias','?').upper()}\n"
+                    f"Sessões favoritas: {', '.join(result.get('favored_sessions',[])) or '—'}\n"
+                    f"Horas a evitar (UTC): {result.get('avoid_hours_utc',[]) or 'nenhuma'}\n\n"
                     f"Por par: {regime_txt}"
                 )
                 log("[LAYER3] Análise mensal concluída")
@@ -446,22 +395,16 @@ def main():
     
     bot = TradingBot()
 
-    import analysis
-
-    # Garante que não haja refresh concorrente pendente (ex.: import do Flask)
-    if hasattr(analysis, '_refresh_in_progress'):
-        analysis._refresh_in_progress.clear()
-
-    analysis.force_initial_refresh(blocking=True)
-
     # 1. Carrega estado persistido
     state_loaded = load_state(bot)
 
-    # 2. Refresh inicial de mercado
+    # 2. Refresh inicial de mercado (com correção para evitar duplo batch)
+    import analysis
+    if hasattr(analysis, '_refresh_in_progress'):
+        analysis._refresh_in_progress.clear()
     try:
-        from analysis import force_initial_refresh
         log("Executando refresh inicial de mercado (Twelve Data)...")
-        force_initial_refresh(blocking=True)
+        analysis.force_initial_refresh(blocking=True)
     except Exception as e:
         log(f"[INIT] Falha no refresh inicial: {e}")
 
@@ -493,6 +436,10 @@ def main():
     threading.Thread(target=bot_loop, args=(bot,), daemon=True, name="bot-loop").start()
 
     # 6. Sobe API Flask
+    app  = create_api(bot)
+    port = int(os.environ.get("PORT", 8080))
+    log(f"API HTTP escutando em 0.0.0.0:{port}")
+    
     import sys
     try:
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
@@ -507,6 +454,7 @@ def main():
         except:
             pass
         sys.exit(1)
+
 
 if __name__ == "__main__":
     # Validação de configuração
