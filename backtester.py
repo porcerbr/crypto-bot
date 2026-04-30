@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 
 from config import Config
 from performance import calculate_metrics_from_history
+from utils import calc_pnl_usd
 
 
 @dataclass
@@ -83,8 +84,6 @@ def main():
     if not bars:
         raise SystemExit("Nenhum candle válido encontrado no CSV.")
 
-    # Backtest de histórico importado: sem estratégia conectada, gera apenas métricas neutras.
-    # O arquivo foi deixado pronto para integrar callbacks do seu motor de sinais.
     report = {
         "bars": len(bars),
         "symbol": Path(args.csv).stem,
