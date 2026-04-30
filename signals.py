@@ -454,7 +454,7 @@ def get_confluence_snapshot() -> list[dict]:
 
 def check_near_signals(bot) -> None:
     """Alerta pares próximos do score mínimo (só os permitidos pelo tier)."""
-    ai_params      = load_ai_params()
+    ai_params = load_ai_params()
     effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
     near_threshold = effective_conf - 2
 
@@ -462,18 +462,18 @@ def check_near_signals(bot) -> None:
         bot._near_signal_cooldown = {}
 
     allowed_symbols = get_allowed_symbols(bot.balance)
-    now             = time.time()
-    snapshot        = get_confluence_snapshot()
+    now = time.time()
+    snapshot = get_confluence_snapshot()
 
     for item in snapshot:
-        sym   = item["symbol"]
-        score = item["best_score"]
-        total = item["total"]
+        sym = item["symbol"]
+        weighted_score = item["best_score"]
+        total_weighted = item["total"]
         direc = item["best_dir"]
 
         if sym not in allowed_symbols:
             continue
-        if score < near_threshold or score >= effective_conf:
+        if weighted_score < near_threshold or weighted_score >= effective_conf:
             continue
 
         last_alert = bot._near_signal_cooldown.get(sym, 0)
@@ -481,20 +481,33 @@ def check_near_signals(bot) -> None:
             continue
 
         checks = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
-        missing = [c["name"] for c in checks if not c["ok"]][:3]
+        display_score = sum(1 for c in checks if c["ok"])
+        total_checks = len(checks) if checks else 0
+        missing = [c["name"] for c in checks if not c["ok"]][:5]
 
-        bars = "🟢" * score + "⚪" * (total - score)
+        bar_width = total_checks if total_checks > 0 else 13
+        filled = min(display_score, bar_width)
+        bars = "🟢" * filled + "⚪" * max(0, bar_width - filled)
+
+        h4_txt = "✅ Alinhado" if item["h4_aligned"] else "❌ Desalinhado"
+
         msg = (
             f"📊 QUASE SINAL — {sym}\n"
             f"──────────────────────────\n"
-            f"Direção: {direc} | Score: {score}/{total}\n"
-            f"{bars}\n"
+            f"Direção: {direc} | Score: {display_score}/{bar_width} | Técnico: {weighted_score}/{total_weighted}\n"
+            f"{bars}\n\n"
             f"RSI: {item['rsi']} | ADX: {item['adx']}\n"
-            f"H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
-            f"❌ Falta confirmar:\n" +
-            "\n".join(f"  • {m}" for m in missing) +
-            f"\n\nFaltam {effective_conf - score} check(s) para virar sinal."
+            f"H4: {h4_txt}\n\n"
         )
+
+        if missing:
+            msg += "❌ Falta confirmar:\n"
+            for m in missing[:4]:
+                msg += f"  • {m}\n"
+
+        faltam = max(0, effective_conf - weighted_score)
+        msg += f"\nFaltam {faltam} check(s) para virar sinal."
+
         bot.send(msg)
         bot._near_signal_cooldown[sym] = now
-        log(f"[NEAR] {sym} {direc} {score}/{total} — alerta enviado")
+        log(f"[NEAR] {sym} {direc} {weighted_score}/{total_weighted} — alerta enviado")
