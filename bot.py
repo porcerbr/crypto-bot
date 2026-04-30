@@ -435,47 +435,78 @@ class TradingBot:
             log(f"[PUSH] Erro: {type(e).__name__}: {str(e)[:100]}")
 
     def send_pending_notification(self, pend: dict):
-        direc = pend["dir"]
+        checks = pend.get("checks", []) or []
+        checks_ok = sum(1 for c in checks if c.get("ok"))
+        checks_total = len(checks) if checks else 0
+
+        score_raw = pend.get("score", checks_ok)
+        max_score_raw = pend.get("max_score", checks_total or 1)
+
+        direction = pend["dir"]
         sl_pips = pend.get("sl_pips", "?")
         tp_pips = pend.get("tp_pips", "?")
-        sl_dir = "\u2212" if direc == "BUY" else "+"
-        tp_dir = "+" if direc == "BUY" else "\u2212"
+        sl_dir = "−" if direction == "BUY" else "+"
+        tp_dir = "+" if direction == "BUY" else "−"
+
+        bar_total = checks_total if checks_total > 0 else 13
+        filled = min(checks_ok, bar_total)
+        bar = "🟢" * filled + "⚪" * max(0, bar_total - filled)
 
         checks_lines = [
-            f"{'\u2705' if c['ok'] else '\u274c'} {c['name']}"
-            for c in pend["checks"]
+            f"{'✅' if c['ok'] else '❌'} {c['name']}"
+            for c in checks
         ]
-        checks_str = "\
-".join(checks_lines)
+        checks_str = "\n".join(checks_lines) if checks_lines else "—"
+
+        missing = [c["name"] for c in checks if not c["ok"]]
+        missing_str = ""
+        if missing:
+            missing_str = "\n❌ Falta confirmar:\n" + "\n".join(f"  • {m}" for m in missing[:5])
+
+        h4_txt = "✅ Alinhado" if pend.get("mtf_aligned", False) else "❌ Desalinhado"
+        adx = float(pend.get("adx", 0) or 0)
+        atr = float(pend.get("atr", 0) or 0)
+        ai_reason = pend.get("ai_reason", "—")
+        ai_conf = pend.get("ai_confidence", 0)
 
         lines = [
-            f"\ud83c\udfaf SINAL PENDENTE \u2014 {pend['symbol']} ({pend['name']})",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            f"\ud83d\udccc Dire\u00e7\u00e3o: {direc}",
-            f"\ud83d\udccd Entrada:  {fmt(pend['entry'])}",
-            f"\ud83d\uded1 SL:       {fmt(pend['sl'])}  ({sl_dir}{sl_pips} pips)",
-            f"\ud83c\udfaf TP:       {fmt(pend['tp'])}  ({tp_dir}{tp_pips} pips)",
-            f"\ud83d\udcca RR: 1:{pend['rr']} | Score: {pend['score']}/{pend['max_score']}",
-            f"\ud83e\udd16 IA: {pend.get('ai_reason', '\u2014')}",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            "\u26a0\ufe0f Se der erro de SL/TP inv\u00e1lido:",
-            "   Pre\u00e7o mudou \u2014 use a dist\u00e2ncia em pips",
-            "   como refer\u00eancia e ajuste no broker.",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            f"\ud83d\udcb0 Margem p/ 0.01 lote: ${round(pend['min_lot_margin'], 2)}",
-            f"\ud83d\udcb8 Risco c/ lote m\u00ednimo: ${round(pend['risk_001_lot'], 2)} "
-            f"({round(pend['risk_pct_001'], 1)}%)",
-            f"\ud83d\udce6 Lote sugerido ({Config.ATR_RISK_PCT}% risco): "
-            f"{pend['suggested_lot']} lote(s)",
-            f"   \u2192 Risco real: ${round(pend['suggested_risk_usd'], 2)} "
-            f"({round(pend['suggested_risk_pct'], 1)}%)",
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            checks_str,
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-            f"\u25b6\ufe0f Para executar: /executar_{pend['pending_id']}_VALOR",
+            f"🎯 SINAL PREMIUM — {pend['symbol']} ({pend['name']})",
+            "——————————————",
+            f"Direção: {direction} | Score: {checks_ok}/{bar_total}",
+            f"{bar}",
+            "",
+            f"Entrada: {fmt(pend['entry'])}",
+            f"SL: {fmt(pend['sl'])}  ({sl_dir}{sl_pips} pips)",
+            f"TP: {fmt(pend['tp'])}  ({tp_dir}{tp_pips} pips)",
+            f"RR: 1:{pend['rr']} | Score técnico: {score_raw}/{max_score_raw}",
+            f"ADX: {adx:.1f} | ATR: {atr:.5f}",
+            f"H4: {h4_txt} | Cenário H4: {pend.get('h4_cenario', 'NEUTRO')}",
+            f"IA: {ai_reason}" + (f" | Confiança: {ai_conf}%" if ai_conf else ""),
+            "",
         ]
-        self.send("\
-".join(lines))
+
+        if checks_lines:
+            lines.append("✅ Confirmações fortes:")
+            for line in checks_lines[:8]:
+                lines.append(f"  • {line}")
+            lines.append("")
+
+        if missing:
+            lines.append("⚠️ Falta confirmar:")
+            for m in missing[:5]:
+                lines.append(f"  • {m}")
+            lines.append("")
+
+        lines += [
+            f"💰 Margem p/ 0.01 lote: ${round(pend['min_lot_margin'], 2)}",
+            f"💸 Risco c/ lote mínimo: ${round(pend['risk_001_lot'], 2)} ({round(pend['risk_pct_001'], 1)}%)",
+            f"📦 Lote sugerido ({Config.ATR_RISK_PCT}% risco): {pend['suggested_lot']} lote(s)",
+            f"   → Risco real: ${round(pend['suggested_risk_usd'], 2)} ({round(pend['suggested_risk_pct'], 1)}%)",
+            "——————————————",
+            f"▶️ Para executar: /executar_{pend['pending_id']}_VALOR",
+        ]
+
+        self.send("\n".join(lines))
 
     def get_current_leverage(self) -> int:
         if Config.USE_DYNAMIC_LEVERAGE:
