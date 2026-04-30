@@ -344,7 +344,7 @@ def scan(bot):
             continue
 
         # ── Apoio SMC / MTF ───────────────────────────────────────
-        # Mantém o bot profissional sem exigir que tudo aconteça ao mesmo tempo.
+        # Não bloqueia sinais tecnicamente fortes só porque FVG/OB/H4 não apareceram ao mesmo tempo.
         check_map = {nm: ok for nm, ok in checks}
 
         has_fvg = check_map.get(
@@ -356,14 +356,29 @@ def scan(bot):
         smc_ok = has_fvg or has_ob
         support_checks = int(smc_ok) + int(has_h4)
 
+        tech_floor = getattr(Config, "TECHNICAL_ONLY_MIN_SCORE", 7)
+        tech_rr_floor = getattr(Config, "TECHNICAL_ONLY_MIN_RR", 1.8)
+        tech_adx_floor = getattr(Config, "TECHNICAL_ONLY_MIN_ADX", 20)
+
+        # Se não houver apoio SMC/H4 suficiente, só deixa passar quando a leitura técnica estiver forte.
         if support_checks < Config.MIN_SUPPORT_CHECKS:
-            reason = []
-            if not smc_ok:
-                reason.append("sem FVG/OB ativo")
-            if not has_h4:
-                reason.append("H4 desalinhado")
-            log(f"[SUPPORT] {sym} {direction}: apoio insuficiente — {', '.join(reason)}")
-            continue
+            technical_override = (
+                getattr(Config, "ALLOW_TECHNICAL_ONLY_FALLBACK", True)
+                and sc >= tech_floor
+                and rr >= tech_rr_floor
+                and res.get("adx", 0) >= tech_adx_floor
+            )
+
+            if not technical_override:
+                reason = []
+                if not smc_ok:
+                    reason.append("sem FVG/OB ativo")
+                if not has_h4:
+                    reason.append("H4 desalinhado")
+                log(f"[SUPPORT] {sym} {direction}: apoio insuficiente — {', '.join(reason)}")
+                continue
+
+            log(f"[SUPPORT] {sym} {direction}: sem SMC/H4 forte, mas técnica compensou (score={sc}, rr={rr})")
 
         # Pares bloqueados pela IA (baseado em aprendizado)
         if sym in ai_params.get("blocked_pairs", []):
