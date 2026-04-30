@@ -337,7 +337,7 @@ def scan(bot):
             continue
 
         # \u2500\u2500 Valida\u00e7\u00e3o final pela IA (par\u00e2metros aprendidos) \u2500\u2500\u2500\u2500\u2500\u2500
-        from ai_validator import load_ai_params, validate_signal
+        
         ai_params = load_ai_params()
         min_rr = ai_params.get("min_rr", 1.5)
 
