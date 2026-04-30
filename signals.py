@@ -60,74 +60,75 @@ def _is_safe_to_trade(bot, symbol: str) -> tuple[bool, str]:
 # ═══════════════════════════════════════════════════════════════════════════════
 def calc_confluence(res: dict, direction: str, mtf: dict = None) -> tuple[int, int, list, bool, int]:
     """
-    Calcula score de confluência.
-    Retorna (score, total_checks, checks, passed, min_required).
+    Calcula score de confluência com pesos.
+    Retorna (score_ponderado, total_checks, checks, passed, min_required).
     """
+    weights = Config.CONFLUENCE_WEIGHTS
     price = res["price"]
+    checks: list[tuple[str, bool]] = []
+    weighted_score = 0
+    max_score = 0
 
-    # ── Técnicos base ────────────────────────────────────────────
+    def add_check(label: str, ok: bool, weight_key: str):
+        nonlocal weighted_score, max_score
+        weight = int(weights.get(weight_key, 1))
+        max_score += weight
+        if ok:
+            weighted_score += weight
+        checks.append((label, ok))
+
     if direction == "BUY":
-        checks = [
-            ("Preço > EMA200",              res["price"] > res["ema200"]),
-            ("EMA9 > EMA21",                res["ema9"]  > res["ema21"]),
-            ("MACD bullish",                res["macd_bull"]),
-            ("RSI entre 40-65",             40 < res["rsi"] < 65),
-            ("ADX > 25",                    res["adx"] > 25),
-            ("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01),
-            ("Candle de força",             res.get("candle_bull", False)),
-        ]
+        add_check("Preço > EMA200",                res["price"] > res["ema200"], "ema200")
+        add_check("EMA9 > EMA21",                  res["ema9"] > res["ema21"], "ema9_21")
+        add_check("MACD bullish",                  bool(res.get("macd_bull")), "macd")
+        add_check("RSI entre 40-65",               40 < res["rsi"] < 65, "rsi")
+        add_check("ADX > 25",                      res["adx"] > 25, "adx")
+        add_check("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01, "bands")
+        add_check("Candle de força",               bool(res.get("candle_bull", False)), "candle")
     else:
-        checks = [
-            ("Preço < EMA200",              res["price"] < res["ema200"]),
-            ("EMA9 < EMA21",                res["ema9"]  < res["ema21"]),
-            ("MACD bearish",                res["macd_bear"]),
-            ("RSI entre 35-60",             35 < res["rsi"] < 60),
-            ("ADX > 25",                    res["adx"] > 25),
-            ("Preço perto da banda superior", res["price"] > res["upper"] * 0.99),
-            ("Candle de força",             res.get("candle_bear", False)),
-        ]
+        add_check("Preço < EMA200",                res["price"] < res["ema200"], "ema200")
+        add_check("EMA9 < EMA21",                  res["ema9"] < res["ema21"], "ema9_21")
+        add_check("MACD bearish",                  bool(res.get("macd_bear")), "macd")
+        add_check("RSI entre 35-60",               35 < res["rsi"] < 60, "rsi")
+        add_check("ADX > 25",                      res["adx"] > 25, "adx")
+        add_check("Preço perto da banda superior", res["price"] > res["upper"] * 0.99, "bands")
+        add_check("Candle de força",               bool(res.get("candle_bear", False)), "candle")
 
-    # ── SMC ──────────────────────────────────────────────────────
     fvg = res.get("fvg", {}) or {}
     ob = res.get("ob", {}) or {}
     sweep = res.get("sweep", {}) or {}
 
     if direction == "BUY":
         fvg_active = any(f.get("active") for f in fvg.get("bullish", []))
-        ob_active  = any(o.get("active") for o in ob.get("bullish", []))
-        swing_low  = sweep.get("swing_low")
+        ob_active = any(o.get("active") for o in ob.get("bullish", []))
+        swing_low = sweep.get("swing_low")
         structure_ok = swing_low is not None and price > swing_low
-
-        checks.append(("FVG Bullish ativo",       fvg_active))
-        checks.append(("Order Block Bullish",     ob_active))
-        checks.append(("Liquidity Sweep Bullish", bool(sweep.get("bullish"))))
-        checks.append(("Estrutura intacta",       structure_ok))
+        add_check("FVG Bullish ativo", fvg_active, "fvg")
+        add_check("Order Block Bullish", ob_active, "ob")
+        add_check("Liquidity Sweep Bullish", bool(sweep.get("bullish")), "sweep")
+        add_check("Estrutura intacta", structure_ok, "structure")
     else:
         fvg_active = any(f.get("active") for f in fvg.get("bearish", []))
-        ob_active  = any(o.get("active") for o in ob.get("bearish", []))
+        ob_active = any(o.get("active") for o in ob.get("bearish", []))
         swing_high = sweep.get("swing_high")
         structure_ok = swing_high is not None and price < swing_high
+        add_check("FVG Bearish ativo", fvg_active, "fvg")
+        add_check("Order Block Bearish", ob_active, "ob")
+        add_check("Liquidity Sweep Bearish", bool(sweep.get("bearish")), "sweep")
+        add_check("Estrutura intacta", structure_ok, "structure")
 
-        checks.append(("FVG Bearish ativo",       fvg_active))
-        checks.append(("Order Block Bearish",     ob_active))
-        checks.append(("Liquidity Sweep Bearish", bool(sweep.get("bearish"))))
-        checks.append(("Estrutura intacta",       structure_ok))
-
-    # ── MTF H4 ──────────────────────────────────────────────────
     if mtf:
-        checks.append(("MTF H4 alinhado", bool(mtf.get("aligned", False))))
+        add_check("MTF H4 alinhado", bool(mtf.get("aligned", False)), "mtf_aligned")
         h4 = mtf.get("h4", {}) or {}
         if h4:
             if direction == "BUY":
-                checks.append(("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf'))))
+                add_check("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float("inf")), "mtf_ema200")
             else:
-                checks.append(("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0)))
+                add_check("H4 < EMA200", h4.get("price", float("inf")) < h4.get("ema200", 0), "mtf_ema200")
 
-    score  = sum(1 for _, ok in checks if ok)
-    total  = len(checks)
-    passed = score >= Config.MIN_CONFLUENCE
-    return score, total, checks, passed, Config.MIN_CONFLUENCE
-
+    min_required = getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE)
+    passed = weighted_score >= min_required
+    return weighted_score, len(checks), checks, passed, min_required
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SL/TP BASEADOS EM SMC
@@ -249,6 +250,7 @@ def _get_smc_sl_tp(entry: float, direction: str, res: dict, mtf: dict, atr: floa
 # ═══════════════════════════════════════════════════════════════════════════════
 # SCAN PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
+
 def scan(bot):
     if bot.is_paused():
         return
@@ -263,10 +265,17 @@ def scan(bot):
     if is_weekend_gap_risk():
         return
 
-    symbols = list(Config.FXGOLD_ASSETS.keys())
-    random.shuffle(symbols)
+    ai_params = load_ai_params()
+    base_min_conf = int(ai_params.get("live_confluence", getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE)))
+    base_min_conf = max(base_min_conf, getattr(Config, "MIN_CONFLUENCE_WEIGHTED", Config.MIN_CONFLUENCE))
 
-    for sym in symbols:
+    bias = ai_params.get("strategy_bias", "balanced")
+    bias_adj = {"conservative": 2, "aggressive": -1}.get(bias, 0)
+    effective_min_conf = max(1, base_min_conf + bias_adj)
+    min_rr = float(ai_params.get("min_rr", 1.5))
+
+    candidates: list[dict] = []
+    for sym in Config.FXGOLD_ASSETS.keys():
         safe, reason = _is_safe_to_trade(bot, sym)
         if not safe:
             if reason and "Cooldown" not in reason:
@@ -285,16 +294,18 @@ def scan(bot):
             continue
 
         direction = "BUY" if res["cenario"] == "ALTA" else "SELL"
-        sc, tot_c, checks, passed, _ = calc_confluence(res, direction, mtf)
+        score, total_checks, checks, passed, _ = calc_confluence(res, direction, mtf)
         if not passed:
             continue
 
-        entry = res["price"]
-        atr = res.get("atr", 0) or 0
-
+        entry = float(res.get("price", 0) or 0)
+        atr = float(res.get("atr", 0) or 0)
         sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
         if not sl or not tp:
             log(f"[SMC] {sym}: SL/TP inválido, descartado")
+            continue
+
+        if rr < min_rr or score < effective_min_conf:
             continue
 
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
@@ -304,11 +315,12 @@ def scan(bot):
         sl_pips = round(abs(entry - sl) / pf)
         tp_pips = round(abs(tp - entry) / pf)
 
-        # ── Position sizing ──────────────────────────────────────
         eff_lev = get_dynamic_leverage(bot.balance)
-
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
-            sym, entry, sl, bot.balance,
+            sym,
+            entry,
+            sl,
+            bot.balance,
             risk_pct=Config.ATR_RISK_PCT,
             atr=atr,
             atr_mult=Config.ATR_MULT_FOR_RISK,
@@ -320,76 +332,60 @@ def scan(bot):
         risk_001_lot = dist_sl * cs_val * 0.01
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
 
-        # ── Filtro de correlação ─────────────────────────────────
         est_risk_usd = suggested_risk_usd
         if is_jpy_pair(sym):
             usdjpy = bot._usdjpy_price or 150.0
-            est_risk_usd = est_risk_usd / usdjpy
+            est_risk_usd = est_risk_usd / usdjpy if usdjpy > 0 else est_risk_usd
 
         ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
         if not ok_corr:
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
             continue
 
-        # ── Validação pela IA (parâmetros aprendidos) ────────────
-        ai_params = load_ai_params()
-        min_rr = ai_params.get("min_rr", 1.5)
-
-        base_conf = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
-        bias      = ai_params.get("strategy_bias", "balanced")
-
-        bias_adj = {"conservative": +1, "aggressive": -1}.get(bias, 0)
-        live_conf = ai_params.get("live_confluence", base_conf)
-        effective_min_conf = max(6, min(9, live_conf + bias_adj))
-
-        if sc < effective_min_conf:
-            log(
-                f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
-                f"(base={base_conf}, bias={bias}, regime={ai_params.get('live_regime','?')})"
-            )
-            continue
-
-        if rr < min_rr:
-            log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
-            continue
-
-        # ── Monta sinal pendente ─────────────────────────────────
         pend = {
-            "pending_id":           bot.next_pending_id(),
-            "symbol":               sym,
-            "name":                 Config.FXGOLD_ASSETS.get(sym, sym),
-            "dir":                  direction,
-            "entry":                entry,
-            "sl":                   sl,
-            "tp":                   tp,
-            "sl_pct":               sl_pct,
-            "tp_pct":               tp_pct,
-            "sl_pips":              sl_pips,
-            "tp_pips":              tp_pips,
-            "rr":                   rr,
-            "score":                sc,
-            "max_score":            tot_c,
-            "checks":               [{"name": nm, "ok": ok} for nm, ok in checks],
-            "min_lot_margin":       round(min_lot_margin, 2),
-            "risk_001_lot":         round(risk_001_lot, 2),
-            "risk_pct_001":         round(risk_pct_001, 2),
-            "suggested_lot":        suggested_lot,
-            "suggested_risk_usd":   suggested_risk_usd,
-            "suggested_risk_pct":   suggested_risk_pct,
-            "created_at":           datetime.now().strftime("%d/%m %H:%M"),
-            "created_ts":           time.time(),
-            "atr":                  atr,
-            "adx":                  res.get("adx", 0),
-            "mtf_aligned":          mtf.get("aligned", False),
-            "h4_cenario":           mtf.get("h4_cenario", "NEUTRO"),
-            "sl_source":            sl_src,
-            "tp_source":            tp_src,
+            "pending_id":         bot.next_pending_id(),
+            "symbol":             sym,
+            "name":               Config.FXGOLD_ASSETS.get(sym, sym),
+            "dir":                direction,
+            "entry":              entry,
+            "sl":                 sl,
+            "tp":                 tp,
+            "sl_pct":             sl_pct,
+            "tp_pct":             tp_pct,
+            "sl_pips":            sl_pips,
+            "tp_pips":            tp_pips,
+            "rr":                 rr,
+            "score":              score,
+            "max_score":          getattr(Config, "CONFLUENCE_MAX_SCORE", total_checks),
+            "checks":             [{"name": nm, "ok": ok} for nm, ok in checks],
+            "min_lot_margin":     round(min_lot_margin, 2),
+            "risk_001_lot":       round(risk_001_lot, 2),
+            "risk_pct_001":       round(risk_pct_001, 2),
+            "suggested_lot":      suggested_lot,
+            "suggested_risk_usd": suggested_risk_usd,
+            "suggested_risk_pct": suggested_risk_pct,
+            "created_at":         datetime.now().strftime("%d/%m %H:%M"),
+            "created_ts":         time.time(),
+            "atr":                atr,
+            "adx":                res.get("adx", 0),
+            "mtf_aligned":        mtf.get("aligned", False),
+            "h4_cenario":         mtf.get("h4_cenario", "NEUTRO"),
+            "sl_source":          sl_src,
+            "tp_source":          tp_src,
         }
+        candidates.append({"score": score, "rr": rr, "pend": pend, "mtf": mtf})
 
-        # ── Validação pela IA (camada 1) ─────────────────────────
+    if not candidates:
+        return
+
+    candidates.sort(key=lambda c: (c["score"], c["rr"], c["pend"]["suggested_risk_pct"]), reverse=True)
+
+    for cand in candidates:
+        pend = cand["pend"]
+        mtf = cand["mtf"]
         approved, ai_reason = validate_signal(pend, mtf, bot)
         if not approved:
-            log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
+            log(f"[AI] {pend['symbol']} {pend['dir']} rejeitado: {ai_reason}")
             continue
 
         ai_confidence = 0
@@ -399,14 +395,11 @@ def scan(bot):
         except (ValueError, IndexError):
             pass
 
-        pend["ai_reason"]     = ai_reason
-        pend["ai_approved"]   = True
+        pend["ai_reason"] = ai_reason
+        pend["ai_approved"] = True
         pend["ai_confidence"] = ai_confidence
-
         bot.add_pending(pend)
-        break  # gera 1 sinal por scan
-
-
+        return
 # ═══════════════════════════════════════════════════════════════════════════════
 # SNAPSHOT DE CONFLUÊNCIA (dashboard/telegram)
 # ═══════════════════════════════════════════════════════════════════════════════
