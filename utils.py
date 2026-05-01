@@ -1,4 +1,6 @@
 from datetime import datetime
+import json
+import os
 from config import Config
 
 def fmt(value: float) -> str:
@@ -15,6 +17,54 @@ def log(msg: str):
 
 def asset_name(symbol):
     return Config.FXGOLD_ASSETS.get(symbol, symbol)
+
+ASSET_SETTINGS_FILE = "asset_settings.json"
+
+
+def _default_selected_symbols() -> list[str]:
+    return list(Config.FXGOLD_ASSETS.keys())
+
+
+def load_asset_settings() -> dict:
+    defaults = {
+        "selected_symbols": _default_selected_symbols(),
+        "updated_at": None,
+    }
+    if not os.path.exists(ASSET_SETTINGS_FILE):
+        return defaults
+    try:
+        with open(ASSET_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+        selected = stored.get("selected_symbols")
+        if not isinstance(selected, list) or not selected:
+            selected = _default_selected_symbols()
+        cleaned = [s for s in selected if s in Config.FXGOLD_ASSETS]
+        if not cleaned:
+            cleaned = _default_selected_symbols()
+        return {**defaults, **stored, "selected_symbols": cleaned}
+    except Exception as e:
+        log(f"[ASSETS] Erro ao carregar asset_settings.json: {e}")
+        return defaults
+
+
+def save_asset_settings(selected_symbols: list[str]) -> dict:
+    cleaned = [s for s in selected_symbols if s in Config.FXGOLD_ASSETS]
+    if not cleaned:
+        cleaned = _default_selected_symbols()
+    data = {
+        "selected_symbols": cleaned,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    tmp = ASSET_SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, ASSET_SETTINGS_FILE)
+    return data
+
+
+def get_selected_symbols() -> list[str]:
+    return load_asset_settings()["selected_symbols"]
+
 
 def is_jpy_pair(symbol):
     return symbol.endswith("JPY")
@@ -88,6 +138,10 @@ def get_allowed_symbols(balance):
     for tier in sorted(Config.ASSET_TIERS.keys()):
         if balance >= Config.ASSET_TIERS[tier]["min_balance"]:
             allowed = Config.ASSET_TIERS[tier]["symbols"]
+
+    selected = set(get_selected_symbols())
+    if selected:
+        allowed = [sym for sym in allowed if sym in selected]
     return allowed
 
 def get_max_risk_absolute(balance):

@@ -39,6 +39,10 @@ _RATE_LIMIT  = 12
 _RATE_WINDOW = 60
 _call_times: deque = deque()
 
+_AI_DISABLED_UNTIL = 0.0
+_SIGNAL_CACHE: dict[str, tuple[float, tuple[bool, str]]] = {}
+_SIGNAL_CACHE_TTL = 900  # 15 min
+
 
 def _rate_limit_wait():
     """Bloqueia até haver espaço na janela deslizante de 60s."""
@@ -56,6 +60,11 @@ def _rate_limit_wait():
             _call_times.popleft()
 
     _call_times.append(time.time())
+
+
+def _fallback_ai_response(h1: dict, direction: str) -> tuple[int, str]:
+    score, reason = _get_technical_score(h1, direction)
+    return score, f"Técnico {score}/10: {reason}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -115,8 +124,9 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
     Chamada ao Gemini com retry automático e rate limiting.
     Retorna string com a resposta, ou None se falhar após retries.
     """
+    global _AI_DISABLED_UNTIL
     api_key = _get_api_key()
-    if not api_key:
+    if not api_key or time.time() < _AI_DISABLED_UNTIL:
         return None
 
     url  = _GEMINI_URL.format(model=_MODEL_FLASH)
@@ -149,6 +159,7 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
                 continue
             text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
             if text:
+                _AI_DISABLED_UNTIL = 0.0
                 return text
             log(f"[AI] Gemini retornou texto vazio (tentativa {attempt+1}/3)")
 
@@ -168,6 +179,7 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
                 wait = 65 + (attempt * 30)
                 log(f"[AI] Gemini 429 — aguardando {wait}s")
                 _call_times.clear()
+                _AI_DISABLED_UNTIL = time.time() + 900
                 time.sleep(wait)
             elif status >= 500:
                 log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/3)")
@@ -343,8 +355,30 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     h1        = indicators.get("h1") or indicators
     direction = signal.get("dir") or signal.get("direction") or "BUY"
     sym       = signal.get("symbol", "?")
-    sweep     = h1.get("sweep", {}) or {}
+    score_key = f"{sym}|{direction}|{signal.get('entry')}|{signal.get('sl')}|{signal.get('tp')}|{signal.get('score')}|{signal.get('max_score')}"
 
+    cached = _SIGNAL_CACHE.get(score_key)
+    if cached and (time.time() - cached[0]) < _SIGNAL_CACHE_TTL:
+        return cached[1]
+
+    ai_params = load_ai_params()
+    live_min_conf = int(ai_params.get("live_confluence", 7))
+    score_floor = max(7, live_min_conf + 1)
+    api_disabled = time.time() < _AI_DISABLED_UNTIL
+
+    use_ai = bool(api_key and not api_disabled and int(signal.get("score", 0) or 0) >= score_floor)
+
+    if not use_ai:
+        tech_score, tech_reason = _fallback_ai_response(h1, direction)
+        result = (True, tech_reason)
+        _SIGNAL_CACHE[score_key] = (time.time(), result)
+        if api_disabled:
+            log(f"[AI] {sym} {direction} → fallback técnico ({tech_reason})")
+        else:
+            log(f"[AI] {sym} {direction} → score técnico {tech_score}/10 (heurística)")
+        return result
+
+    sweep     = h1.get("sweep", {}) or {}
     fvg_active = any(
         f.get("active") for f in
         (h1.get("fvg", {}) or {}).get("bullish" if direction == "BUY" else "bearish", [])
@@ -361,17 +395,9 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     )
     last_results = [h["result"] for h in pair_history[-5:]]
 
-    ai_params   = load_ai_params()
     regime_info = ai_params.get("regime_pairs", {}).get(sym, ai_params.get("market_regime", "neutral"))
     bias        = ai_params.get("strategy_bias", "balanced")
 
-    # Sem chave de API — usa score técnico
-    if not api_key:
-        tech_score, tech_reason = _get_technical_score(h1, direction)
-        log(f"[AI] {sym} {direction} → score técnico {tech_score}/10 (sem API key)")
-        return True, f"Técnico {tech_score}/10: {tech_reason}"
-
-    # Monta contexto rico para o Gemini
     user_msg = f"""
 Par: {sym} | Direção: {direction}
 Entrada: {signal.get('entry')} | SL: {signal.get('sl')} | TP: {signal.get('tp')}
@@ -403,17 +429,20 @@ Histórico recente do par ({len(pair_history)} trades):
     raw    = _call_gemini(_SCORER_SYSTEM, user_msg, max_tokens=100, timeout=15)
     result = _parse_json(raw, context=f"{sym} {direction}")
 
-    # Fallback técnico se Gemini falhar
     if result is None:
-        tech_score, tech_reason = _get_technical_score(h1, direction)
+        tech_score, tech_reason = _fallback_ai_response(h1, direction)
+        result_tuple = (True, f"Técnico {tech_score}/10: {tech_reason}")
+        _SIGNAL_CACHE[score_key] = (time.time(), result_tuple)
         log(f"[AI] {sym} {direction} → fallback técnico {tech_score}/10 (Gemini indisponível)")
-        return True, f"Técnico {tech_score}/10: {tech_reason}"
+        return result_tuple
 
     confidence = max(1, min(10, int(result.get("confidence", 5))))
     reason     = result.get("reason", "sem análise")
+    final = (True, f"{reason}")
+    _SIGNAL_CACHE[score_key] = (time.time(), final)
 
     log(f"[AI] {sym} {direction} → confiança {confidence}/10: {reason}")
-    return True, f"{reason}"
+    return final
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

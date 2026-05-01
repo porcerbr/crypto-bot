@@ -16,6 +16,9 @@ from utils import (
     calc_pnl_pips,
     pip_factor,
     is_jpy_pair,
+    get_allowed_symbols,
+    get_selected_symbols,
+    save_asset_settings,
 )
 
 
@@ -123,7 +126,7 @@ def create_api(bot):
         wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
 
         # Seguran\u00e7a din\u00e2mica + drawdown
-        from utils import get_dynamic_leverage, get_dynamic_max_trades, get_allowed_symbols
+        from utils import get_dynamic_leverage, get_dynamic_max_trades
         from db import calculate_metrics
 
         try:
@@ -157,6 +160,7 @@ def create_api(bot):
             "dynamic_leverage":    get_dynamic_leverage(bot.balance),
             "max_trades_allowed":  get_dynamic_max_trades(bot.balance),
             "allowed_symbols":     get_allowed_symbols(bot.balance),
+            "selected_symbols":    get_selected_symbols(),
             "consecutive_losses":  bot.consecutive_losses,
 
             # Drawdown \u2014 exigido pelo dashboard
@@ -167,6 +171,40 @@ def create_api(bot):
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     # PENDENTES
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    @app.route("/api/assets", methods=["GET", "POST"])
+    def assets():
+        from config import Config
+
+        if request.method == "GET":
+            allowed = set(get_allowed_symbols(bot.balance))
+            selected = set(get_selected_symbols())
+            data = []
+            for sym, label in Config.FXGOLD_ASSETS.items():
+                data.append({
+                    "symbol": sym,
+                    "name": label,
+                    "selected": sym in selected,
+                    "allowed": sym in allowed,
+                })
+            return jsonify({
+                "assets": data,
+                "selected_symbols": list(selected),
+                "allowed_symbols": list(allowed),
+            })
+
+        data = request.get_json(force=True) or {}
+        selected = data.get("selected_symbols")
+        if not isinstance(selected, list):
+            return jsonify({"ok": False, "message": "selected_symbols inválido"}), 400
+
+        saved = save_asset_settings(selected)
+        return jsonify({
+            "ok": True,
+            "message": "Ativos atualizados",
+            "selected_symbols": saved["selected_symbols"],
+        })
+
+
     @app.route("/api/pending")
     def pending():
         return jsonify(bot.pending_trades)
@@ -297,7 +335,6 @@ def create_api(bot):
     def confluence():
         try:
             from signals import get_confluence_snapshot
-            from utils import get_allowed_symbols
             snapshot = get_confluence_snapshot()
             allowed  = get_allowed_symbols(bot.balance)
             for item in snapshot:

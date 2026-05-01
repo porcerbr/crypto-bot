@@ -315,7 +315,7 @@ def scan(bot):
     if weekend:
         return
 
-    symbols = list(Config.FXGOLD_ASSETS.keys())
+    symbols = list(get_allowed_symbols(bot.balance))
     random.shuffle(symbols)
 
     for sym in symbols:

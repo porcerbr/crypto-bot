@@ -670,6 +670,9 @@
         <div class="nav-item" onclick="showPage('signals')">
             <span class="icon">🎯</span> Sinais
         </div>
+        <div class="nav-item" onclick="showPage('assets')">
+            <span class="icon">🧩</span> Ativos
+        </div>
         <div class="nav-item" onclick="showPage('confluence')">
             <span class="icon">🔥</span> Confluência
         </div>
@@ -806,6 +809,25 @@
             </div>
         </div>
 
+        <!-- ══ ATIVOS ════════════════════════════════════════════ -->
+        <div id="page-assets" class="page">
+            <div class="page-title">Seleção de Ativos</div>
+
+            <div class="card" style="margin-bottom:16px">
+                <div class="section-header">
+                    <div class="section-title">Universo operável</div>
+                    <div style="font-size:11px;color:var(--muted)" id="assets-summary">Carregando...</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+                    <button class="btn primary" onclick="selectAllAssets()">Selecionar todos</button>
+                    <button class="btn" onclick="clearAllAssets()">Limpar todos</button>
+                    <button class="btn" onclick="loadAssets()">Recarregar</button>
+                    <button class="btn success" onclick="saveAssets()">Salvar seleção</button>
+                </div>
+                <div id="assets-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px"></div>
+            </div>
+        </div>
+
         <!-- ══ CONFLUÊNCIA ══════════════════════════════════════ -->
         <div id="page-confluence" class="page">
             <div class="page-title">Confluência ao Vivo
@@ -903,15 +925,17 @@
     let lastBalance = 150;
     let activeData  = [];
     let aiParams    = {};
+    let assetData    = [];
 
     // ── Navegação ───────────────────────────────────────────────
     function showPage(name) {
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-        document.getElementById('page-' + name).classList.add('active');
+        const target = document.getElementById('page-' + name);
+        if (target) target.classList.add('active');
         document.querySelectorAll('.nav-item').forEach(n => {
-            if (n.textContent.trim().toLowerCase().includes(name === 'overview' ? 'visão' : name === 'trades' ? 'trade' : name === 'signals' ? 'sinal' : name === 'confluence' ? 'confluê' : name === 'history' ? 'histó' : 'ia'))
-                n.classList.add('active');
+            const on = n.getAttribute('onclick') || '';
+            if (on.includes(`showPage('${name}')`)) n.classList.add('active');
         });
     }
 
@@ -976,7 +1000,7 @@
 
             // Badge
             const badge = document.getElementById('status-text');
-            badge.textContent = d.is_paused ? 'Pausado' : 'Operando';
+            badge.textContent = (d.paused ?? d.is_paused) ? 'Pausado' : 'Operando';
 
             // Stats
             document.getElementById('balance').textContent = '$' + fmtNum(d.balance);
@@ -1135,6 +1159,81 @@
                 </div>
             </div>`;
         }).join('');
+    }
+
+    // ── Assets ──────────────────────────────────────────────────
+    async function loadAssets() {
+        try {
+            const r = await fetch(API + '/assets');
+            if (!r.ok) return;
+            const d = await r.json();
+            assetData = d.assets || [];
+            renderAssets();
+        } catch(e) {
+            console.error('loadAssets', e);
+        }
+    }
+
+    function renderAssets() {
+        const grid = document.getElementById('assets-grid');
+        const summary = document.getElementById('assets-summary');
+        const total = assetData.length;
+        const selected = assetData.filter(a => a.selected).length;
+        const allowed = assetData.filter(a => a.allowed).length;
+        summary.textContent = `${selected}/${total} selecionados | ${allowed} liberados pela banca`;
+
+        if (!assetData.length) {
+            grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📭</div>Nenhum ativo carregado.</div>';
+            return;
+        }
+
+        grid.innerHTML = assetData.map(a => {
+            const disabled = a.allowed ? '' : 'opacity:0.45;filter:grayscale(1)';
+            return `
+            <label style="display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:16px;background:var(--panel);${disabled}">
+                <input type="checkbox" data-symbol="${a.symbol}" ${a.selected ? 'checked' : ''} ${a.allowed ? '' : 'disabled'} style="transform:scale(1.1)">
+                <div style="flex:1">
+                    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+                        <strong style="font-family:'Space Mono',monospace">${a.symbol}</strong>
+                        ${a.allowed ? '<span class="chip green">OK</span>' : '<span class="chip amber">Bloqueado</span>'}
+                    </div>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px">${a.name}</div>
+                </div>
+            </label>`;
+        }).join('');
+    }
+
+    function selectAllAssets() {
+        assetData = assetData.map(a => a.allowed ? {...a, selected: true} : a);
+        renderAssets();
+    }
+
+    function clearAllAssets() {
+        assetData = assetData.map(a => ({...a, selected: false}));
+        renderAssets();
+    }
+
+    async function saveAssets() {
+        try {
+            const selected = [...document.querySelectorAll('#assets-grid input[type="checkbox"]:checked')]
+                .map(el => el.getAttribute('data-symbol'));
+            const r = await fetch(API + '/assets', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ selected_symbols: selected })
+            });
+            const d = await r.json();
+            if (d.ok) {
+                toast('Seleção de ativos salva');
+                await loadAssets();
+                await fetchStatus();
+                await fetchConfluence();
+            } else {
+                toast(d.message || 'Erro ao salvar ativos', 'err');
+            }
+        } catch(e) {
+            toast('Erro ao salvar ativos', 'err');
+        }
     }
 
     // ── Fetch AI params ──────────────────────────────────────────
@@ -1446,6 +1545,7 @@
     fetchStatus();
     fetchPending();
     fetchHistory();
+    loadAssets();
     fetchAI();
     fetchConfluence();
     updateTime();
@@ -1454,6 +1554,7 @@
         fetchStatus();
         fetchPending();
         fetchHistory();
+        loadAssets();
         fetchAI();
         fetchConfluence();
         updateTime();
