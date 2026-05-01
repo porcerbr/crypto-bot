@@ -19,6 +19,10 @@ from utils import (
     get_allowed_symbols,
     get_selected_symbols,
     save_asset_settings,
+    load_trade_settings,
+    save_trade_settings,
+    get_trade_limit_override,
+    get_dynamic_max_trades,
 )
 
 
@@ -156,8 +160,8 @@ def create_api(bot):
         total = bot.wins + bot.losses
         wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
 
-        # Seguran\u00e7a din\u00e2mica + drawdown
-        from utils import get_dynamic_leverage, get_dynamic_max_trades
+        # Segurança dinâmica + drawdown
+        from utils import get_dynamic_leverage
         from db import calculate_metrics
 
         try:
@@ -167,6 +171,10 @@ def create_api(bot):
         except Exception:
             drawdown_pct = 0
             max_drawdown_pct = 0
+
+        max_trades_allowed = get_dynamic_max_trades(bot.balance)
+        max_trades_override = get_trade_limit_override()
+        trade_limit_source = "auto" if max_trades_override is None else "manual"
 
         return jsonify({
             # Trades
@@ -187,21 +195,21 @@ def create_api(bot):
             "paused":              bot.is_paused(),
             "signal_only":         Config.BOT_IS_SIGNAL_ONLY,
 
-            # Seguran\u00e7a din\u00e2mica
+            # Segurança dinâmica
             "dynamic_leverage":    get_dynamic_leverage(bot.balance),
-            "max_trades_allowed":  get_dynamic_max_trades(bot.balance),
+            "max_trades_allowed":  max_trades_allowed,
+            "max_trades_default":  Config.MAX_TRADES,
+            "max_trades_override": max_trades_override,
+            "max_trades_source":   trade_limit_source,
             "allowed_symbols":     get_allowed_symbols(bot.balance),
             "selected_symbols":    get_selected_symbols(),
             "consecutive_losses":  bot.consecutive_losses,
 
-            # Drawdown \u2014 exigido pelo dashboard
+            # Drawdown — exigido pelo dashboard
             "drawdown_pct":        drawdown_pct,
             "max_drawdown_pct":    max_drawdown_pct,
         })
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # PENDENTES
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/assets", methods=["GET", "POST"])
     def assets():
         from config import Config
@@ -235,6 +243,42 @@ def create_api(bot):
             "selected_symbols": saved["selected_symbols"],
         })
 
+
+    @app.route("/api/trade-settings", methods=["GET", "POST"])
+    def trade_settings():
+        if request.method == "GET":
+            settings = load_trade_settings()
+            return jsonify({
+                "ok": True,
+                "settings": settings,
+                "max_active_trades": settings.get("max_active_trades"),
+                "mode": "auto" if settings.get("max_active_trades") is None else "manual",
+                "default_max_active_trades": Config.MAX_TRADES,
+                "max_manual_active_trades": 10,
+            })
+
+        data = request.get_json(force=True) or {}
+        raw = data.get("max_active_trades", data.get("trade_limit"))
+
+        if raw in (None, "", "auto", "AUTO"):
+            saved = save_trade_settings(None)
+        else:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "message": "max_active_trades inválido"}), 400
+            saved = save_trade_settings(value)
+
+        current = saved.get("max_active_trades")
+        return jsonify({
+            "ok": True,
+            "message": "Limite de trades atualizado",
+            "settings": saved,
+            "max_active_trades": current,
+            "mode": "auto" if current is None else "manual",
+            "default_max_active_trades": Config.MAX_TRADES,
+            "max_manual_active_trades": 10,
+        })
 
     @app.route("/api/pending")
     def pending():

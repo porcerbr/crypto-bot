@@ -65,6 +65,63 @@ def save_asset_settings(selected_symbols: list[str]) -> dict:
 def get_selected_symbols() -> list[str]:
     return load_asset_settings()["selected_symbols"]
 
+TRADE_SETTINGS_FILE = "trade_settings.json"
+MAX_MANUAL_ACTIVE_TRADES = 10
+
+
+def load_trade_settings() -> dict:
+    defaults = {
+        "max_active_trades": None,  # None = modo Auto
+        "updated_at": None,
+    }
+    if not os.path.exists(TRADE_SETTINGS_FILE):
+        return defaults
+    try:
+        with open(TRADE_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+        raw = stored.get("max_active_trades")
+        if raw in (None, "", "auto", "AUTO"):
+            max_active = None
+        else:
+            try:
+                max_active = int(raw)
+            except (TypeError, ValueError):
+                max_active = None
+        if max_active is not None:
+            max_active = max(1, min(max_active, MAX_MANUAL_ACTIVE_TRADES))
+        return {**defaults, **stored, "max_active_trades": max_active}
+    except Exception as e:
+        log(f"[TRADES] Erro ao carregar trade_settings.json: {e}")
+        return defaults
+
+
+def save_trade_settings(max_active_trades) -> dict:
+    if max_active_trades in (None, "", "auto", "AUTO"):
+        cleaned = None
+    else:
+        try:
+            cleaned = int(max_active_trades)
+        except (TypeError, ValueError):
+            cleaned = None
+
+    if cleaned is not None:
+        cleaned = max(1, min(cleaned, MAX_MANUAL_ACTIVE_TRADES))
+
+    data = {
+        "max_active_trades": cleaned,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    tmp = TRADE_SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, TRADE_SETTINGS_FILE)
+    return data
+
+
+def get_trade_limit_override():
+    return load_trade_settings()["max_active_trades"]
+
+
 
 def is_jpy_pair(symbol):
     return symbol.endswith("JPY")
@@ -127,6 +184,10 @@ def get_dynamic_leverage(balance):
 
 def get_dynamic_max_trades(balance):
     """Retorna máximo de trades ativos permitidos para o capital atual."""
+    override = get_trade_limit_override()
+    if override is not None:
+        return override
+
     for threshold, max_t in sorted(Config.DYNAMIC_MAX_TRADES.items()):
         if balance <= threshold:
             return max_t

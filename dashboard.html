@@ -51,6 +51,8 @@
     .success{background:linear-gradient(180deg,#1fa971,#15845a)}
     .danger{background:linear-gradient(180deg,#e25b5b,#b83c3c)}
     .ghost{background:rgba(255,255,255,.04);border:1px solid var(--line)}
+    .control{width:100%;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font:inherit;outline:none}
+    .control:focus{border-color:rgba(47,107,255,.7);box-shadow:0 0 0 3px rgba(47,107,255,.14)}
     input[type="checkbox"]{transform:scale(1.15)}
     .muted{color:var(--muted)}
     .list{display:grid;gap:10px}
@@ -136,6 +138,33 @@
 
         <div class="card">
           <div class="toolbar" style="justify-content:space-between">
+            <h2>Limite de trades ativos</h2>
+            <span class="tag blue" id="trade-limit-mode">Auto</span>
+          </div>
+          <div class="tiny" style="margin-bottom:10px">Controle quantos trades podem ficar abertos ao mesmo tempo. O modo Auto usa o limite dinâmico por banca.</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <select id="trade-limit-select" class="control" style="max-width:260px">
+              <option value="auto">Auto (dinâmico)</option>
+              <option value="1">1 trade ativo</option>
+              <option value="2">2 trades ativos</option>
+              <option value="3">3 trades ativos</option>
+              <option value="4">4 trades ativos</option>
+              <option value="5">5 trades ativos</option>
+              <option value="6">6 trades ativos</option>
+              <option value="7">7 trades ativos</option>
+              <option value="8">8 trades ativos</option>
+              <option value="9">9 trades ativos</option>
+              <option value="10">10 trades ativos</option>
+            </select>
+            <button class="primary" id="btn-save-trade-limit">Salvar limite</button>
+          </div>
+          <div class="tiny" style="margin-top:10px">
+            Atual: <strong id="trade-limit-current">—</strong> • Limite padrão: <strong id="trade-limit-default">—</strong>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
             <h2>Trades ativos</h2>
             <span class="tag blue" id="allowed-symbols">—</span>
           </div>
@@ -205,7 +234,7 @@
 
 <script>
 const API = '/api';
-const state = { assets: [], selected: [], allowed: [], ai: {}, status: {}, confluence: [], logs: [] };
+const state = { assets: [], selected: [], allowed: [], ai: {}, status: {}, confluence: [], logs: [], tradeSettings: {} };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '')
@@ -276,6 +305,11 @@ function renderStatus(status){
   $('pending-count').textContent = status.pending_count ?? 0;
   $('max-trades').textContent = status.max_trades_allowed ?? '—';
   $('mode').textContent = status.signal_only ? 'Signal only' : 'Live';
+  $('trade-limit-current').textContent = (status.max_trades_override === null || status.max_trades_override === undefined)
+    ? 'Auto'
+    : String(status.max_trades_override);
+  $('trade-limit-default').textContent = String(status.max_trades_default ?? '—');
+  $('trade-limit-mode').textContent = status.max_trades_source === 'manual' ? 'Manual' : 'Auto';
   $('timeframe').textContent = status.timeframe || '—';
   $('allowed-symbols').textContent = `${(status.allowed_symbols || []).length} liberados`;
   $('wins-tag').textContent = `${status.wins || 0}W`;
@@ -342,6 +376,39 @@ async function saveAssets(){
     return;
   }
   setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar ativos');
+}
+
+async function loadTradeSettings(){
+  const res = await requestJSON(API + '/trade-settings');
+  if (!res.ok || !res.data){
+    $('trade-limit-current').textContent = 'Auto';
+    $('trade-limit-default').textContent = '—';
+    $('trade-limit-mode').textContent = 'Auto';
+    $('trade-limit-select').value = 'auto';
+    return;
+  }
+  const s = res.data || {};
+  state.tradeSettings = s.settings || {};
+  const current = s.max_active_trades;
+  $('trade-limit-select').value = current === null || current === undefined ? 'auto' : String(current);
+  $('trade-limit-current').textContent = current === null || current === undefined ? 'Auto' : `${current}`;
+  $('trade-limit-default').textContent = `${s.default_max_active_trades ?? '—'}`;
+  $('trade-limit-mode').textContent = s.mode === 'manual' ? 'Manual' : 'Auto';
+}
+
+async function saveTradeSettings(){
+  const value = $('trade-limit-select').value;
+  const payload = { max_active_trades: value === 'auto' ? null : Number(value) };
+  const res = await requestJSON(API + '/trade-settings', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  if (res.ok){
+    setError('');
+    await refreshAll();
+    return;
+  }
+  setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar limite de trades');
 }
 
 function renderActiveTrades(list){
@@ -510,6 +577,7 @@ async function refreshAll(){
   try { await loadHealth(); } catch (e) { errors.push(`health: ${e.message}`); }
   try { await loadStatus(); } catch (e) { errors.push(`status: ${e.message}`); }
   try { await loadAssets(); } catch (e) { errors.push(`assets: ${e.message}`); }
+  try { await loadTradeSettings(); } catch (e) { errors.push(`tradeSettings: ${e.message}`); }
   try { await loadAI(); } catch (e) { errors.push(`ai: ${e.message}`); }
   try { await loadConfluence(); } catch (e) { errors.push(`confluence: ${e.message}`); }
   try { await loadPending(); } catch (e) { errors.push(`pending: ${e.message}`); }
@@ -525,6 +593,7 @@ async function refreshAll(){
 
 $('btn-refresh').addEventListener('click', refreshAll);
 $('btn-save-assets').addEventListener('click', saveAssets);
+$('btn-save-trade-limit').addEventListener('click', saveTradeSettings);
 
 refreshAll();
 setInterval(refreshAll, 15000);
