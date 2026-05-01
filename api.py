@@ -83,7 +83,11 @@ def create_api(bot):
 
     def _dashboard_response():
         html = _load_dashboard_html()
-        return Response(html, content_type="text/html; charset=utf-8")
+        resp = Response(html, content_type="text/html; charset=utf-8")
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
 
     @app.route("/")
     @app.route("/dashboard")
@@ -93,115 +97,129 @@ def create_api(bot):
 
     @app.route("/api/status")
     def status():
-        usdjpy = _get_usdjpy_price()
-        active = []
+        """
+        Status principal da dashboard.
 
-        for t in bot.active_trades:
-            sym   = t["symbol"]
-            entry = t["entry"]
-            sl    = t["sl"]
-            tp    = t["tp"]
-            lot   = t.get("lot", 0.01)
-            direction = t.get("dir") or t.get("direction") or t.get("direc", "—")
-            margin = t.get("margin_required", 0)
-
-            cur_price = _get_cached_price(sym, entry)
-            pf = pip_factor(sym)
-
-            # P&L unificado (mesma fun\u00e7\u00e3o usada em bot.close_trade)
-            pnl_usd = round(
-                calc_pnl_usd(sym, direction, entry, cur_price, lot, usdjpy_price=usdjpy),
-                2,
-            )
-            pnl_pips = calc_pnl_pips(sym, direction, entry, cur_price)
-            pnl_pct  = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
-
-            # Dist\u00e2ncias em pips (sempre positivas)
-            sl_dist_pips = round(abs(cur_price - sl) / pf, 1)
-            tp_dist_pips = round(abs(tp - cur_price) / pf, 1)
-
-            # Progresso at\u00e9 TP (0\u2013100%), considerando dire\u00e7\u00e3o
-            total_range = abs(tp - entry)
-            if direction == "BUY":
-                moved = max(0, cur_price - entry)
-            else:
-                moved = max(0, entry - cur_price)
-            tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0.0
-
-            active.append({
-                "symbol":             sym,
-                "name":               t.get("name", ""),
-                "dir":                direction,
-                "entry":              entry,
-                "sl":                 sl,
-                "tp":                 tp,
-                "lot":                lot,
-                "margin_required":    margin,
-                "current_price":      cur_price,
-                "pnl":                pnl_usd,
-                "pnl_pct":            pnl_pct,
-                "pnl_pips":           pnl_pips,
-                "sl_dist_pips":       sl_dist_pips,
-                "tp_dist_pips":       tp_dist_pips,
-                "tp_progress":        tp_progress,
-                "opened_at":          t.get("opened_at", ""),
-                "effective_leverage": t.get("effective_leverage", bot.leverage),
-                "trailing_activated": t.get("trailing_activated", False),
-                "score":              t.get("score", 0),
-                "score_total":        t.get("score_total", 0),
-                "rr":                 t.get("rr", 0),
-                "ai_confidence":      t.get("ai_confidence", 0),
-            })
-
-        total = bot.wins + bot.losses
-        wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
-
-        # Seguran\u00e7a din\u00e2mica + drawdown
-        from utils import get_dynamic_leverage, get_dynamic_max_trades
-        from db import calculate_metrics
-
+        O endpoint é defensivo: se houver um trade incompleto, um cálculo de P&L
+        inválido ou um valor ausente, ele devolve o restante dos dados em vez de
+        derrubar a tela inteira.
+        """
         try:
-            metrics = calculate_metrics(bot)
-            drawdown_pct = metrics.get("drawdown_pct", 0)
-            max_drawdown_pct = metrics.get("max_drawdown_pct", 0)
-        except Exception:
-            drawdown_pct = 0
-            max_drawdown_pct = 0
+            usdjpy = _get_usdjpy_price()
+            active = []
 
-        return jsonify({
-            # Trades
-            "active_trades":       active,
-            "pending_count":       len(bot.pending_trades),
+            for t in getattr(bot, "active_trades", []) or []:
+                sym = t.get("symbol", "—")
+                entry = float(t.get("entry", 0) or 0)
+                sl = float(t.get("sl", entry) or entry)
+                tp = float(t.get("tp", entry) or entry)
+                lot = float(t.get("lot", 0.01) or 0.01)
+                direction = t.get("dir") or t.get("direction") or t.get("direc", "—")
+                margin = float(t.get("margin_required", 0) or 0)
 
-            # Conta (simulada)
-            "balance":             round(bot.balance, 2),
-            "initial_balance":     Config.INITIAL_BALANCE,
-            "leverage":            bot.get_current_leverage(),
-            "winrate":             wr,
-            "wins":                bot.wins,
-            "losses":              bot.losses,
+                cur_price = _get_cached_price(sym, entry)
+                pf = pip_factor(sym)
 
-            # Modo / status
-            "mode":                bot.mode,
-            "timeframe":           bot.timeframe,
-            "paused":              bot.is_paused(),
-            "signal_only":         Config.BOT_IS_SIGNAL_ONLY,
+                pnl_usd = round(calc_pnl_usd(sym, direction, entry, cur_price, lot, usdjpy_price=usdjpy), 2)
+                pnl_pips = calc_pnl_pips(sym, direction, entry, cur_price)
+                pnl_pct = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
 
-            # Seguran\u00e7a din\u00e2mica
-            "dynamic_leverage":    get_dynamic_leverage(bot.balance),
-            "max_trades_allowed":  get_dynamic_max_trades(bot.balance),
-            "allowed_symbols":     get_allowed_symbols(bot.balance),
-            "selected_symbols":    get_selected_symbols(),
-            "consecutive_losses":  bot.consecutive_losses,
+                sl_dist_pips = round(abs(cur_price - sl) / pf, 1) if pf else 0.0
+                tp_dist_pips = round(abs(tp - cur_price) / pf, 1) if pf else 0.0
 
-            # Drawdown \u2014 exigido pelo dashboard
-            "drawdown_pct":        drawdown_pct,
-            "max_drawdown_pct":    max_drawdown_pct,
-        })
+                total_range = abs(tp - entry)
+                if direction == "BUY":
+                    moved = max(0, cur_price - entry)
+                else:
+                    moved = max(0, entry - cur_price)
+                tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0.0
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # PENDENTES
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+                active.append({
+                    "symbol": sym,
+                    "name": t.get("name", ""),
+                    "dir": direction,
+                    "entry": entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "lot": lot,
+                    "margin_required": margin,
+                    "current_price": cur_price,
+                    "pnl": pnl_usd,
+                    "pnl_pct": pnl_pct,
+                    "pnl_pips": pnl_pips,
+                    "sl_dist_pips": sl_dist_pips,
+                    "tp_dist_pips": tp_dist_pips,
+                    "tp_progress": tp_progress,
+                    "opened_at": t.get("opened_at", ""),
+                    "effective_leverage": t.get("effective_leverage", bot.leverage),
+                    "trailing_activated": t.get("trailing_activated", False),
+                    "score": t.get("score", 0),
+                    "score_total": t.get("score_total", 0),
+                    "rr": t.get("rr", 0),
+                    "ai_confidence": t.get("ai_confidence", 0),
+                })
+
+            total = bot.wins + bot.losses
+            wr = round(bot.wins / total * 100, 1) if total > 0 else 0
+
+            from utils import get_dynamic_leverage, get_dynamic_max_trades
+            from db import calculate_metrics
+
+            try:
+                metrics = calculate_metrics(bot)
+                drawdown_pct = metrics.get("drawdown_pct", 0)
+                max_drawdown_pct = metrics.get("max_drawdown_pct", 0)
+            except Exception:
+                drawdown_pct = 0
+                max_drawdown_pct = 0
+
+            return jsonify({
+                "ok": True,
+                "active_trades": active,
+                "pending_count": len(getattr(bot, "pending_trades", []) or []),
+                "balance": round(getattr(bot, "balance", 0), 2),
+                "initial_balance": Config.INITIAL_BALANCE,
+                "leverage": bot.get_current_leverage(),
+                "winrate": wr,
+                "wins": getattr(bot, "wins", 0),
+                "losses": getattr(bot, "losses", 0),
+                "mode": getattr(bot, "mode", "—"),
+                "timeframe": getattr(bot, "timeframe", "—"),
+                "paused": bot.is_paused(),
+                "signal_only": Config.BOT_IS_SIGNAL_ONLY,
+                "dynamic_leverage": get_dynamic_leverage(getattr(bot, "balance", 0)),
+                "max_trades_allowed": get_dynamic_max_trades(getattr(bot, "balance", 0)),
+                "allowed_symbols": get_allowed_symbols(getattr(bot, "balance", 0)),
+                "selected_symbols": get_selected_symbols(),
+                "consecutive_losses": getattr(bot, "consecutive_losses", 0),
+                "drawdown_pct": drawdown_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "active_trades": [],
+                "pending_count": 0,
+                "balance": round(getattr(bot, "balance", 0), 2),
+                "initial_balance": Config.INITIAL_BALANCE,
+                "leverage": getattr(bot, "leverage", 0),
+                "winrate": 0,
+                "wins": getattr(bot, "wins", 0),
+                "losses": getattr(bot, "losses", 0),
+                "mode": getattr(bot, "mode", "—"),
+                "timeframe": getattr(bot, "timeframe", "—"),
+                "paused": False,
+                "signal_only": Config.BOT_IS_SIGNAL_ONLY,
+                "dynamic_leverage": 0,
+                "max_trades_allowed": 0,
+                "allowed_symbols": get_allowed_symbols(getattr(bot, "balance", 0)),
+                "selected_symbols": get_selected_symbols(),
+                "consecutive_losses": getattr(bot, "consecutive_losses", 0),
+                "drawdown_pct": 0,
+                "max_drawdown_pct": 0,
+            }), 200
+
     @app.route("/api/assets", methods=["GET", "POST"])
     def assets():
         from config import Config

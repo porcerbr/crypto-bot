@@ -408,7 +408,20 @@ async function refreshAll(){
   try{
     setError('');
     await loadHealth();
-    await Promise.all([loadStatus(), loadAssets(), loadAI(), loadConfluence(), loadPending(), loadHistory(), loadLogs()]);
+    const jobs = [
+      loadStatus(),
+      loadAssets(),
+      loadAI(),
+      loadConfluence(),
+      loadPending(),
+      loadHistory(),
+      loadLogs()
+    ];
+    const results = await Promise.allSettled(jobs);
+    const failed = results.filter(r => r.status === 'rejected');
+    if (failed.length){
+      setError('Alguns blocos da dashboard falharam ao carregar: ' + failed.map(f => f.reason?.message || 'erro').join(' | '));
+    }
     renderActiveTrades((state.status && state.status.active_trades) || []);
   }catch(e){
     setError('Falha ao carregar a dashboard: ' + e.message);
