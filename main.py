@@ -19,6 +19,7 @@ import traceback
 import os
 import schedule
 from datetime import datetime, timezone
+from api import app
 
 import requests
 
@@ -460,7 +461,6 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    # Validação de configuração
     errors = Config.validate()
     if errors:
         print("\n⚠️  PROBLEMAS DE CONFIGURAÇÃO:\n")
@@ -470,15 +470,10 @@ if __name__ == "__main__":
         if any("❌" in err for err in errors):
             sys.exit(1)
 
-    # roda o main (bot) em thread separada
     threading.Thread(target=main, daemon=True).start()
 
-    # porta dinâmica do Railway
     port = int(os.environ.get("PORT", 8080))
-
     print(f"[API] Rodando na porta {port}")
 
-    # sobe servidor web
-    app.run(host="0.0.0.0", port=port)
-
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
   
