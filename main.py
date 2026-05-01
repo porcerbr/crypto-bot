@@ -20,7 +20,6 @@ import os
 import schedule
 from datetime import datetime, timezone
 
-
 import requests
 
 from config import Config
@@ -460,7 +459,9 @@ def main():
             pass
         sys.exit(1)
 
+
 if __name__ == "__main__":
+    # Validação de configuração
     errors = Config.validate()
     if errors:
         print("\n⚠️  PROBLEMAS DE CONFIGURAÇÃO:\n")
@@ -469,5 +470,5 @@ if __name__ == "__main__":
         print("\nDefina as variáveis de ambiente e tente novamente.\n")
         if any("❌" in err for err in errors):
             sys.exit(1)
-
+    
     main()

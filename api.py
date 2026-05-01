@@ -83,11 +83,7 @@ def create_api(bot):
 
     def _dashboard_response():
         html = _load_dashboard_html()
-        resp = Response(html, content_type="text/html; charset=utf-8")
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        resp.headers["Pragma"] = "no-cache"
-        resp.headers["Expires"] = "0"
-        return resp
+        return Response(html, content_type="text/html; charset=utf-8")
 
     @app.route("/")
     @app.route("/dashboard")
@@ -97,129 +93,115 @@ def create_api(bot):
 
     @app.route("/api/status")
     def status():
-        """
-        Status principal da dashboard.
+        usdjpy = _get_usdjpy_price()
+        active = []
 
-        O endpoint é defensivo: se houver um trade incompleto, um cálculo de P&L
-        inválido ou um valor ausente, ele devolve o restante dos dados em vez de
-        derrubar a tela inteira.
-        """
-        try:
-            usdjpy = _get_usdjpy_price()
-            active = []
+        for t in bot.active_trades:
+            sym   = t["symbol"]
+            entry = t["entry"]
+            sl    = t["sl"]
+            tp    = t["tp"]
+            lot   = t.get("lot", 0.01)
+            direction = t.get("dir") or t.get("direction") or t.get("direc", "—")
+            margin = t.get("margin_required", 0)
 
-            for t in getattr(bot, "active_trades", []) or []:
-                sym = t.get("symbol", "—")
-                entry = float(t.get("entry", 0) or 0)
-                sl = float(t.get("sl", entry) or entry)
-                tp = float(t.get("tp", entry) or entry)
-                lot = float(t.get("lot", 0.01) or 0.01)
-                direction = t.get("dir") or t.get("direction") or t.get("direc", "—")
-                margin = float(t.get("margin_required", 0) or 0)
+            cur_price = _get_cached_price(sym, entry)
+            pf = pip_factor(sym)
 
-                cur_price = _get_cached_price(sym, entry)
-                pf = pip_factor(sym)
+            # P&L unificado (mesma fun\u00e7\u00e3o usada em bot.close_trade)
+            pnl_usd = round(
+                calc_pnl_usd(sym, direction, entry, cur_price, lot, usdjpy_price=usdjpy),
+                2,
+            )
+            pnl_pips = calc_pnl_pips(sym, direction, entry, cur_price)
+            pnl_pct  = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
 
-                pnl_usd = round(calc_pnl_usd(sym, direction, entry, cur_price, lot, usdjpy_price=usdjpy), 2)
-                pnl_pips = calc_pnl_pips(sym, direction, entry, cur_price)
-                pnl_pct = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
+            # Dist\u00e2ncias em pips (sempre positivas)
+            sl_dist_pips = round(abs(cur_price - sl) / pf, 1)
+            tp_dist_pips = round(abs(tp - cur_price) / pf, 1)
 
-                sl_dist_pips = round(abs(cur_price - sl) / pf, 1) if pf else 0.0
-                tp_dist_pips = round(abs(tp - cur_price) / pf, 1) if pf else 0.0
+            # Progresso at\u00e9 TP (0\u2013100%), considerando dire\u00e7\u00e3o
+            total_range = abs(tp - entry)
+            if direction == "BUY":
+                moved = max(0, cur_price - entry)
+            else:
+                moved = max(0, entry - cur_price)
+            tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0.0
 
-                total_range = abs(tp - entry)
-                if direction == "BUY":
-                    moved = max(0, cur_price - entry)
-                else:
-                    moved = max(0, entry - cur_price)
-                tp_progress = round(min(moved / total_range * 100, 100), 1) if total_range > 0 else 0.0
-
-                active.append({
-                    "symbol": sym,
-                    "name": t.get("name", ""),
-                    "dir": direction,
-                    "entry": entry,
-                    "sl": sl,
-                    "tp": tp,
-                    "lot": lot,
-                    "margin_required": margin,
-                    "current_price": cur_price,
-                    "pnl": pnl_usd,
-                    "pnl_pct": pnl_pct,
-                    "pnl_pips": pnl_pips,
-                    "sl_dist_pips": sl_dist_pips,
-                    "tp_dist_pips": tp_dist_pips,
-                    "tp_progress": tp_progress,
-                    "opened_at": t.get("opened_at", ""),
-                    "effective_leverage": t.get("effective_leverage", bot.leverage),
-                    "trailing_activated": t.get("trailing_activated", False),
-                    "score": t.get("score", 0),
-                    "score_total": t.get("score_total", 0),
-                    "rr": t.get("rr", 0),
-                    "ai_confidence": t.get("ai_confidence", 0),
-                })
-
-            total = bot.wins + bot.losses
-            wr = round(bot.wins / total * 100, 1) if total > 0 else 0
-
-            from utils import get_dynamic_leverage, get_dynamic_max_trades
-            from db import calculate_metrics
-
-            try:
-                metrics = calculate_metrics(bot)
-                drawdown_pct = metrics.get("drawdown_pct", 0)
-                max_drawdown_pct = metrics.get("max_drawdown_pct", 0)
-            except Exception:
-                drawdown_pct = 0
-                max_drawdown_pct = 0
-
-            return jsonify({
-                "ok": True,
-                "active_trades": active,
-                "pending_count": len(getattr(bot, "pending_trades", []) or []),
-                "balance": round(getattr(bot, "balance", 0), 2),
-                "initial_balance": Config.INITIAL_BALANCE,
-                "leverage": bot.get_current_leverage(),
-                "winrate": wr,
-                "wins": getattr(bot, "wins", 0),
-                "losses": getattr(bot, "losses", 0),
-                "mode": getattr(bot, "mode", "—"),
-                "timeframe": getattr(bot, "timeframe", "—"),
-                "paused": bot.is_paused(),
-                "signal_only": Config.BOT_IS_SIGNAL_ONLY,
-                "dynamic_leverage": get_dynamic_leverage(getattr(bot, "balance", 0)),
-                "max_trades_allowed": get_dynamic_max_trades(getattr(bot, "balance", 0)),
-                "allowed_symbols": get_allowed_symbols(getattr(bot, "balance", 0)),
-                "selected_symbols": get_selected_symbols(),
-                "consecutive_losses": getattr(bot, "consecutive_losses", 0),
-                "drawdown_pct": drawdown_pct,
-                "max_drawdown_pct": max_drawdown_pct,
+            active.append({
+                "symbol":             sym,
+                "name":               t.get("name", ""),
+                "dir":                direction,
+                "entry":              entry,
+                "sl":                 sl,
+                "tp":                 tp,
+                "lot":                lot,
+                "margin_required":    margin,
+                "current_price":      cur_price,
+                "pnl":                pnl_usd,
+                "pnl_pct":            pnl_pct,
+                "pnl_pips":           pnl_pips,
+                "sl_dist_pips":       sl_dist_pips,
+                "tp_dist_pips":       tp_dist_pips,
+                "tp_progress":        tp_progress,
+                "opened_at":          t.get("opened_at", ""),
+                "effective_leverage": t.get("effective_leverage", bot.leverage),
+                "trailing_activated": t.get("trailing_activated", False),
+                "score":              t.get("score", 0),
+                "score_total":        t.get("score_total", 0),
+                "rr":                 t.get("rr", 0),
+                "ai_confidence":      t.get("ai_confidence", 0),
             })
-        except Exception as e:
-            return jsonify({
-                "ok": False,
-                "error": str(e),
-                "active_trades": [],
-                "pending_count": 0,
-                "balance": round(getattr(bot, "balance", 0), 2),
-                "initial_balance": Config.INITIAL_BALANCE,
-                "leverage": getattr(bot, "leverage", 0),
-                "winrate": 0,
-                "wins": getattr(bot, "wins", 0),
-                "losses": getattr(bot, "losses", 0),
-                "mode": getattr(bot, "mode", "—"),
-                "timeframe": getattr(bot, "timeframe", "—"),
-                "paused": False,
-                "signal_only": Config.BOT_IS_SIGNAL_ONLY,
-                "dynamic_leverage": 0,
-                "max_trades_allowed": 0,
-                "allowed_symbols": get_allowed_symbols(getattr(bot, "balance", 0)),
-                "selected_symbols": get_selected_symbols(),
-                "consecutive_losses": getattr(bot, "consecutive_losses", 0),
-                "drawdown_pct": 0,
-                "max_drawdown_pct": 0,
-            }), 200
 
+        total = bot.wins + bot.losses
+        wr    = round(bot.wins / total * 100, 1) if total > 0 else 0
+
+        # Seguran\u00e7a din\u00e2mica + drawdown
+        from utils import get_dynamic_leverage, get_dynamic_max_trades
+        from db import calculate_metrics
+
+        try:
+            metrics = calculate_metrics(bot)
+            drawdown_pct = metrics.get("drawdown_pct", 0)
+            max_drawdown_pct = metrics.get("max_drawdown_pct", 0)
+        except Exception:
+            drawdown_pct = 0
+            max_drawdown_pct = 0
+
+        return jsonify({
+            # Trades
+            "active_trades":       active,
+            "pending_count":       len(bot.pending_trades),
+
+            # Conta (simulada)
+            "balance":             round(bot.balance, 2),
+            "initial_balance":     Config.INITIAL_BALANCE,
+            "leverage":            bot.get_current_leverage(),
+            "winrate":             wr,
+            "wins":                bot.wins,
+            "losses":              bot.losses,
+
+            # Modo / status
+            "mode":                bot.mode,
+            "timeframe":           bot.timeframe,
+            "paused":              bot.is_paused(),
+            "signal_only":         Config.BOT_IS_SIGNAL_ONLY,
+
+            # Seguran\u00e7a din\u00e2mica
+            "dynamic_leverage":    get_dynamic_leverage(bot.balance),
+            "max_trades_allowed":  get_dynamic_max_trades(bot.balance),
+            "allowed_symbols":     get_allowed_symbols(bot.balance),
+            "selected_symbols":    get_selected_symbols(),
+            "consecutive_losses":  bot.consecutive_losses,
+
+            # Drawdown \u2014 exigido pelo dashboard
+            "drawdown_pct":        drawdown_pct,
+            "max_drawdown_pct":    max_drawdown_pct,
+        })
+
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # PENDENTES
+    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/assets", methods=["GET", "POST"])
     def assets():
         from config import Config
@@ -256,7 +238,10 @@ def create_api(bot):
 
     @app.route("/api/pending")
     def pending():
-        return jsonify(bot.pending_trades)
+        try:
+            return jsonify(list(getattr(bot, "pending_trades", []) or []))
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "pending": []})
 
     @app.route("/api/execute", methods=["POST"])
     def execute():
@@ -315,34 +300,57 @@ def create_api(bot):
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/history")
     def history():
-        limit = request.args.get("limit", 20, type=int)
-        limit = max(1, min(limit, 500))
-        return jsonify(bot.history[-limit:])
+        try:
+            limit = request.args.get("limit", 20, type=int)
+            limit = max(1, min(limit, 500))
+            return jsonify(list(getattr(bot, "history", [])[-limit:]))
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "history": []})
 
     @app.route("/api/logs")
     def logs():
-        from db import get_recent_logs
-        entry_type = request.args.get("type")
-        hours = request.args.get("hours", 24, type=int)
-        limit = request.args.get("limit", 100, type=int)
+        try:
+            from db import get_recent_logs
+            entry_type = request.args.get("type")
+            hours = request.args.get("hours", 24, type=int)
+            limit = request.args.get("limit", 100, type=int)
 
-        logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
-        return jsonify({
-            "logs":   logs_data,
-            "count":  len(logs_data),
-            "filter": {"type": entry_type, "hours": hours},
-        })
+            logs_data = get_recent_logs(entry_type=entry_type, hours=hours, limit=limit)
+            return jsonify({
+                "ok": True,
+                "logs": logs_data,
+                "count": len(logs_data),
+                "filter": {"type": entry_type, "hours": hours},
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "logs": [],
+                "count": 0,
+                "filter": {"type": request.args.get("type"), "hours": request.args.get("hours", 24, type=int)},
+            })
 
     @app.route("/api/metrics")
     def metrics():
-        from db import calculate_metrics, load_metrics
-        current = calculate_metrics(bot)
-        saved   = load_metrics()
-        return jsonify({
-            "current":         current,
-            "last_saved":      saved.get("updated_at") if saved else None,
-            "initial_balance": Config.INITIAL_BALANCE,
-        })
+        try:
+            from db import calculate_metrics, load_metrics
+            current = calculate_metrics(bot)
+            saved = load_metrics()
+            return jsonify({
+                "ok": True,
+                "current": current,
+                "last_saved": saved.get("updated_at") if saved else None,
+                "initial_balance": Config.INITIAL_BALANCE,
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "current": {},
+                "last_saved": None,
+                "initial_balance": Config.INITIAL_BALANCE,
+            })
 
     @app.route("/api/equity_curve")
     def equity_curve():
@@ -365,20 +373,34 @@ def create_api(bot):
 
     @app.route("/api/force-save", methods=["POST"])
     def force_save():
-        from db import save_state
         try:
+            from db import save_state
             save_state(bot)
             return jsonify({"ok": True, "message": "Estado salvo com sucesso"})
         except Exception as e:
-            return jsonify({"ok": False, "message": str(e)}), 500
+            return jsonify({"ok": False, "message": str(e)})
 
     @app.route("/api/ai_params")
     def ai_params():
+        defaults = {
+            "live_confluence": Config.MIN_CONFLUENCE,
+            "strategy_bias": "balanced",
+            "live_regime": "neutral",
+            "live_adx_avg": 0,
+            "min_rr": Config.REGIME_MIN_RR.get("neutral", Config.TP_SL_RATIO),
+            "opus_summary": "IA indisponível no momento.",
+            "last_suggestion": "",
+        }
         try:
             from ai_validator import load_ai_params
-            return jsonify(load_ai_params())
+            data = load_ai_params() or {}
+            defaults.update(data)
+            defaults["ok"] = True
+            return jsonify(defaults)
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            defaults["ok"] = False
+            defaults["error"] = str(e)
+            return jsonify(defaults)
 
     @app.route("/api/confluence")
     def confluence():
@@ -390,7 +412,7 @@ def create_api(bot):
                 item["locked"] = item["symbol"] not in allowed
             return jsonify(snapshot)
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"ok": False, "error": str(e), "confluence": []})
 
     @app.route("/api/health")
     def health():
