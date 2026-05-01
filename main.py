@@ -6,7 +6,7 @@ Responsabilidades:
   • Disparar thread do loop principal
   • Subir API Flask (dashboard e endpoints)
   • Agendar heartbeat, relatório diário, aprendizado semanal e mensal
-  • Processar comandos do Telegram (/executar_, /confluencia)
+  • Processar comandos do Telegram (/confluencia, /status)
 
 ⚠️  Este bot é SINALIZADOR: ele NÃO executa ordens em corretora real.
     Todos os cálculos de saldo / P&L são simulados para fins de estatística.
@@ -374,21 +374,7 @@ def bot_loop(bot):
                     if "message" in u and "text" in u["message"]:
                         txt = u["message"]["text"].strip()
 
-                        if txt.startswith("/executar_"):
-                            parts = txt.split("_")
-                            if len(parts) >= 3:
-                                try:
-                                    pid    = int(parts[1])
-                                    amount = float(parts[2])
-                                    ok, msg = bot.execute_pending(pid, amount)
-                                    if ok:
-                                        bot.send(f"✅ {msg}")
-                                    else:
-                                        bot.send(f"❌ {msg}")
-                                except ValueError:
-                                    bot.send("❌ Formato inválido. Use /executar_<id>_<valor>")
-
-                        elif txt in ("/confluencia", "/confluência"):
+                        if txt in ("/confluencia", "/confluência"):
                             _send_confluence_report(bot)
 
                         elif txt == "/status":

@@ -17,7 +17,7 @@ class TradingBot:
         self.consecutive_losses = 0
         self.paused_until = 0.0
         self.active_trades = []
-        self.pending_trades = []
+        self.pending_trades = []   # mantido para compatibilidade com state.json legado
         self.history = []
         self.asset_cooldown = {}
         self.signals_feed = []
@@ -83,120 +83,162 @@ class TradingBot:
                     return False, group_name + " " + str(round(corr_pct, 1)) + "%"
         return True, ""
 
-    def add_pending(self, pend):
-        self.pending_trades.append(pend)
-        self.send_pending_notification(pend)
-        save_state(self)
+    # ═══════════════════════════════════════════════════════
+    # EXECUCAO AUTOMATICA DE SINAIS (sem confirmacao manual)
+    # ═══════════════════════════════════════════════════════
 
-    def execute_pending(self, pending_id, margin_usd):
+    def execute_signal(self, pend: dict) -> bool:
+        """
+        Executa um sinal diretamente, sem confirmacao manual.
+        Adiciona a lista de trades ativos para monitoramento automatico de WIN/LOSS.
+        Retorna True se executado com sucesso.
+        """
         from utils import (
             get_dynamic_leverage, get_dynamic_max_trades, get_max_risk_absolute,
             get_min_free_margin_pct, is_symbol_allowed, is_weekend_gap_risk,
-            get_allowed_symbols
         )
 
+        sym = pend["symbol"]
+
         if is_weekend_gap_risk():
-            return False, "Protecao de fim de semana ativa — nao abrindo novos trades"
+            log(f"[SIGNAL] {sym}: protecao de fim de semana ativa")
+            return False
 
         max_trades = get_dynamic_max_trades(self.balance)
         if len(self.active_trades) >= max_trades:
-            return False, "Limite de " + str(max_trades) + " trade(s) ativo(s) para banca atual"
+            log(f"[SIGNAL] {sym}: limite de {max_trades} trades atingido")
+            return False
 
-        pend = next((p for p in self.pending_trades if p["pending_id"] == pending_id), None)
-        if not pend:
-            return False, "Sinal nao encontrado"
-
-        if not is_symbol_allowed(pend["symbol"], self.balance):
-            allowed = get_allowed_symbols(self.balance)
-            return False, pend["symbol"] + " bloqueado para banca $" + str(round(self.balance, 0)) + ". Permitidos: " + ", ".join(allowed)
+        if not is_symbol_allowed(sym, self.balance):
+            log(f"[SIGNAL] {sym}: ativo bloqueado para banca atual")
+            return False
 
         est_risk = pend.get("suggested_risk_usd", 0)
-        ok_corr, msg_corr = self.check_correlation_exposure(pend["symbol"], est_risk)
+        ok_corr, msg_corr = self.check_correlation_exposure(sym, est_risk)
         if not ok_corr:
-            return False, "Correlacao: " + msg_corr
+            log(f"[SIGNAL] {sym}: correlacao — {msg_corr}")
+            return False
 
         eff_lev = get_dynamic_leverage(self.balance)
         self._current_leverage = eff_lev
 
         max_risk_usd = get_max_risk_absolute(self.balance)
         if pend.get("suggested_risk_usd", 0) > max_risk_usd:
-            return False, "Risco $" + str(round(pend["suggested_risk_usd"], 2)) + " excede limite de $" + str(round(max_risk_usd, 2)) + " para banca atual"
+            log(f"[SIGNAL] {sym}: risco excede limite de ${round(max_risk_usd, 2)}")
+            return False
 
-        plan = calc_trade_plan(pend["symbol"], pend["entry"], eff_lev, self.balance, margin_usd)
+        plan = calc_trade_plan(sym, pend["entry"], eff_lev, self.balance, 0)
         if not plan["ok"]:
-            return False, plan["error"]
+            log(f"[SIGNAL] {sym}: plano invalido — {plan['error']}")
+            return False
         if plan["margin_required"] > self.balance * 0.8:
-            return False, "Margem excede 80% do saldo"
+            log(f"[SIGNAL] {sym}: margem excede 80% do saldo")
+            return False
 
         used = self._get_used_margin()
         free_margin = self.balance - used - plan["margin_required"]
         min_free_pct = get_min_free_margin_pct(self.balance)
         if free_margin < self.balance * min_free_pct:
-            return False, "Margem livre insuficiente. Necessario: " + str(round(min_free_pct*100, 0)) + "% livre"
+            log(f"[SIGNAL] {sym}: margem livre insuficiente")
+            return False
 
         ok, msg = self._check_margin_safety(plan["margin_required"])
         if not ok:
-            return False, msg
+            log(f"[SIGNAL] {sym}: {msg}")
+            return False
 
         trade = {
             **pend,
-            "lot":               plan["lot"],
-            "margin_required":   plan["margin_required"],
-            "commission":        plan["commission"],
-            "opened_at":         pend["created_at"],
-            "wallet_before":     self.balance,
-            "trailing_activated":False,
-            "effective_leverage":eff_lev,
-            # propaga metadados da IA para o trade (usados no close_trade → history)
-            "ai_approved":       pend.get("ai_approved", True),
-            "ai_confidence":     pend.get("ai_confidence", 0),
+            "lot":                plan["lot"],
+            "margin_required":    plan["margin_required"],
+            "commission":         plan["commission"],
+            "opened_at":          pend["created_at"],
+            "wallet_before":      self.balance,
+            "trailing_activated": False,
+            "effective_leverage": eff_lev,
+            "ai_approved":        pend.get("ai_approved", True),
+            "ai_confidence":      pend.get("ai_confidence", 0),
         }
         self.balance -= plan["margin_required"]
         self.active_trades.append(trade)
-        self.pending_trades.remove(pend)
 
-        msg_lines = [
-            "TRADE ABERTO — " + pend["symbol"],
-            pend["dir"] + " | Entrada: " + fmt(pend["entry"]),
-            "Lote: " + str(round(plan["lot"], 2)) + " | Margem: $" + str(round(plan["margin_required"], 2)) + " | Alav: " + str(eff_lev) + ":1",
-            "SL: " + fmt(pend["sl"]) + " | TP: " + fmt(pend["tp"]),
-            "Saldo restante: $" + str(round(self.balance, 2))
-        ]
-        self.send(chr(10).join(msg_lines))
-
+        self.send_signal_notification(trade)
         save_state(self)
-        return True, "Trade executado"
+        return True
 
-    def reject_pending(self, pending_id):
-        pend = next((p for p in self.pending_trades if p["pending_id"] == pending_id), None)
-        if pend:
-            self.pending_trades.remove(pend)
-            save_state(self)
-            return True
-        return False
+    def send_signal_notification(self, trade: dict):
+        """Envia notificacao de sinal ativo — automatico, sem confirmacao."""
+        checks_lines = []
+        for c in trade.get("checks", []):
+            icon = "✅" if c["ok"] else "❌"
+            checks_lines.append(icon + " " + c["name"])
+        checks_str = chr(10).join(checks_lines)
+
+        kz        = trade.get("kill_zone")
+        bias      = trade.get("daily_bias", "NEUTRO")
+        ote       = trade.get("ote_active", False)
+        kz_str    = f"⚡ Kill Zone: {kz}" if kz else "💤 Fora da Kill Zone"
+        bias_str  = f"📅 Daily Bias: {bias}"
+        ote_str   = "🎯 OTE: ✅ Retrace ideal (62–79%)" if ote else "🎯 OTE: ⬜ Fora da zona"
+
+        direction = trade.get("dir", "—")
+        sl_pips   = trade.get("sl_pips", "—")
+        tp_pips   = trade.get("tp_pips", "—")
+        sl_dir    = "−" if direction == "BUY" else "+"
+        tp_dir    = "+" if direction == "BUY" else "−"
+
+        ai_conf   = trade.get("ai_confidence", 0)
+        ai_reason = trade.get("ai_reason", "—")
+        regime    = trade.get("market_regime", "neutral").upper()
+        setup     = trade.get("setup_type", "—").upper()
+        conf_bar  = "🟩" * ai_conf + "⬜" * (10 - ai_conf)
+
+        lines = [
+            "🎯 NOVO SINAL — " + trade["symbol"] + " (" + trade["name"] + ")",
+            "——————————————————",
+            "📌 Direção: " + direction,
+            "📍 Entrada:  " + fmt(trade["entry"]),
+            "🛑 SL:       " + fmt(trade["sl"]) + "  (" + sl_dir + str(sl_pips) + " pips)",
+            "🎯 TP:       " + fmt(trade["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
+            "📊 RR: 1:" + str(trade["rr"]) + " | Score: " + str(trade["score"]) + "/" + str(trade["max_score"]),
+            "🔄 Regime: " + regime + " | Setup: " + setup,
+            "——————————————————",
+            kz_str,
+            bias_str,
+            ote_str,
+            "🤖 IA: " + conf_bar + " " + str(ai_conf) + "/10",
+            "   " + ai_reason,
+            "——————————————————",
+            "💸 Risco: $" + str(round(trade.get("suggested_risk_usd", 0), 2))
+                + " (" + str(round(trade.get("suggested_risk_pct", 0), 1)) + "%)",
+            "📦 Lote: " + str(trade.get("lot", "—")),
+            "——————————————————",
+            checks_str,
+            "——————————————————",
+            "🔔 Monitorando SL/TP automaticamente...",
+        ]
+        self.send(chr(10).join(lines))
+
+    # ═══════════════════════════════════════════════════════
+    # COMPATIBILIDADE LEGADA
+    # ═══════════════════════════════════════════════════════
+
+    def add_pending(self, pend):
+        """Legado — redireciona para execute_signal."""
+        self.execute_signal(pend)
 
     def expire_pending_signals(self, max_age_seconds: int = 7200):
-        """
-        Remove sinais pendentes mais antigos que max_age_seconds (padrão: 2h).
-        Sinais H1 gerados há mais de 2h são baseados em contexto de mercado
-        desatualizado — manter aumenta o risco de entrar em momento errado.
-        """
+        """Legado — limpa pending_trades do state.json antigo."""
         now = time.time()
-        expired = [
-            p for p in self.pending_trades
-            if now - p.get("created_ts", now) > max_age_seconds
-        ]
+        expired = [p for p in self.pending_trades if now - p.get("created_ts", now) > max_age_seconds]
         for p in expired:
             self.pending_trades.remove(p)
-            msg = (
-                f"⏱ Sinal expirado — {p['symbol']} {p['dir']}\n"
-                f"Gerado às {p['created_at']} | Expirado após {max_age_seconds // 60}min\n"
-                f"Entrada era: {fmt(p['entry'])}"
-            )
-            self.send(msg)
-            log(f"[EXPIRY] Sinal {p['pending_id']} ({p['symbol']}) expirado")
         if expired:
             save_state(self)
+
+    # ═══════════════════════════════════════════════════════
+    # MONITORAMENTO E FECHAMENTO (WIN/LOSS)
+    # ═══════════════════════════════════════════════════════
 
     def monitor_trades(self):
         for t in self.active_trades[:]:
@@ -207,9 +249,9 @@ class TradingBot:
                     continue
                 cur = res["price"]
                 atr = res["atr"]
-                sl = t["sl"]
-                tp = t["tp"]
-                entry = t["entry"]
+                sl  = t["sl"]
+                tp  = t["tp"]
+                entry     = t["entry"]
                 direction = t["dir"]
 
                 if Config.TRAILING_ACTIVATION > 0 and not t.get("trailing_activated", False):
@@ -247,10 +289,10 @@ class TradingBot:
         from utils import get_dynamic_cooldown
 
         margin = trade["margin_required"]
-        lot = trade["lot"]
-        entry = trade["entry"]
+        lot    = trade["lot"]
+        entry  = trade["entry"]
         symbol = trade["symbol"]
-        cs = contract_size_for(symbol)
+        cs     = contract_size_for(symbol)
 
         if trade["dir"] == "BUY":
             profit_raw = (exit_price - entry) * cs * lot - trade.get("commission", 0)
@@ -266,6 +308,8 @@ class TradingBot:
 
         self.balance += margin + profit
         self.balance = round(self.balance, 2)
+
+        # Salva no histórico — usado pelo aprendizado da IA
         self.history.append({
             "symbol":        symbol,
             "dir":           trade["dir"],
@@ -274,11 +318,10 @@ class TradingBot:
             "closed_at":     datetime.now().strftime("%d/%m %H:%M"),
             "opened_at":     trade.get("opened_at", ""),
             "adx":           trade.get("adx", 0),
-            # Feedback loop — IA aprovou? Com qual confiança?
-            # Permite ao aprendizado semanal correlacionar confiança com resultado
             "ai_approved":   trade.get("ai_approved", True),
             "ai_confidence": trade.get("ai_confidence", 0),
         })
+
         if result == "WIN":
             self.wins += 1
             self.consecutive_losses = 0
@@ -292,24 +335,20 @@ class TradingBot:
                 self.send("CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
         self.active_trades.remove(trade)
 
-        # ── Notificação enriquecida ───────────────────────────────
-        total = self.wins + self.losses
-        new_wr = round(self.wins / total * 100, 1) if total > 0 else 0
+        total   = self.wins + self.losses
+        new_wr  = round(self.wins / total * 100, 1) if total > 0 else 0
 
-        # Pips ganhos/perdidos
         pip_factor = 0.01 if (is_jpy_pair(symbol) or symbol == "XAUUSD") else 0.0001
         pips = round((exit_price - entry) / pip_factor if trade["dir"] == "BUY"
                      else (entry - exit_price) / pip_factor, 1)
 
-        # Duração do trade
         duration_str = "—"
         try:
             opened_str = trade.get("opened_at", "")
             if opened_str:
-                opened_dt = datetime.strptime(opened_str, "%d/%m %H:%M").replace(
-                    year=datetime.now().year)
-                delta = datetime.now() - opened_dt
-                h, m  = divmod(int(delta.total_seconds() // 60), 60)
+                opened_dt = datetime.strptime(opened_str, "%d/%m %H:%M").replace(year=datetime.now().year)
+                delta     = datetime.now() - opened_dt
+                h, m      = divmod(int(delta.total_seconds() // 60), 60)
                 duration_str = f"{h}h {m}min" if h > 0 else f"{m}min"
         except Exception:
             pass
@@ -319,8 +358,21 @@ class TradingBot:
         emoji     = "✅" if result == "WIN" else "❌"
         wr_emoji  = "📈" if new_wr >= 55 else "📊"
 
+        # Feedback IA vs resultado — alimenta aprendizado visual
+        ai_conf = trade.get("ai_confidence", 0)
+        ai_feedback = ""
+        if ai_conf > 0:
+            if result == "WIN" and ai_conf >= 7:
+                ai_feedback = f"\n🤖 IA acertou (confiança {ai_conf}/10 ✅)"
+            elif result == "LOSS" and ai_conf >= 7:
+                ai_feedback = f"\n🤖 IA confiou e perdeu ({ai_conf}/10 ❌)"
+            elif result == "WIN" and ai_conf < 5:
+                ai_feedback = f"\n🤖 IA subestimou ({ai_conf}/10 → WIN ✅)"
+            elif result == "LOSS" and ai_conf <= 4:
+                ai_feedback = f"\n🤖 IA desconfiou e perdeu ({ai_conf}/10 ❌)"
+
         msg = (
-            f"{emoji} TRADE FECHADO — {symbol} {trade['dir']}\n"
+            f"{emoji} RESULTADO — {symbol} {trade['dir']}\n"
             f"——————————————————\n"
             f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}\n"
             f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)\n"
@@ -329,9 +381,14 @@ class TradingBot:
             f"——————————————————\n"
             f"🏦 Saldo: ${round(self.balance, 2)}\n"
             f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L)"
+            f"{ai_feedback}"
         )
         self.send(msg)
         save_state(self)
+
+    # ═══════════════════════════════════════════════════════
+    # ENVIO
+    # ═══════════════════════════════════════════════════════
 
     def send(self, text):
         url = "https://api.telegram.org/bot" + Config.BOT_TOKEN + "/sendMessage"
@@ -351,55 +408,6 @@ class TradingBot:
                               timeout=5)
             except Exception as e:
                 log("[PUSH] Erro: " + str(e))
-
-    def send_pending_notification(self, pend):
-        checks_lines = []
-        for c in pend["checks"]:
-            icon = "✅" if c["ok"] else "❌"
-            checks_lines.append(icon + " " + c["name"])
-        checks_str = chr(10).join(checks_lines)
-
-        kz        = pend.get("kill_zone")
-        bias      = pend.get("daily_bias", "NEUTRO")
-        ote       = pend.get("ote_active", False)
-        kz_str    = f"⚡ Kill Zone: {kz}" if kz else "💤 Fora da Kill Zone"
-        bias_str  = f"📅 Daily Bias: {bias}"
-        ote_str   = "🎯 OTE Fibonacci: ✅ No retrace ideal" if ote else "🎯 OTE Fibonacci: ⬜ Fora da zona"
-
-        direction = pend.get("dir") or pend.get("direction") or pend.get("direc", "—")
-        sl_pips = pend.get("sl_pips", "—")
-        tp_pips = pend.get("tp_pips", "—")
-        sl_dir = "−" if direction == "BUY" else "+"
-        tp_dir = "+" if direction == "BUY" else "−"
-
-        lines = [
-            "🎯 SINAL PENDENTE — " + pend["symbol"] + " (" + pend["name"] + ")",
-            "——————————————————",
-            "📌 Direção: " + direction,
-            "📍 Entrada:  " + fmt(pend["entry"]),
-            "🛑 SL:       " + fmt(pend["sl"]) + "  (" + sl_dir + str(sl_pips) + " pips)",
-            "🎯 TP:       " + fmt(pend["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
-            "📊 RR: 1:" + str(pend["rr"]) + " | Score: " + str(pend["score"]) + "/" + str(pend["max_score"]),
-            "——————————————————",
-            kz_str,
-            bias_str,
-            ote_str,
-            "🤖 IA: " + pend.get("ai_reason", "—"),
-            "——————————————————",
-            "⚠️ Se der erro de SL/TP inválido:",
-            "   Preço mudou — use a distância em pips",
-            "   como referência e ajuste no broker.",
-            "——————————————————",
-            "💰 Margem p/ 0.01 lote: $" + str(round(pend["min_lot_margin"], 2)),
-            "💸 Risco c/ lote mínimo: $" + str(round(pend["risk_001_lot"], 2)) + " (" + str(round(pend["risk_pct_001"], 1)) + "%)",
-            "📦 Lote sugerido (" + str(Config.ATR_RISK_PCT) + "% risco): " + str(pend["suggested_lot"]) + " lote(s)",
-            "   → Risco real: $" + str(round(pend["suggested_risk_usd"], 2)) + " (" + str(round(pend["suggested_risk_pct"], 1)) + "%)",
-            "——————————————————",
-            checks_str,
-            "——————————————————",
-            "▶️ Para executar: /executar_" + str(pend["pending_id"]) + "_VALOR",
-        ]
-        self.send(chr(10).join(lines))
 
     def get_current_leverage(self):
         from utils import get_dynamic_leverage

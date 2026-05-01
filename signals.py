@@ -200,15 +200,17 @@ def _get_smc_sl_tp(entry, direction, res, mtf, atr):
             if obs:
                 # OB bullish: SL no low do OB
                 best_ob = min(obs, key=lambda x: abs(x["low"] - entry))
-                if best_ob["low"] < entry:
-                    sl = round(best_ob["low"] - 0.8 * atr, 5)  # buffer de 0.5 ATR
+                candidate = round(best_ob["low"] - 0.8 * atr, 5)
+                if candidate < entry:   # SL DEVE estar abaixo da entrada no BUY
+                    sl = candidate
                     sl_source = "ob"
         else:
             obs = ob.get("bearish", [])
             if obs:
                 best_ob = min(obs, key=lambda x: abs(x["high"] - entry))
-                if best_ob["high"] > entry:
-                    sl = round(best_ob["high"] + 0.8 * atr, 5)
+                candidate = round(best_ob["high"] + 0.8 * atr, 5)
+                if candidate > entry:   # SL DEVE estar acima da entrada no SELL
+                    sl = candidate
                     sl_source = "ob"
 
     # Se não achou OB adequado, usa ATR
@@ -221,29 +223,37 @@ def _get_smc_sl_tp(entry, direction, res, mtf, atr):
     # ── TP: Liquidity Pool do H4 ou FVG ──────────────────────────
     if Config.USE_LIQUIDITY_FOR_TP and mtf:
         h4_sweep = mtf.get("h4", {}).get("sweep", {})
-        if direction == "BUY" and h4_sweep.get("swing_high"):
-            tp = round(h4_sweep["swing_high"], 5)
-            tp_source = "liquidity"
-        elif direction == "SELL" and h4_sweep.get("swing_low"):
-            tp = round(h4_sweep["swing_low"], 5)
-            tp_source = "liquidity"
+        if direction == "BUY":
+            swing_high = h4_sweep.get("swing_high")
+            # TP deve estar ACIMA da entrada e dentro de distância razoável (max MAX_TP_SL_RATIO * ATR_TP_MULT * atr)
+            max_tp_dist = Config.MAX_TP_SL_RATIO * Config.ATR_TP_MULT * atr if atr > 0 else entry * 0.05
+            if swing_high and swing_high > entry and (swing_high - entry) <= max_tp_dist:
+                tp = round(swing_high, 5)
+                tp_source = "liquidity"
+        elif direction == "SELL":
+            swing_low = h4_sweep.get("swing_low")
+            max_tp_dist = Config.MAX_TP_SL_RATIO * Config.ATR_TP_MULT * atr if atr > 0 else entry * 0.05
+            if swing_low and swing_low < entry and (entry - swing_low) <= max_tp_dist:
+                tp = round(swing_low, 5)
+                tp_source = "liquidity"
 
     # Fallback para FVG do H1 se não achou liquidity H4
     if tp is None and Config.USE_FVG_FOR_TP:
         if direction == "BUY":
             fvgs = fvg.get("bullish", [])
             if fvgs:
-                # Alvo no topo do FVG mais próximo acima do preço
+                # Alvo no topo do FVG mais próximo ACIMA do preço (min, não max)
                 valid = [f for f in fvgs if f["top"] > entry]
                 if valid:
-                    tp = round(max(f["top"] for f in valid), 5)
+                    tp = round(min(f["top"] for f in valid), 5)
                     tp_source = "fvg"
         else:
             fvgs = fvg.get("bearish", [])
             if fvgs:
+                # Alvo no fundo do FVG mais próximo ABAIXO do preço (max, não min)
                 valid = [f for f in fvgs if f["bottom"] < entry]
                 if valid:
-                    tp = round(min(f["bottom"] for f in valid), 5)
+                    tp = round(max(f["bottom"] for f in valid), 5)
                     tp_source = "fvg"
 
     # Fallback ATR
@@ -264,17 +274,25 @@ def _get_smc_sl_tp(entry, direction, res, mtf, atr):
     rr = Config.TP_SL_RATIO_BASE + (smc_checks * Config.TP_SL_RATIO_STEP)
     rr = min(rr, Config.MAX_TP_SL_RATIO)
 
-    # Se TP foi definido por SMC, recalcula RR real
+    # Se TP foi definido por SMC, recalcula RR real e valida
     if sl and tp and sl != entry:
         dist_sl = abs(entry - sl)
         dist_tp = abs(tp - entry)
         rr_real = round(dist_tp / dist_sl, 2) if dist_sl > 0 else rr
-        # Se o SMC deu um RR melhor que o dinâmico, usa o SMC
-        if rr_real > rr:
+
+        if rr_real > Config.MAX_TP_SL_RATIO:
+            # Alvo SMC absurdamente longe — recalcula TP com RR máximo permitido
+            tp = round(entry + Config.MAX_TP_SL_RATIO * dist_sl, 5) if direction == "BUY" \
+                 else round(entry - Config.MAX_TP_SL_RATIO * dist_sl, 5)
+            rr = Config.MAX_TP_SL_RATIO
+            tp_source = "rr_capped"
+        elif rr_real > rr:
+            # SMC deu RR melhor que o dinâmico, mas dentro do limite — aceita
             rr = rr_real
         else:
-            # Se o dinâmico é maior, ajusta TP para bater o RR dinâmico
-            tp = round(entry + rr * dist_sl, 5) if direction == "BUY" else round(entry - rr * dist_sl, 5)
+            # Dinâmico é maior — ajusta TP para bater o RR dinâmico
+            tp = round(entry + rr * dist_sl, 5) if direction == "BUY" \
+                 else round(entry - rr * dist_sl, 5)
             tp_source = "rr_dynamic"
 
     return sl, tp, rr, sl_source, tp_source
@@ -329,6 +347,28 @@ def scan(bot):
         sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
         if not sl or not tp:
             log(f"[SMC] {sym}: SL/TP inválido, descartado")
+            continue
+
+        # ── Validação de sanidade dos SL/TP ──────────────────────────
+        if direction == "BUY":
+            if sl >= entry:
+                log(f"[SLTP] {sym}: SL ({sl:.5f}) >= entrada ({entry:.5f}) — descartado")
+                continue
+            if tp <= entry:
+                log(f"[SLTP] {sym}: TP ({tp:.5f}) <= entrada ({entry:.5f}) — descartado")
+                continue
+        else:
+            if sl <= entry:
+                log(f"[SLTP] {sym}: SL ({sl:.5f}) <= entrada ({entry:.5f}) — descartado")
+                continue
+            if tp >= entry:
+                log(f"[SLTP] {sym}: TP ({tp:.5f}) >= entrada ({entry:.5f}) — descartado")
+                continue
+
+        # Distância máxima razoável: 10% do preço
+        max_dist = entry * 0.10
+        if abs(tp - entry) > max_dist or abs(sl - entry) > max_dist:
+            log(f"[SLTP] {sym}: SL/TP fora dos limites razoáveis (>10% do preço) — entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
             continue
 
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
@@ -461,24 +501,28 @@ def scan(bot):
             "setup_type": setup_type,
         }
 
-        approved, ai_reason = validate_signal(pend, mtf, bot)
-        if not approved:
-            log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
-            bot.next_pending_id()
-            continue
+        # ── IA: pontua o sinal (NÃO bloqueia — apenas informa) ──
+        _, ai_reason = validate_signal(pend, mtf, bot)
 
+        # Extrai score numérico do texto retornado pela IA (ex: "7/10: ...")
         ai_confidence = 0
         try:
-            if "IA (" in ai_reason:
-                ai_confidence = int(ai_reason.split("(")[1].split("/")[0])
+            import re as _re
+            m = _re.search(r'(\d+)/10', ai_reason)
+            if m:
+                ai_confidence = int(m.group(1))
         except Exception:
             pass
 
         pend["ai_reason"]     = ai_reason
         pend["ai_approved"]   = True
         pend["ai_confidence"] = ai_confidence
-        bot.add_pending(pend)
-        break
+
+        # Executa sinal automaticamente — sem confirmação manual
+        ok = bot.execute_signal(pend)
+        if ok:
+            log(f"[SIGNAL] {sym} {direction} executado automaticamente (IA conf={ai_confidence}/10)")
+        # Não dá break — continua varrendo todos os símbolos
 def get_confluence_snapshot() -> list[dict]:
     """
     Varre todos os pares e retorna o score de confluência atual.
