@@ -19,7 +19,7 @@ import traceback
 import os
 import schedule
 from datetime import datetime, timezone
-from api import app
+
 
 import requests
 
@@ -470,10 +470,22 @@ if __name__ == "__main__":
         if any("❌" in err for err in errors):
             sys.exit(1)
 
-    threading.Thread(target=main, daemon=True).start()
+    # 🚀 cria o bot normalmente
+    bot = main()  # IMPORTANTE: sua função main precisa retornar o bot
 
+    # 🚀 cria a API passando o bot
+    app = create_api(bot)
+
+    # 🚀 roda o bot em paralelo (se ele tiver loop)
+    def run_bot():
+        bot.run()  # ou o método correto do seu bot
+
+    threading.Thread(target=run_bot, daemon=True).start()
+
+    # 🚀 Railway PORT
     port = int(os.environ.get("PORT", 8080))
+
     print(f"[API] Rodando na porta {port}")
 
     app.run(host="0.0.0.0", port=port, use_reloader=False)
-  
+
