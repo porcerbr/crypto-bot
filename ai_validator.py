@@ -42,6 +42,8 @@ _call_times: deque = deque()
 _AI_DISABLED_UNTIL = 0.0
 _SIGNAL_CACHE: dict[str, tuple[float, tuple[bool, str]]] = {}
 _SIGNAL_CACHE_TTL = 900  # 15 min
+_SIGNAL_COOLDOWN: dict[str, float] = {}
+_SIGNAL_COOLDOWN_TTL = 1800  # 30 min por par/direção
 
 
 def _rate_limit_wait():
@@ -176,11 +178,12 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             if status == 429:
-                wait = 65 + (attempt * 30)
-                log(f"[AI] Gemini 429 — aguardando {wait}s")
+                # Evita bloquear o loop principal: entra em cooldown e sai.
+                wait = 3600 + (attempt * 300)
+                log(f"[AI] Gemini 429 — entrando em cooldown por {wait//60} min")
                 _call_times.clear()
-                _AI_DISABLED_UNTIL = time.time() + 900
-                time.sleep(wait)
+                _AI_DISABLED_UNTIL = time.time() + wait
+                return None
             elif status >= 500:
                 log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/3)")
                 if attempt < 2:
@@ -355,7 +358,8 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     h1        = indicators.get("h1") or indicators
     direction = signal.get("dir") or signal.get("direction") or "BUY"
     sym       = signal.get("symbol", "?")
-    score_key = f"{sym}|{direction}|{signal.get('entry')}|{signal.get('sl')}|{signal.get('tp')}|{signal.get('score')}|{signal.get('max_score')}"
+    score_key = f"{sym}|{direction}|{signal.get('setup_type','n/a')}|{signal.get('market_regime','n/a')}|{signal.get('rr','n/a')}"
+    cooldown_key = f"{sym}|{direction}"
 
     cached = _SIGNAL_CACHE.get(score_key)
     if cached and (time.time() - cached[0]) < _SIGNAL_CACHE_TTL:
@@ -365,8 +369,10 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     live_min_conf = int(ai_params.get("live_confluence", 7))
     score_floor = max(7, live_min_conf + 1)
     api_disabled = time.time() < _AI_DISABLED_UNTIL
+    last_call_ts = _SIGNAL_COOLDOWN.get(cooldown_key, 0.0)
+    in_symbol_cooldown = (time.time() - last_call_ts) < _SIGNAL_COOLDOWN_TTL
 
-    use_ai = bool(api_key and not api_disabled and int(signal.get("score", 0) or 0) >= score_floor)
+    use_ai = bool(api_key and not api_disabled and not in_symbol_cooldown and int(signal.get("score", 0) or 0) >= score_floor)
 
     if not use_ai:
         tech_score, tech_reason = _fallback_ai_response(h1, direction)
@@ -374,6 +380,8 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
         _SIGNAL_CACHE[score_key] = (time.time(), result)
         if api_disabled:
             log(f"[AI] {sym} {direction} → fallback técnico ({tech_reason})")
+        elif in_symbol_cooldown:
+            log(f"[AI] {sym} {direction} → cooldown ativo, usando heurística")
         else:
             log(f"[AI] {sym} {direction} → score técnico {tech_score}/10 (heurística)")
         return result
@@ -440,6 +448,7 @@ Histórico recente do par ({len(pair_history)} trades):
     reason     = result.get("reason", "sem análise")
     final = (True, f"{reason}")
     _SIGNAL_CACHE[score_key] = (time.time(), final)
+    _SIGNAL_COOLDOWN[cooldown_key] = time.time()
 
     log(f"[AI] {sym} {direction} → confiança {confidence}/10: {reason}")
     return final
