@@ -52,91 +52,132 @@ def _is_safe_to_trade(bot, symbol):
     return True, ""
 
 
+
+
+def _market_regime(res: dict, mtf: dict | None = None) -> str:
+    """Classifica o mercado para adaptar o tipo de setup."""
+    h1_adx = float(res.get("adx", 0) or 0)
+    aligned = bool(mtf.get("aligned", False)) if mtf else False
+    daily_bias = (mtf.get("daily_bias", "NEUTRO") if mtf else "NEUTRO")
+    h4 = mtf.get("h4") if mtf else None
+    h4_adx = float(h4.get("adx", 0) or 0) if h4 else 0
+
+    if h1_adx >= Config.REGIME_ADX_TRENDING and aligned and daily_bias != "NEUTRO":
+        return "trend"
+    if h1_adx <= Config.REGIME_ADX_RANGING:
+        return "range"
+    if 18 < h1_adx < Config.REGIME_ADX_TRENDING:
+        return "transition"
+    if h4_adx >= Config.REGIME_ADX_STRONG and daily_bias != "NEUTRO":
+        return "trend"
+    return "neutral"
+
+
+def _setup_for_regime(regime: str, direction: str) -> str:
+    if regime == "trend":
+        return "pullback"
+    if regime == "range":
+        return "reversal"
+    if regime == "transition":
+        return "breakout"
+    return "wait"
+
+
 def calc_confluence(res, direction, mtf=None):
+    """
+    Confluência com pesos e lógica por regime.
+    Retorna: score, max_score, checks, passed, min_score, meta
+    """
+    regime = _market_regime(res, mtf)
+    setup_type = _setup_for_regime(regime, direction)
     checks = []
+    weighted = []
     price = res["price"]
 
-    # Técnicos base
-    if direction == "BUY":
-        checks = [
-            ("Preço > EMA200", res["price"] > res["ema200"]),
-            ("EMA9 > EMA21", res["ema9"] > res["ema21"]),
-            ("MACD bullish", res["macd_bull"]),
-            ("RSI entre 40-65", 40 < res["rsi"] < 65),
-            ("ADX > 25", res["adx"] > 25),
-            ("Preço perto da banda inferior", res["price"] < res["lower"] * 1.01),
-            ("Candle de força", res.get("candle_bull", True)),
-        ]
-    else:
-        checks = [
-            ("Preço < EMA200", res["price"] < res["ema200"]),
-            ("EMA9 < EMA21", res["ema9"] < res["ema21"]),
-            ("MACD bearish", res["macd_bear"]),
-            ("RSI entre 35-60", 35 < res["rsi"] < 60),
-            ("ADX > 25", res["adx"] > 25),
-            ("Preço perto da banda superior", res["price"] > res["upper"] * 0.99),
-            ("Candle de força", res.get("candle_bear", True)),
-        ]
+    def add(name: str, ok: bool, weight: int = 1):
+        checks.append((name, bool(ok)))
+        weighted.append((name, bool(ok), int(weight)))
 
-    # SMC
-    fvg = res.get("fvg", {})
-    ob = res.get("ob", {})
-    sweep = res.get("sweep", {})
+    fvg = res.get("fvg", {}) or {}
+    ob = res.get("ob", {}) or {}
+    sweep = res.get("sweep", {}) or {}
+    h4 = mtf.get("h4", {}) if mtf else {}
+    daily_bias = mtf.get("daily_bias", "NEUTRO") if mtf else "NEUTRO"
+    aligned = bool(mtf.get("aligned", False)) if mtf else False
 
-    if direction == "BUY":
-        fvg_active = any(f.get("active") for f in fvg.get("bullish", []))
-        checks.append(("FVG Bullish ativo", fvg_active))
-        ob_active = any(o.get("active") for o in ob.get("bullish", []))
-        checks.append(("Order Block Bullish", ob_active))
-        checks.append(("Liquidity Sweep Bullish", sweep.get("bullish", False)))
-        checks.append(("Estrutura intacta (acima SL)", price > sweep.get("swing_low", 0)))
-    else:
-        fvg_active = any(f.get("active") for f in fvg.get("bearish", []))
-        checks.append(("FVG Bearish ativo", fvg_active))
-        ob_active = any(o.get("active") for o in ob.get("bearish", []))
-        checks.append(("Order Block Bearish", ob_active))
-        checks.append(("Liquidity Sweep Bearish", sweep.get("bearish", False)))
-        checks.append(("Estrutura intacta (abaixo SH)", price < sweep.get("swing_high", float('inf'))))
-
-    # MTF
-    if mtf:
-        checks.append(("MTF H4 alinhado", mtf.get("aligned", False)))
-        h4 = mtf.get("h4", {})
-        if h4:
-            if direction == "BUY":
-                checks.append(("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf'))))
-            else:
-                checks.append(("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0)))
-
-        # ── Daily Bias (D1) ───────────────────────────────────
-        # Profissionais só operam a favor do bias diário
-        daily_bias = mtf.get("daily_bias", "NEUTRO")
+    if regime in ("trend", "transition", "neutral"):
         if direction == "BUY":
-            checks.append(("Daily Bias ALTA (D1)", daily_bias == "ALTA"))
+            add("Preço > EMA200", price > res["ema200"], Config.CONFLUENCE_WEIGHTS.get("ema200", 2))
+            add("EMA9 > EMA21", res["ema9"] > res["ema21"], Config.CONFLUENCE_WEIGHTS.get("ema9_21", 1))
+            add("MACD bullish", res["macd_bull"], Config.CONFLUENCE_WEIGHTS.get("macd", 1))
+            add("RSI favorável", 40 < res["rsi"] < 68, Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
+            add("ADX forte", res["adx"] >= Config.REGIME_ADX_TRENDING, Config.CONFLUENCE_WEIGHTS.get("adx", 2))
+            add("Preço na zona baixa", price < res["lower"] * 1.01, Config.CONFLUENCE_WEIGHTS.get("bands", 1))
+            add("Candle de força", res.get("candle_bull", True), Config.CONFLUENCE_WEIGHTS.get("candle", 1))
+            add("FVG ativo", any(f.get("active") for f in fvg.get("bullish", [])), Config.CONFLUENCE_WEIGHTS.get("fvg", 3))
+            add("OB ativo", any(o.get("active") for o in ob.get("bullish", [])), Config.CONFLUENCE_WEIGHTS.get("ob", 3))
+            add("Sweep de liquidez", sweep.get("bullish", False), Config.CONFLUENCE_WEIGHTS.get("sweep", 2))
+            add("Estrutura limpa", price > sweep.get("swing_low", 0), Config.CONFLUENCE_WEIGHTS.get("structure", 1))
+            add("H4 alinhado", aligned, Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 2))
+            add("H4 > EMA200", h4.get("price", 0) > h4.get("ema200", float('inf')), Config.CONFLUENCE_WEIGHTS.get("mtf_ema200", 1))
+            add("Daily Bias ALTA", daily_bias == "ALTA", 2)
         else:
-            checks.append(("Daily Bias BAIXA (D1)", daily_bias == "BAIXA"))
+            add("Preço < EMA200", price < res["ema200"], Config.CONFLUENCE_WEIGHTS.get("ema200", 2))
+            add("EMA9 < EMA21", res["ema9"] < res["ema21"], Config.CONFLUENCE_WEIGHTS.get("ema9_21", 1))
+            add("MACD bearish", res["macd_bear"], Config.CONFLUENCE_WEIGHTS.get("macd", 1))
+            add("RSI favorável", 32 < res["rsi"] < 60, Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
+            add("ADX forte", res["adx"] >= Config.REGIME_ADX_TRENDING, Config.CONFLUENCE_WEIGHTS.get("adx", 2))
+            add("Preço na zona alta", price > res["upper"] * 0.99, Config.CONFLUENCE_WEIGHTS.get("bands", 1))
+            add("Candle de força", res.get("candle_bear", True), Config.CONFLUENCE_WEIGHTS.get("candle", 1))
+            add("FVG ativo", any(f.get("active") for f in fvg.get("bearish", [])), Config.CONFLUENCE_WEIGHTS.get("fvg", 3))
+            add("OB ativo", any(o.get("active") for o in ob.get("bearish", [])), Config.CONFLUENCE_WEIGHTS.get("ob", 3))
+            add("Sweep de liquidez", sweep.get("bearish", False), Config.CONFLUENCE_WEIGHTS.get("sweep", 2))
+            add("Estrutura limpa", price < sweep.get("swing_high", float('inf')), Config.CONFLUENCE_WEIGHTS.get("structure", 1))
+            add("H4 alinhado", aligned, Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 2))
+            add("H4 < EMA200", h4.get("price", float('inf')) < h4.get("ema200", 0), Config.CONFLUENCE_WEIGHTS.get("mtf_ema200", 1))
+            add("Daily Bias BAIXA", daily_bias == "BAIXA", 2)
 
-        # ── Kill Zone ─────────────────────────────────────────
-        # Janelas institucionais: London Open, NY Open, London Close, Asia
-        # Fora da Kill Zone o sinal ainda pode passar, mas perde 1 ponto
         sym = res.get("symbol", "")
         kill_zone = get_kill_zone(sym)
-        checks.append((f"Kill Zone ({kill_zone or 'fora'})", kill_zone is not None))
+        add(f"Kill Zone ({kill_zone or 'fora'})", kill_zone is not None, 1)
 
-        # ── OTE — Optimal Trade Entry (Fibonacci 62-79%) ──────
-        # Verifica se o preço está no retrace ideal de Fibonacci
-        sweep = res.get("sweep", {})
-        sh    = sweep.get("swing_high")
+        sh = sweep.get("swing_high")
         sl_sw = sweep.get("swing_low")
-        if sh and sl_sw:
-            ote_ok = is_price_in_ote(price, sh, sl_sw, direction)
-        else:
-            ote_ok = False
-        checks.append(("OTE Fibonacci (62-79%)", ote_ok))
+        ote_ok = is_price_in_ote(price, sh, sl_sw, direction) if sh and sl_sw else False
+        add("OTE Fibonacci (62-79%)", ote_ok, 2)
 
-    score = sum(1 for _, ok in checks if ok)
-    passed = score >= Config.MIN_CONFLUENCE
-    return score, len(checks), checks, passed, Config.MIN_CONFLUENCE
+    elif regime == "range":
+        if direction == "BUY":
+            add("RSI sobrevenda", res["rsi"] <= 40, 2)
+            add("Preço abaixo da média", price <= res["ema21"], 1)
+            add("Banda inferior tocada", price <= res["lower"] * 1.01, 2)
+            add("Sweep de fundo", sweep.get("bullish", False), 3)
+            add("FVG/OB de reversão", any(f.get("active") for f in fvg.get("bullish", [])) or any(o.get("active") for o in ob.get("bullish", [])), 3)
+            add("Candle de reversão", res.get("candle_bull", False), 1)
+            add("Daily Bias ALTA", daily_bias in ("ALTA", "NEUTRO"), 1)
+        else:
+            add("RSI sobrecompra", res["rsi"] >= 60, 2)
+            add("Preço acima da média", price >= res["ema21"], 1)
+            add("Banda superior tocada", price >= res["upper"] * 0.99, 2)
+            add("Sweep de topo", sweep.get("bearish", False), 3)
+            add("FVG/OB de reversão", any(f.get("active") for f in fvg.get("bearish", [])) or any(o.get("active") for o in ob.get("bearish", [])), 3)
+            add("Candle de reversão", res.get("candle_bear", False), 1)
+            add("Daily Bias BAIXA", daily_bias in ("BAIXA", "NEUTRO"), 1)
+        add("H4 não oposto", daily_bias != ("BAIXA" if direction == "BUY" else "ALTA"), 2)
+        add("Kill Zone", get_kill_zone(res.get("symbol", "")) is not None, 1)
+
+    score = sum(weight for _, ok, weight in weighted if ok)
+    total = sum(weight for _, _, weight in weighted)
+
+    min_score = Config.REGIME_MIN_CONFLUENCE.get(regime, Config.MIN_CONFLUENCE)
+    if setup_type in ("pullback", "reversal"):
+        min_score = max(1, min_score - 1)
+    if regime == "trend" and aligned:
+        min_score = max(1, min_score - Config.PREMIUM_SETUP_BONUS)
+
+    passed = score >= min_score
+    meta = {"regime": regime, "setup_type": setup_type}
+    return score, total, checks, passed, min_score, meta
 
 def _get_smc_sl_tp(entry, direction, res, mtf, atr):
     """
@@ -241,30 +282,28 @@ def _get_smc_sl_tp(entry, direction, res, mtf, atr):
 def is_weekend():
     return datetime.utcnow().weekday() >= 5
 
+
 def scan(bot):
     # ── Verificações globais ─────────────────────────────────────
     if bot.is_paused():
         return
 
-    # NOVO: Verifica limite de trades por banca antes de tudo
     from utils import get_dynamic_max_trades
     max_trades = get_dynamic_max_trades(bot.balance)
     if len(bot.active_trades) >= max_trades:
         return
 
-    if is_high_impact_news_window(minutes_before=15, minutes_after=30):
-        return
-    if is_weekend():
+    weekend = is_weekend()
+    if weekend:
         return
 
     symbols = list(Config.FXGOLD_ASSETS.keys())
-    random.shuffle(symbols)  # evita viés para o mesmo par toda vez
+    random.shuffle(symbols)
 
     for sym in symbols:
-        # Verificações de segurança
         safe, reason = _is_safe_to_trade(bot, sym)
         if not safe:
-            if reason and "Cooldown" not in reason:  # não loga cooldown toda hora
+            if reason and "Cooldown" not in reason:
                 log(f"[SAFETY] {sym}: {reason}")
             continue
 
@@ -280,16 +319,14 @@ def scan(bot):
             continue
 
         direction = "BUY" if res["cenario"] == "ALTA" else "SELL"
-        sc, tot_c, checks, passed, min_sc = calc_confluence(res, direction, mtf)
+        sc, tot_c, checks, passed, min_sc, meta = calc_confluence(res, direction, mtf)
         if not passed:
             continue
 
         entry = res["price"]
         atr = res.get("atr", 0)
 
-        # ── SL/TP com SMC ────────────────────────────────────────────
         sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
-
         if not sl or not tp:
             log(f"[SMC] {sym}: SL/TP inválido, descartado")
             continue
@@ -297,7 +334,6 @@ def scan(bot):
         sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
         tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
 
-        # Distância em pips (JPY e ouro usam fator diferente)
         if is_jpy_pair(sym):
             pip_factor = 0.01
         elif sym == "XAUUSD":
@@ -307,11 +343,9 @@ def scan(bot):
         sl_pips = round(abs(entry - sl) / pip_factor)
         tp_pips = round(abs(tp  - entry) / pip_factor)
 
-        # ── NOVO: Alavancagem dinâmica ───────────────────────────────
         from utils import get_dynamic_leverage
         eff_lev = get_dynamic_leverage(bot.balance)
 
-        # Turtle Position Sizing com CAP de risco
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
             risk_pct=Config.ATR_RISK_PCT,
@@ -320,85 +354,73 @@ def scan(bot):
         )
 
         min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
-
         dist_sl = abs(entry - sl)
         cs_val  = contract_size_for(sym)
 
-        # Risco com lote mínimo em USD — JPY precisa conversão
         if is_jpy_pair(sym) and entry > 0:
             risk_001_lot = (dist_sl * cs_val * 0.01) / entry
         else:
             risk_001_lot = dist_sl * cs_val * 0.01
-
         risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
 
-        # Filtro de correlação
         est_risk_usd = suggested_risk_usd
         ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
         if not ok_corr:
             log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
             continue
 
-        # Validação de segurança: RR mínimo dinâmico (padrão 1.5, ajustável pela IA)
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
         min_rr     = ai_params.get("min_rr", 1.5)
 
-        # Confluência mínima efetiva — combina 3 camadas:
-        # 1. Sonnet define base (min_confluence)
-        # 2. Opus ajusta pelo viés estratégico mensal (strategy_bias)
-        # 3. Regime em tempo real (live_confluence) ajusta pelo ADX atual
         base_conf = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
         bias      = ai_params.get("strategy_bias", "balanced")
+        regime    = meta.get("regime", ai_params.get("live_regime", "neutral"))
+        setup_type = meta.get("setup_type", "wait")
+        regime_base = Config.REGIME_MIN_CONFLUENCE.get(regime, base_conf)
 
         if bias == "conservative":
-            bias_adj = +1
+            bias_adj = 1
         elif bias == "aggressive":
             bias_adj = -1
         else:
             bias_adj = 0
 
-        # live_confluence já tem o ajuste de regime embutido (calculado no heartbeat)
-        live_conf = ai_params.get("live_confluence", base_conf)
-        effective_min_conf = max(6, min(9, live_conf + bias_adj))
+        live_conf = ai_params.get("live_confluence", regime_base)
+        effective_min_conf = max(regime_base, live_conf + bias_adj)
+
+        news_window = is_high_impact_news_window(minutes_before=15, minutes_after=30, symbol=sym)
+        if news_window:
+            effective_min_conf += 1
 
         if sc < effective_min_conf:
-            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} "
-                f"(base={base_conf}, bias={bias}, regime={ai_params.get('live_regime','?')}), descartado")
+            log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} (regime={regime}, setup={setup_type}, bias={bias}), descartado")
             continue
 
-        if rr < min_rr:
-            log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {min_rr}, descartado")
+        min_rr_regime = Config.REGIME_MIN_RR.get(regime, min_rr)
+        effective_min_rr = max(min_rr, min_rr_regime)
+        if rr < effective_min_rr:
+            log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {effective_min_rr}, descartado")
             continue
 
-        # ── Filtro SMC + Daily Bias obrigatório ─────────────────────
-        # Para entrar, o sinal DEVE ter:
-        #   (FVG ativo OU Order Block ativo) E H4 alinhado E Daily Bias correto
-        check_map = {nm: ok for nm, ok in checks}
+        check_map = {name: ok for name, ok in checks}
 
-        has_fvg = check_map.get(
-            "FVG Bullish ativo" if direction == "BUY" else "FVG Bearish ativo", False)
-        has_ob  = check_map.get(
-            "Order Block Bullish" if direction == "BUY" else "Order Block Bearish", False)
-        has_h4  = check_map.get("MTF H4 alinhado", False)
-        has_daily = check_map.get(
-            "Daily Bias ALTA (D1)" if direction == "BUY" else "Daily Bias BAIXA (D1)", False)
-
-        smc_ok  = has_fvg or has_ob
-        quality = smc_ok and has_h4 and has_daily
+        if regime in ("trend", "transition"):
+            has_fvg = check_map.get("FVG ativo", False)
+            has_ob  = check_map.get("OB ativo", False)
+            has_h4  = check_map.get("H4 alinhado", False)
+            has_daily = check_map.get("Daily Bias ALTA" if direction == "BUY" else "Daily Bias BAIXA", False)
+            quality = (has_fvg or has_ob) and has_h4 and has_daily
+        else:
+            sweep_ok = check_map.get("Sweep de fundo" if direction == "BUY" else "Sweep de topo", False)
+            band_ok  = check_map.get("Banda inferior tocada" if direction == "BUY" else "Banda superior tocada", False)
+            rsi_ok   = check_map.get("RSI sobrevenda" if direction == "BUY" else "RSI sobrecompra", False)
+            quality  = sweep_ok and band_ok and rsi_ok
 
         if not quality:
-            reason = []
-            if not smc_ok:
-                reason.append("sem FVG/OB ativo")
-            if not has_h4:
-                reason.append("H4 desalinhado")
-            if not has_daily:
-                reason.append("Daily Bias contrário")
-            log(f"[SMC] {sym} {direction}: filtro bloqueou — {', '.join(reason)}")
+            log(f"[SETUP] {sym} {direction}: setup {regime}/{setup_type} não atingiu a qualidade mínima")
             continue
 
-        # Pares bloqueados pela IA (baseado em aprendizado)
         if sym in ai_params.get("blocked_pairs", []):
             log(f"[AI] {sym} bloqueado por aprendizado — WR histórico muito baixo")
             continue
@@ -435,16 +457,16 @@ def scan(bot):
             "ote_active": check_map.get("OTE Fibonacci (62-79%)", False),
             "sl_source": sl_src,
             "tp_source": tp_src,
+            "market_regime": regime,
+            "setup_type": setup_type,
         }
 
-        # ── Validação por IA ─────────────────────────────────────────
         approved, ai_reason = validate_signal(pend, mtf, bot)
         if not approved:
             log(f"[AI] {sym} {direction} rejeitado: {ai_reason}")
             bot.next_pending_id()
             continue
 
-        # Extrai confiança do motivo (formato "IA (N/10): motivo")
         ai_confidence = 0
         try:
             if "IA (" in ai_reason:
@@ -457,18 +479,6 @@ def scan(bot):
         pend["ai_confidence"] = ai_confidence
         bot.add_pending(pend)
         break
-
-
-# ═══════════════════════════════════════════════════════════
-# SNAPSHOT DE CONFLUÊNCIA — sem gerar sinal
-# ═══════════════════════════════════════════════════════════
-
-# Cache do snapshot de confluência — evita recalcular a cada 60s
-_snapshot_cache: list = []
-_snapshot_ts: float  = 0.0
-_SNAPSHOT_TTL: int   = 600  # 10 minutos
-
-
 def get_confluence_snapshot() -> list[dict]:
     """
     Varre todos os pares e retorna o score de confluência atual.
@@ -487,8 +497,8 @@ def get_confluence_snapshot() -> list[dict]:
             if not h1:
                 continue
 
-            buy_sc,  buy_tot,  buy_checks,  _, _ = calc_confluence(h1, "BUY",  mtf)
-            sell_sc, sell_tot, sell_checks, _, _ = calc_confluence(h1, "SELL", mtf)
+            buy_sc,  buy_tot,  buy_checks,  _, _, buy_meta = calc_confluence(h1, "BUY",  mtf)
+            sell_sc, sell_tot, sell_checks, _, _, sell_meta = calc_confluence(h1, "SELL", mtf)
 
             best_dir   = "BUY" if buy_sc >= sell_sc else "SELL"
             best_score = max(buy_sc, sell_sc)
@@ -504,6 +514,9 @@ def get_confluence_snapshot() -> list[dict]:
                 "adx":         round(h1.get("adx", 0), 1),
                 "cenario":     h1.get("cenario", "NEUTRO"),
                 "h4_aligned":  mtf.get("aligned", False),
+                "market_regime": buy_meta.get("regime", "neutral"),
+                "buy_setup":   buy_meta.get("setup_type", "wait"),
+                "sell_setup":  sell_meta.get("setup_type", "wait"),
                 "buy_checks":  buy_checks,
                 "sell_checks": sell_checks,
             })

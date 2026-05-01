@@ -130,6 +130,30 @@ class Config:
     MIN_CONFLUENCE = 6
 
     # ═══════════════════════════════════════════════════════════════════════════════
+    # PERFIL PROFISSIONAL DE EXECUÇÃO
+    # ═══════════════════════════════════════════════════════════════════════════════
+    REGIME_MIN_CONFLUENCE = {
+        "trend": 11,
+        "range": 9,
+        "transition": 10,
+        "neutral": 10,
+    }
+    REGIME_MIN_RR = {
+        "trend": 2.0,
+        "range": 1.6,
+        "transition": 1.8,
+        "neutral": 1.8,
+    }
+    REGIME_ADX_TRENDING = 25
+    REGIME_ADX_RANGING  = 18
+    REGIME_ADX_STRONG   = 30
+    PREMIUM_SETUP_BONUS = 1
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # PRÉ-SINAL / RADAR PREMIUM
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    # ═══════════════════════════════════════════════════════════════════════════════
     # PRÉ-SINAL / RADAR PREMIUM
     # ═══════════════════════════════════════════════════════════════════════════════
     PRE_SIGNAL_COOLDOWN = 1800   # 30 minutos entre alertas do mesmo par/direção

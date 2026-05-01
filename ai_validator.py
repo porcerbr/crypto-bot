@@ -334,14 +334,15 @@ Você é um validador de sinais forex/ouro especializado em SMC (Smart Money Con
 Sua tarefa: avaliar se um sinal técnico deve ser enviado ao trader ou rejeitado.
 
 Rejeite se:
-- ADX < 18 (mercado sem direção)
-- RSI > 72 em BUY ou RSI < 28 em SELL (zona extrema oposta)
-- H4 desalinhado com H1 (sem confluência multi-timeframe)
+- ADX < 18 quando o setup é de tendência
+- RSI extremo contra a direção do setup
+- H4 desalinhado com H1 em setups de trend/breakout
 - Últimos 3 trades no par todos LOSS
-- FVG e OB ambos inativos
+- FVG e OB ambos inativos em setups de trend
 
 Aprove com alta confiança (>= 8) se:
-- FVG ativo + OB ativo + sweep confirmado + H4 alinhado
+- Em tendência: FVG ou OB ativo + sweep confirmado + H4 alinhado
+- Em lateralização: sweep + extremidade de banda + RSI de reversão
 - ADX >= 25 e MACD confirmando direção
 - WR recente do par >= 55%
 
@@ -413,7 +414,7 @@ Indicadores H1:
 - Sweep bull: {sweep.get('bullish')} | bear: {sweep.get('bearish')}
 
 H4: alinhado={indicators.get('aligned',False)} | cenário={indicators.get('h4_cenario','NEUTRO')}
-Regime do par: {regime_info} | Viés estratégico: {bias}
+Regime do par: {regime_info} | Viés estratégico: {bias} | Setup: {signal.get('setup_type', 'n/a')}
 
 Histórico par ({len(pair_history)} trades): WR {pair_wr}% | Últimos: {last_results}
 WR geral do bot: {round(bot.wins / max(bot.wins + bot.losses, 1) * 100, 1)}%
