@@ -141,7 +141,7 @@ def trade_breakdown(history: Iterable[dict]) -> dict:
 
     for trade in history_list:
         sym = trade.get("symbol", "?")
-        direc = trade.get("dir", "?")
+        direction = trade.get("dir") or trade.get("direction") or trade.get("direc", "?")
         pnl = _safe_float(trade.get("pnl", 0.0))
 
         sym_bucket = by_symbol.setdefault(sym, {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0})
@@ -152,7 +152,7 @@ def trade_breakdown(history: Iterable[dict]) -> dict:
         elif trade.get("result") == "LOSS":
             sym_bucket["losses"] += 1
 
-        dir_bucket = by_dir.setdefault(direc, {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0})
+        dir_bucket = by_dir.setdefault(direction, {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0})
         dir_bucket["trades"] += 1
         dir_bucket["pnl"] += pnl
         if trade.get("result") == "WIN":

@@ -201,7 +201,7 @@ def _send_confluence_report(bot):
         for item in snapshot:
             score  = item["best_score"]
             total  = item["total"]
-            direc  = item["best_dir"]
+            direction = item.get("best_dir", "—")
             sym    = item["symbol"]
             bar    = "🟢" * min(score, 10) + "⚪" * max(0, min(total, 10) - score)
             h4     = "✅" if item["h4_aligned"] else "❌"
@@ -219,7 +219,7 @@ def _send_confluence_report(bot):
                 status = "😴"
 
             lines.append(
-                f"{status} {sym} {direc} {score}/{total}"
+                f"{status} {sym} {direction} {score}/{total}"
                 + (" (bloqueado)" if locked else "") + "\n"
                 f"  {bar}\n"
                 f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
@@ -333,11 +333,30 @@ def bot_loop(bot):
         if not bot.is_paused():
             try:
                 bot.expire_pending_signals(max_age_seconds=Config.PENDING_EXPIRY_SECONDS)
-                scan(bot)
-                bot.monitor_trades()
-
             except Exception as e:
-                error_msg = str(e)
+                error_msg = f"expire_pending_signals: {e}"
+                tb = traceback.format_exc()
+                log(f"Erro no loop: {error_msg}")
+                send_error_notification(bot, error_msg, tb)
+                append_log("loop_error", {"error": error_msg})
+                time.sleep(Config.SCAN_INTERVAL)
+                continue
+
+            try:
+                scan(bot)
+            except Exception as e:
+                error_msg = f"scan: {e}"
+                tb = traceback.format_exc()
+                log(f"Erro no loop: {error_msg}")
+                send_error_notification(bot, error_msg, tb)
+                append_log("loop_error", {"error": error_msg})
+                time.sleep(Config.SCAN_INTERVAL)
+                continue
+
+            try:
+                bot.monitor_trades()
+            except Exception as e:
+                error_msg = f"monitor_trades: {e}"
                 tb = traceback.format_exc()
                 log(f"Erro no loop: {error_msg}")
                 send_error_notification(bot, error_msg, tb)

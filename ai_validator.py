@@ -367,7 +367,7 @@ def validate_signal(signal: dict, indicators: dict, bot) -> tuple[bool, str]:
     api_key = _get_api_key()
 
     h1        = indicators.get("h1") or indicators
-    direction = signal.get("dir", "BUY")
+    direction = signal.get("dir") or signal.get("direction") or "BUY"
     sym       = signal.get("symbol", "?")
     sweep     = h1.get("sweep", {}) or {}
 

@@ -318,7 +318,7 @@ def scan(bot):
         if res.get("cenario") == "NEUTRO":
             continue
 
-        direction = "BUY" if res["cenario"] == "ALTA" else "SELL"
+        direction = res.get("dir") or res.get("direction") or ("BUY" if res["cenario"] == "ALTA" else "SELL")
         sc, tot_c, checks, passed, min_sc, meta = calc_confluence(res, direction, mtf)
         if not passed:
             continue
@@ -553,7 +553,7 @@ def check_near_signals(bot) -> None:
         sym   = item["symbol"]
         score = item["best_score"]
         total = item["total"]
-        direc = item["best_dir"]
+        direction = item.get("best_dir") or item.get("direction") or item.get("dir") or "—"
 
         # Ignora pares bloqueados pelo SAFETY
         if sym not in allowed_symbols:
@@ -566,14 +566,14 @@ def check_near_signals(bot) -> None:
         if now - last_alert < 7200:
             continue
 
-        checks  = item["buy_checks"] if direc == "BUY" else item["sell_checks"]
+        checks  = item["buy_checks"] if direction == "BUY" else item["sell_checks"]
         missing = [name for name, ok in checks if not ok][:3]
 
         bars = "🟢" * score + "⚪" * (total - score)
         msg  = (
             f"📊 QUASE SINAL — {sym}\n"
             f"——————————————\n"
-            f"Direção: {direc} | Score: {score}/{total}\n"
+            f"Direção: {direction} | Score: {score}/{total}\n"
             f"{bars}\n"
             f"RSI: {item['rsi']} | ADX: {item['adx']}\n"
             f"H4: {'✅ Alinhado' if item['h4_aligned'] else '❌ Desalinhado'}\n\n"
@@ -583,4 +583,4 @@ def check_near_signals(bot) -> None:
         )
         bot.send(msg)
         bot._near_signal_cooldown[sym] = now
-        log(f"[NEAR] {sym} {direc} {score}/{total} — alerta enviado")
+        log(f"[NEAR] {sym} {direction} {score}/{total} — alerta enviado")

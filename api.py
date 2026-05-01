@@ -68,7 +68,7 @@ def create_api(bot):
             sl    = t["sl"]
             tp    = t["tp"]
             lot   = t.get("lot", 0.01)
-            direc = t["dir"]
+            direction = t.get("dir") or t.get("direction") or t.get("direc", "—")
             margin = t.get("margin_required", 0)
 
             cur_price = _get_cached_price(sym, entry)
@@ -76,10 +76,10 @@ def create_api(bot):
 
             # P&L unificado (mesma fun\u00e7\u00e3o usada em bot.close_trade)
             pnl_usd = round(
-                calc_pnl_usd(sym, direc, entry, cur_price, lot, usdjpy_price=usdjpy),
+                calc_pnl_usd(sym, direction, entry, cur_price, lot, usdjpy_price=usdjpy),
                 2,
             )
-            pnl_pips = calc_pnl_pips(sym, direc, entry, cur_price)
+            pnl_pips = calc_pnl_pips(sym, direction, entry, cur_price)
             pnl_pct  = round(pnl_usd / margin * 100, 1) if margin > 0 else 0.0
 
             # Dist\u00e2ncias em pips (sempre positivas)
@@ -88,7 +88,7 @@ def create_api(bot):
 
             # Progresso at\u00e9 TP (0\u2013100%), considerando dire\u00e7\u00e3o
             total_range = abs(tp - entry)
-            if direc == "BUY":
+            if direction == "BUY":
                 moved = max(0, cur_price - entry)
             else:
                 moved = max(0, entry - cur_price)
@@ -97,7 +97,7 @@ def create_api(bot):
             active.append({
                 "symbol":             sym,
                 "name":               t.get("name", ""),
-                "dir":                direc,
+                "dir":                direction,
                 "entry":              entry,
                 "sl":                 sl,
                 "tp":                 tp,

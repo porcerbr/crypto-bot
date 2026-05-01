@@ -366,10 +366,16 @@ class TradingBot:
         bias_str  = f"📅 Daily Bias: {bias}"
         ote_str   = "🎯 OTE Fibonacci: ✅ No retrace ideal" if ote else "🎯 OTE Fibonacci: ⬜ Fora da zona"
 
+        direction = pend.get("dir") or pend.get("direction") or pend.get("direc", "—")
+        sl_pips = pend.get("sl_pips", "—")
+        tp_pips = pend.get("tp_pips", "—")
+        sl_dir = "−" if direction == "BUY" else "+"
+        tp_dir = "+" if direction == "BUY" else "−"
+
         lines = [
             "🎯 SINAL PENDENTE — " + pend["symbol"] + " (" + pend["name"] + ")",
             "——————————————————",
-            "📌 Direção: " + direc,
+            "📌 Direção: " + direction,
             "📍 Entrada:  " + fmt(pend["entry"]),
             "🛑 SL:       " + fmt(pend["sl"]) + "  (" + sl_dir + str(sl_pips) + " pips)",
             "🎯 TP:       " + fmt(pend["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
