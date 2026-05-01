@@ -431,7 +431,7 @@ def scan(bot):
 
         news_window = is_high_impact_news_window(minutes_before=15, minutes_after=30, symbol=sym)
         if news_window:
-            effective_min_conf += 1
+            effective_min_conf = max(effective_min_conf - 1, 1)
 
         if sc < effective_min_conf:
             log(f"[CONF] {sym}: score {sc} < mínimo {effective_min_conf} (regime={regime}, setup={setup_type}, bias={bias}), descartado")
@@ -450,12 +450,14 @@ def scan(bot):
             has_ob  = check_map.get("OB ativo", False)
             has_h4  = check_map.get("H4 alinhado", False)
             has_daily = check_map.get("Daily Bias ALTA" if direction == "BUY" else "Daily Bias BAIXA", False)
-            quality = (has_fvg or has_ob) and has_h4 and has_daily
+            # Para regimes tendenciais, dois pilares confirmados já bastam.
+            quality = (has_fvg or has_ob) and has_h4 and (has_daily or sc >= effective_min_conf + 1)
         else:
             sweep_ok = check_map.get("Sweep de fundo" if direction == "BUY" else "Sweep de topo", False)
             band_ok  = check_map.get("Banda inferior tocada" if direction == "BUY" else "Banda superior tocada", False)
             rsi_ok   = check_map.get("RSI sobrevenda" if direction == "BUY" else "RSI sobrecompra", False)
-            quality  = sweep_ok and band_ok and rsi_ok
+            # Em range, um sweep + qualquer 1 confirmação adicional já é suficiente.
+            quality  = sweep_ok and (band_ok or rsi_ok)
 
         if not quality:
             log(f"[SETUP] {sym} {direction}: setup {regime}/{setup_type} não atingiu a qualidade mínima")

@@ -127,31 +127,42 @@ class TradingBot:
             log(f"[SIGNAL] {sym}: risco excede limite de ${round(max_risk_usd, 2)}")
             return False
 
-        plan = calc_trade_plan(sym, pend["entry"], eff_lev, self.balance, 0)
-        if not plan["ok"]:
-            log(f"[SIGNAL] {sym}: plano invalido — {plan['error']}")
+        # Usa o lote sugerido pelo motor técnico para evitar plano com margem zerada.
+        lot = float(pend.get("suggested_lot", Config.MIN_LOT) or Config.MIN_LOT)
+        if lot < Config.MIN_LOT:
+            lot = Config.MIN_LOT
+
+        margin_required = calc_margin(sym, pend["entry"], eff_lev, lot)
+        try:
+            from risk import commission_for
+            commission = commission_for(sym, lot)
+        except Exception:
+            commission = 0
+
+        if margin_required <= 0:
+            log(f"[SIGNAL] {sym}: margem calculada inválida")
             return False
-        if plan["margin_required"] > self.balance * 0.8:
+        if margin_required > self.balance * 0.8:
             log(f"[SIGNAL] {sym}: margem excede 80% do saldo")
             return False
 
         used = self._get_used_margin()
-        free_margin = self.balance - used - plan["margin_required"]
+        free_margin = self.balance - used - margin_required
         min_free_pct = get_min_free_margin_pct(self.balance)
         if free_margin < self.balance * min_free_pct:
             log(f"[SIGNAL] {sym}: margem livre insuficiente")
             return False
 
-        ok, msg = self._check_margin_safety(plan["margin_required"])
+        ok, msg = self._check_margin_safety(margin_required)
         if not ok:
             log(f"[SIGNAL] {sym}: {msg}")
             return False
 
         trade = {
             **pend,
-            "lot":                plan["lot"],
-            "margin_required":    plan["margin_required"],
-            "commission":         plan["commission"],
+            "lot":                round(lot, 2),
+            "margin_required":    round(margin_required, 2),
+            "commission":         round(commission, 2),
             "opened_at":          pend["created_at"],
             "wallet_before":      self.balance,
             "trailing_activated": False,
@@ -159,7 +170,7 @@ class TradingBot:
             "ai_approved":        pend.get("ai_approved", True),
             "ai_confidence":      pend.get("ai_confidence", 0),
         }
-        self.balance -= plan["margin_required"]
+        self.balance -= margin_required
         self.active_trades.append(trade)
 
         self.send_signal_notification(trade)

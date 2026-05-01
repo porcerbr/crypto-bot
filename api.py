@@ -7,8 +7,8 @@ Este bot n\u00e3o executa ordens em corretora real.
 """
 
 import os
-from flask import Flask, jsonify, request, render_template_string
-from flask_cors import CORS
+from pathlib import Path
+from flask import Flask, jsonify, request, Response
 
 from config import Config
 from utils import (
@@ -40,26 +40,57 @@ def _get_usdjpy_price() -> float:
 
 def create_api(bot):
     app = Flask(__name__)
-    CORS(app)
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # ═══════════════════════════════════════════════════════════════════════════════
     # DASHBOARD HTML
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    @app.route("/")
-    def index():
-        try:
-            with open("dashboard.html", "r", encoding="utf-8") as f:
-                html = f.read()
-            return render_template_string(html)
-        except FileNotFoundError:
-            return (
-                "<h1>Dashboard n\u00e3o encontrado</h1>"
-                "<p>Coloque o arquivo dashboard.html na raiz do projeto.</p>"
-            ), 404
+    # ═══════════════════════════════════════════════════════════════════════════════
+    _dashboard_candidates = [
+        Path(__file__).with_name("dashboard.html"),
+        Path.cwd() / "dashboard.html",
+    ]
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # STATUS \u2014 estado geral + trades ativos com P&L unificado
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    def _load_dashboard_html() -> str:
+        for candidate in _dashboard_candidates:
+            try:
+                if candidate.exists() and candidate.is_file():
+                    html = candidate.read_text(encoding="utf-8")
+                    if html.strip():
+                        return html
+            except Exception:
+                continue
+
+        return """<!doctype html>
+<html lang='pt-BR'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <title>Sniper Bot Dashboard</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:32px}
+    .card{max-width:720px;margin:48px auto;background:#111827;border:1px solid #253041;border-radius:20px;padding:24px;box-shadow:0 20px 80px rgba(0,0,0,.35)}
+    h1{margin:0 0 8px;font-size:28px} p{color:#a7b4c3;line-height:1.6}
+    code{background:#0f1720;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class='card'>
+    <h1>Dashboard indisponível</h1>
+    <p>O arquivo <code>dashboard.html</code> não foi encontrado no deploy atual.</p>
+    <p>Coloque o arquivo na raiz do projeto ou acesse <code>/api/health</code> para confirmar que o bot está vivo.</p>
+  </div>
+</body>
+</html>"""
+
+    def _dashboard_response():
+        html = _load_dashboard_html()
+        return Response(html, content_type="text/html; charset=utf-8")
+
+    @app.route("/")
+    @app.route("/dashboard")
+    @app.route("/dashboard.html")
+    def index():
+        return _dashboard_response()
+
     @app.route("/api/status")
     def status():
         usdjpy = _get_usdjpy_price()

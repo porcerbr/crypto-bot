@@ -14,12 +14,13 @@ HIGH_IMPACT_WINDOWS = [
 ]
 
 USD_SENSITIVE = {"EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDJPY", "USDCAD", "USDCHF", "XAUUSD"}
+_LAST_NEWS_LOG: dict[str, float] = {}
 
 
 def is_high_impact_news_window(minutes_before: int = 15, minutes_after: int = 30, symbol: str | None = None) -> bool:
     """
     Retorna True apenas durante uma janela curta de evento de alto impacto.
-    Sem "bloqueio por vários dias": a proteção é pontual.
+    O log é limitado por evento para não poluir a dashboard.
     """
     now = datetime.now(timezone.utc)
     dow = now.weekday()
@@ -32,7 +33,12 @@ def is_high_impact_news_window(minutes_before: int = 15, minutes_after: int = 30
         end   = w["eh"] * 60 + w["em"] + minutes_after
         if start <= hm <= end:
             if symbol is None or symbol in USD_SENSITIVE:
-                log(f"[NEWS] Janela {w['name']} ativa — setup reduzido")
+                key = f"{w['name']}|{dow}|{start}|{end}"
+                last = _LAST_NEWS_LOG.get(key, 0.0)
+                current = now.timestamp()
+                if current - last > 900:
+                    log(f"[NEWS] Janela {w['name']} ativa — setup reduzido")
+                    _LAST_NEWS_LOG[key] = current
                 return True
 
     return False
