@@ -459,7 +459,6 @@ def main():
             pass
         sys.exit(1)
 
-
 if __name__ == "__main__":
     # Validação de configuração
     errors = Config.validate()
@@ -470,5 +469,16 @@ if __name__ == "__main__":
         print("\nDefina as variáveis de ambiente e tente novamente.\n")
         if any("❌" in err for err in errors):
             sys.exit(1)
-    
-    main()
+
+    # roda o main (bot) em thread separada
+    threading.Thread(target=main, daemon=True).start()
+
+    # porta dinâmica do Railway
+    port = int(os.environ.get("PORT", 8080))
+
+    print(f"[API] Rodando na porta {port}")
+
+    # sobe servidor web
+    app.run(host="0.0.0.0", port=port)
+
+  
