@@ -1,219 +1,107 @@
-"""
-strategy/analyzer.py — Análise de mercado e scoring
-Recebe o DataFrame de preços e retorna um objeto Analysis com:
-  - Indicadores calculados
-  - Score de 0-100
-  - Direção recomendada
-  - Regime de mercado
-  - Justificativa detalhada
-"""
+"""Análise técnica de mercado.
 
-from dataclasses import dataclass, field
-from typing import Literal
-from datetime import datetime
+Calcula indicadores clássicos (RSI, Médias Móveis, Bollinger, ATR)
+para fornecer contexto ao gerador de sinais.
+"""
+import logging
+from dataclasses import dataclass
+from typing import Dict, Optional
+
+import numpy as np
 import pandas as pd
-from loguru import logger
 
-from core.config import settings
-from strategy import indicators as ind
-
-
-Direction = Literal["long", "short", "neutral"]
-Regime = Literal["trending_up", "trending_down", "ranging", "volatile", "unknown"]
+logger = logging.getLogger("MarketAnalyzer")
 
 
 @dataclass
-class Analysis:
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    symbol: str = ""
-    direction: Direction = "neutral"
-    score: float = 0.0
-    market_regime: Regime = "unknown"
-    reasons: list[str] = field(default_factory=list)
-    blocked_reasons: list[str] = field(default_factory=list)
-
-    # Indicadores (snapshot)
-    rsi: float = 0.0
-    macd_line: float = 0.0
-    macd_signal: float = 0.0
-    macd_hist: float = 0.0
+class MarketContext:
+    """Contexto de mercado calculado a partir dos dados."""
+    trend: str = "neutral"  # up, down, neutral
+    volatility: float = 0.0
+    rsi: float = 50.0
     ema_fast: float = 0.0
     ema_slow: float = 0.0
-    bb_upper: float = 0.0
-    bb_middle: float = 0.0
-    bb_lower: float = 0.0
-    adx: float = 0.0
+    bb_position: float = 0.5  # 0=inferior, 0.5=média, 1=superior
+    volume_ratio: float = 1.0
     atr: float = 0.0
-    volume_ratio: float = 0.0
     support: float = 0.0
     resistance: float = 0.0
-    close: float = 0.0
 
 
 class MarketAnalyzer:
-    """
-    Sistema de análise multi-indicador com pontuação ponderada.
+    """Analisador técnico com múltiplos indicadores."""
 
-    Pesos dos indicadores:
-      RSI          → 20 pts
-      MACD         → 25 pts
-      EMA crossover → 20 pts
-      Bollinger    → 15 pts
-      Volume       → 10 pts
-      ADX (força)  → 10 pts
-    Total: 100 pts — sinal ativado acima de MIN_SIGNAL_SCORE
-    """
+    def analyze(self, df: pd.DataFrame) -> MarketContext:
+        """Calcula todos os indicadores e retorna contexto."""
+        ctx = MarketContext()
 
-    def analyze(self, df: pd.DataFrame) -> Analysis:
-        analysis = Analysis(symbol=settings.SYMBOL)
-
-        try:
-            analysis = self._compute_indicators(df, analysis)
-            analysis = self._detect_regime(df, analysis)
-            analysis = self._score_and_direction(analysis)
-        except Exception as exc:
-            logger.error(f"Erro no analyzer: {exc}", exc_info=True)
-            analysis.direction = "neutral"
-            analysis.score = 0.0
-
-        return analysis
-
-    # ── Indicadores ───────────────────────────────────────────────
-
-    def _compute_indicators(self, df: pd.DataFrame, a: Analysis) -> Analysis:
         close = df["close"]
         high = df["high"]
         low = df["low"]
-        volume = df["volume"]
+        volume = df.get("volume", pd.Series([0] * len(df)))
 
-        rsi_s = ind.rsi(close, settings.RSI_PERIOD)
-        macd_l, macd_sig, macd_h = ind.macd(
-            close, settings.MACD_FAST, settings.MACD_SLOW, settings.MACD_SIGNAL
-        )
-        ema_f = ind.ema(close, settings.EMA_FAST)
-        ema_sl = ind.ema(close, settings.EMA_SLOW)
-        bb_up, bb_mid, bb_lo = ind.bollinger_bands(close, settings.BB_PERIOD, settings.BB_STD)
-        adx_s = ind.adx(high, low, close)
-        atr_s = ind.atr(high, low, close)
-        vol_sma = ind.volume_sma(volume)
-        support, resistance = ind.support_resistance(high, low)
+        # Tendência via EMAs
+        ctx.ema_fast = self._ema(close, 9)
+        ctx.ema_slow = self._ema(close, 21)
 
-        a.close = float(close.iloc[-1])
-        a.rsi = float(rsi_s.iloc[-1])
-        a.macd_line = float(macd_l.iloc[-1])
-        a.macd_signal = float(macd_sig.iloc[-1])
-        a.macd_hist = float(macd_h.iloc[-1])
-        a.ema_fast = float(ema_f.iloc[-1])
-        a.ema_slow = float(ema_sl.iloc[-1])
-        a.bb_upper = float(bb_up.iloc[-1])
-        a.bb_middle = float(bb_mid.iloc[-1])
-        a.bb_lower = float(bb_lo.iloc[-1])
-        a.adx = float(adx_s.iloc[-1])
-        a.atr = float(atr_s.iloc[-1])
-        a.volume_ratio = float(volume.iloc[-1] / vol_sma.iloc[-1]) if float(vol_sma.iloc[-1]) > 0 else 1.0
-        a.support = support
-        a.resistance = resistance
-        return a
-
-    # ── Regime ────────────────────────────────────────────────────
-
-    def _detect_regime(self, df: pd.DataFrame, a: Analysis) -> Analysis:
-        bb_width = (a.bb_upper - a.bb_lower) / a.bb_middle if a.bb_middle > 0 else 0
-        if a.adx > 25:
-            a.market_regime = "trending_up" if a.ema_fast > a.ema_slow else "trending_down"
-        elif bb_width > 0.08:
-            a.market_regime = "volatile"
+        if ctx.ema_fast > ctx.ema_slow * 1.001:
+            ctx.trend = "up"
+        elif ctx.ema_fast < ctx.ema_slow * 0.999:
+            ctx.trend = "down"
         else:
-            a.market_regime = "ranging"
-        return a
+            ctx.trend = "neutral"
 
-    # ── Scoring ───────────────────────────────────────────────────
+        # RSI
+        ctx.rsi = self._rsi(close, 14)
 
-    def _score_and_direction(self, a: Analysis) -> Analysis:
-        long_score = 0.0
-        short_score = 0.0
+        # Bollinger Bands position
+        ctx.bb_position = self._bb_position(close, 20)
 
-        # ── RSI (20 pts) ───────────────────────────────────────
-        if a.rsi < settings.RSI_OVERSOLD:
-            long_score += 20
-            a.reasons.append(f"RSI={a.rsi:.1f} em zona de sobrevenda")
-        elif a.rsi > settings.RSI_OVERBOUGHT:
-            short_score += 20
-            a.reasons.append(f"RSI={a.rsi:.1f} em zona de sobrecompra")
-        elif 40 <= a.rsi <= 55:
-            long_score += 5
-            short_score += 5
-            a.reasons.append(f"RSI={a.rsi:.1f} neutro")
+        # Volatilidade (ATR percentual)
+        ctx.atr = self._atr(high, low, close, 14)
+        ctx.volatility = (ctx.atr / close.iloc[-1]) * 100 if close.iloc[-1] != 0 else 0
 
-        # ── MACD (25 pts) ──────────────────────────────────────
-        if a.macd_line > a.macd_signal and a.macd_hist > 0:
-            long_score += 25
-            a.reasons.append(f"MACD bullish (hist={a.macd_hist:.4f})")
-        elif a.macd_line < a.macd_signal and a.macd_hist < 0:
-            short_score += 25
-            a.reasons.append(f"MACD bearish (hist={a.macd_hist:.4f})")
-        elif abs(a.macd_hist) < 0.0001:
-            long_score += 5
-            short_score += 5
+        # Volume ratio vs média
+        avg_vol = volume.rolling(20).mean().iloc[-1]
+        last_vol = volume.iloc[-1]
+        ctx.volume_ratio = (last_vol / avg_vol) if avg_vol > 0 else 1.0
 
-        # ── EMA Cross (20 pts) ─────────────────────────────────
-        ema_gap_pct = abs(a.ema_fast - a.ema_slow) / a.ema_slow * 100 if a.ema_slow > 0 else 0
-        if a.ema_fast > a.ema_slow:
-            pts = min(20, 10 + ema_gap_pct * 2)
-            long_score += pts
-            a.reasons.append(f"EMA fast > slow ({ema_gap_pct:.2f}% gap)")
-        elif a.ema_fast < a.ema_slow:
-            pts = min(20, 10 + ema_gap_pct * 2)
-            short_score += pts
-            a.reasons.append(f"EMA fast < slow ({ema_gap_pct:.2f}% gap)")
+        # Suporte/Resistência simples (mínimos/máximos recentes)
+        ctx.support = low.rolling(20).min().iloc[-1]
+        ctx.resistance = high.rolling(20).max().iloc[-1]
 
-        # ── Bollinger Bands (15 pts) ───────────────────────────
-        bb_pos = (a.close - a.bb_lower) / (a.bb_upper - a.bb_lower) if (a.bb_upper - a.bb_lower) > 0 else 0.5
-        if bb_pos < 0.2:
-            long_score += 15
-            a.reasons.append(f"Preço próximo à banda inferior (BB pos={bb_pos:.2f})")
-        elif bb_pos > 0.8:
-            short_score += 15
-            a.reasons.append(f"Preço próximo à banda superior (BB pos={bb_pos:.2f})")
-        else:
-            long_score += 5
-            short_score += 5
+        logger.debug(f"Contexto: trend={ctx.trend}, rsi={ctx.rsi:.1f}, vol={ctx.volatility:.2f}%")
+        return ctx
 
-        # ── Volume (10 pts) ────────────────────────────────────
-        if a.volume_ratio >= 1.5:
-            if long_score > short_score:
-                long_score += 10
-            else:
-                short_score += 10
-            a.reasons.append(f"Volume acima da média ({a.volume_ratio:.1f}x)")
-        elif a.volume_ratio >= settings.MIN_VOLUME_FACTOR:
-            long_score += 5
-            short_score += 5
+    @staticmethod
+    def _ema(series: pd.Series, period: int) -> float:
+        return series.ewm(span=period, adjust=False).mean().iloc[-1]
 
-        # ── ADX (10 pts) ───────────────────────────────────────
-        if a.adx > 25:
-            if long_score > short_score:
-                long_score += 10
-            else:
-                short_score += 10
-            a.reasons.append(f"Tendência forte (ADX={a.adx:.1f})")
-        elif a.adx > 20:
-            long_score += 5
-            short_score += 5
+    @staticmethod
+    def _rsi(series: pd.Series, period: int) -> float:
+        delta = series.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = (-delta.where(delta < 0, 0.0))
+        avg_gain = gain.rolling(window=period, min_periods=1).mean()
+        avg_loss = loss.rolling(window=period, min_periods=1).mean()
+        rs = avg_gain / (avg_loss + 1e-10)
+        return 100 - (100 / (1 + rs)).iloc[-1]
 
-        # ── Decisão ───────────────────────────────────────────
-        if long_score > short_score:
-            a.direction = "long"
-            a.score = min(long_score, 100.0)
-        elif short_score > long_score:
-            a.direction = "short"
-            a.score = min(short_score, 100.0)
-        else:
-            a.direction = "neutral"
-            a.score = 0.0
+    @staticmethod
+    def _bb_position(series: pd.Series, period: int) -> float:
+        ma = series.rolling(period).mean().iloc[-1]
+        std = series.rolling(period).std().iloc[-1]
+        last = series.iloc[-1]
+        upper = ma + 2 * std
+        lower = ma - 2 * std
+        if upper == lower:
+            return 0.5
+        return max(0.0, min(1.0, (last - lower) / (upper - lower)))
 
-        logger.debug(
-            f"Scoring → Long: {long_score:.1f} | Short: {short_score:.1f} "
-            f"→ {a.direction.upper()} @ {a.score:.1f}"
-        )
-        return a
+    @staticmethod
+    def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> float:
+        tr1 = high - low
+        tr2 = (high - close.shift()).abs()
+        tr3 = (low - close.shift()).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return tr.rolling(period, min_periods=1).mean().iloc[-1]

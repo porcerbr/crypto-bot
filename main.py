@@ -1,84 +1,103 @@
-"""
-TradingBot Professional — Entry Point
-Inicializa todos os módulos e sobe o sistema completo.
-"""
+#!/usr/bin/env python3
+"""Ponto de entrada do Trading Bot Pro.
 
-import sys
+Inicializa logging, cria engine e inicia dashboard.
+Suporta execução direta ou via Gunicorn (produção).
+"""
+import logging
+import logging.handlers
+import os
 import signal
-import asyncio
-from loguru import logger
+import sys
+import threading
+import time
+from pathlib import Path
 
-from core.config import settings
-from core.engine import BotEngine
-from dashboard.server import start_dashboard
-
-ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from config import get_settings
+from core.engine import TradingEngine
+from dashboard.app import run_dashboard
 
 
-def configure_logging():
-    logger.remove()
-    logger.add(
-        sys.stderr,
-        level=settings.LOG_LEVEL,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> — <white>{message}</white>",
-        colorize=True,
+def setup_logging():
+    """Configura logging com rotação de arquivos.
+
+    Dois handlers:
+    - Console: INFO+ (visível no Railway)
+    - Arquivo: DEBUG+ com rotação (persistência)
+    """
+    settings = get_settings()
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
     )
-    logger.add(
-        "logs/bot_{time:YYYY-MM-DD}.log",
-        rotation="00:00",
-        retention="30 days",
-        compression="gz",
-        level="DEBUG",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} — {message}",
+
+    # Console
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(getattr(logging, settings.log_level))
+    console.setFormatter(formatter)
+
+    # Arquivo rotativo
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_dir / "bot.log",
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
         encoding="utf-8",
     )
-    logger.add(
-        "logs/errors_{time:YYYY-MM-DD}.log",
-        rotation="00:00",
-        retention="30 days",
-        compression="gz",
-        level="ERROR",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} — {message}\n{exception}",
-        encoding="utf-8",
-    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+
+    # Root logger
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.addHandler(console)
+    root.addHandler(file_handler)
+
+    # Reduzir verbosity de bibliotecas externas
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
 
 
-async def main():
-    configure_logging()
-    logger.info("=" * 60)
-    logger.info("  TradingBot Professional — Iniciando Sistema")
-    logger.info(f"  Ambiente : {settings.ENV}")
-    logger.info(f"  Símbolo  : {settings.SYMBOL}")
-    logger.info(f"  Timeframe: {settings.TIMEFRAME}")
-    logger.info("=" * 60)
+def main():
+    """Fluxo principal da aplicação."""
+    setup_logging()
+    logger = logging.getLogger("Main")
 
-    engine = BotEngine()
+    logger.info("=" * 50)
+    logger.info("Trading Bot Pro v1.0 iniciando")
+    logger.info("=" * 50)
 
-    loop = asyncio.get_event_loop()
+    settings = get_settings()
+    logger.info(f"Modo: {settings.operation_mode}")
+    logger.info(f"Ativo: {settings.trading_symbol}")
+    logger.info(f"Intervalo: {settings.collect_interval}s")
 
-    def shutdown(sig, frame):
-        logger.warning(f"Sinal {sig} recebido — encerrando graciosamente...")
+    # Criar engine
+    engine = TradingEngine()
+
+    # Handler de shutdown graceful
+    def shutdown(signum, frame):
+        logger.info("Sinal de shutdown recebido. Parando engine...")
         engine.stop()
+        time.sleep(1)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    # Sobe o dashboard em background
-    import threading
-    dash_thread = threading.Thread(
-        target=start_dashboard,
-        kwargs={"engine": engine},
-        daemon=True,
-    )
-    dash_thread.start()
-    logger.info(f"Dashboard disponível em http://localhost:{settings.DASHBOARD_PORT}")
+    # Iniciar engine automaticamente
+    engine.start()
 
-    # Inicia o engine principal (bloqueante)
-    await engine.run()
+    # Iniciar dashboard (bloqueante)
+    try:
+        run_dashboard(engine)
+    except Exception as e:
+        logger.critical(f"Dashboard falhou: {e}")
+        engine.stop()
+        raise
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

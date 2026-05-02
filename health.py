@@ -1,49 +1,43 @@
-"""
-monitoring/health.py — Monitor de saúde do sistema
-Rastreia erros, latências, disponibilidade de dados e métricas operacionais.
-"""
+"""Monitoramento de saúde do sistema.
 
+Registra métricas de performance dos ciclos para detectar
+degradação antes que vire falha.
+"""
+import logging
+import statistics
 from collections import deque
-from datetime import datetime
-from loguru import logger
+from datetime import datetime, timezone
+from typing import Dict
+
+logger = logging.getLogger("HealthMonitor")
 
 
 class HealthMonitor:
-    def __init__(self, engine):
-        self._engine = engine
-        self._errors: deque = deque(maxlen=50)
-        self._data_misses = 0
-        self._cycle_times: deque = deque(maxlen=100)
-        self._last_price_update = None
-        self._last_signal_time = None
+    """Monitor de saúde com histórico de ciclos."""
 
-    def record_error(self, message: str):
-        self._errors.appendleft({
-            "timestamp": datetime.utcnow().isoformat(),
-            "message": message,
-        })
+    def __init__(self, max_history: int = 100):
+        self.cycle_times: deque = deque(maxlen=max_history)
+        self.errors_count = 0
+        self.last_cycle: datetime = datetime.now(timezone.utc)
 
-    def record_data_miss(self):
-        self._data_misses += 1
+    def record_cycle(self, duration: float):
+        """Registra duração de um ciclo completo."""
+        self.cycle_times.append(duration)
+        self.last_cycle = datetime.now(timezone.utc)
 
-    def record_cycle(self, analysis, price: float):
-        self._last_price_update = datetime.utcnow()
-        if hasattr(self._engine, "_last_cycle_time") and self._engine._last_cycle_time:
-            self._cycle_times.append(self._engine._last_cycle_time)
+        if duration > 30:
+            logger.warning(f"Ciclo lento detectado: {duration:.2f}s")
 
-    def get_recent_errors(self, limit: int = 10) -> list:
-        return list(self._errors)[:limit]
+    def get_stats(self) -> Dict:
+        """Retorna estatísticas de saúde."""
+        if not self.cycle_times:
+            return {"status": "unknown", "avg_cycle": 0, "max_cycle": 0}
 
-    def get_summary(self) -> dict:
-        avg_cycle = (
-            sum(self._cycle_times) / len(self._cycle_times)
-            if self._cycle_times else 0
-        )
+        times = list(self.cycle_times)
         return {
-            "total_errors": len(self._errors),
-            "data_misses": self._data_misses,
-            "avg_cycle_seconds": round(avg_cycle, 2),
-            "last_price_update": (
-                self._last_price_update.isoformat() if self._last_price_update else None
-            ),
+            "status": "healthy" if statistics.mean(times) < 10 else "degraded",
+            "avg_cycle": round(statistics.mean(times), 2),
+            "max_cycle": round(max(times), 2),
+            "min_cycle": round(min(times), 2),
+            "cycles_recorded": len(times),
         }

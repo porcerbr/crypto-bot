@@ -1,28 +1,40 @@
+"""Sistema de alertas simples.
+
+Pode ser expandido para enviar webhooks, email, Telegram, etc.
+Por enquanto, integra com o estado do engine para exibição
+no dashboard.
 """
-monitoring/alerts.py — Sistema de alertas
-Suporte a Telegram. Extensível para Slack, Discord, e-mail, etc.
-"""
+import logging
+from datetime import datetime, timezone
 
-import asyncio
-from loguru import logger
-from core.config import settings
+logger = logging.getLogger("AlertManager")
 
 
-class AlertSystem:
-    async def send(self, message: str, level: str = "info"):
-        logger.info(f"[ALERTA/{level.upper()}] {message}")
-        if settings.TELEGRAM_TOKEN and settings.TELEGRAM_CHAT_ID:
-            await self._send_telegram(message)
+class AlertManager:
+    """Gerenciador de alertas do sistema."""
 
-    async def _send_telegram(self, message: str):
-        try:
-            import httpx
-            url = f"https://api.telegram.org/bot{settings.TELEGRAM_TOKEN}/sendMessage"
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(url, json={
-                    "chat_id": settings.TELEGRAM_CHAT_ID,
-                    "text": message,
-                    "parse_mode": "HTML",
-                })
-        except Exception as exc:
-            logger.warning(f"Falha ao enviar alerta Telegram: {exc}")
+    def __init__(self):
+        self.alert_history = []
+
+    def send(self, level: str, message: str):
+        """Registra um alerta.
+
+        Args:
+            level: info, warning, error, critical
+            message: conteúdo do alerta
+        """
+        timestamp = datetime.now(timezone.utc).isoformat()
+        entry = {"time": timestamp, "level": level, "message": message}
+        self.alert_history.append(entry)
+
+        # Também loga
+        log_func = getattr(logger, level, logger.info)
+        log_func(f"[ALERT] {message}")
+
+        # Limitar histórico
+        if len(self.alert_history) > 1000:
+            self.alert_history.pop(0)
+
+    def get_recent(self, limit: int = 50):
+        """Retorna alertas recentes."""
+        return self.alert_history[-limit:]

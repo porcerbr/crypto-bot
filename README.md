@@ -1,257 +1,155 @@
-# TradingBot Professional
+# Trading Bot Pro
 
-Sistema de trading automatizado com arquitetura modular, dashboard web em tempo real, controle de risco multicamada e persistência completa de dados.
+Sistema profissional de trading automatizado com arquitetura modular, dashboard em tempo real e foco em estabilidade.
 
----
-
-## Estrutura de Pastas
+## Arquitetura
 
 ```
-trading-bot/
-├── main.py                    # Ponto de entrada — inicia tudo
-├── requirements.txt           # Dependências Python
-├── .env.example               # Template de configuração
-│
-├── core/
-│   ├── config.py              # Todas as configs via .env
-│   └── engine.py              # Loop principal do bot
-│
-├── data/
-│   └── collector.py           # Coleta OHLCV com retry e cache
-│
-├── strategy/
-│   ├── indicators.py          # RSI, MACD, EMA, BB, ADX, ATR, Stoch
-│   └── analyzer.py            # Análise multi-indicador com score 0-100
-│
-├── risk/
-│   └── manager.py             # 7 filtros de segurança independentes
-│
-├── execution/
-│   └── handler.py             # Criação de sinais com SL/TP automáticos
-│
-├── storage/
-│   ├── state.py               # Estado persistente em JSON
-│   └── history.py             # Histórico completo em SQLite
-│
-├── monitoring/
-│   ├── health.py              # Métricas de saúde do sistema
-│   └── alerts.py              # Alertas (Telegram + extensível)
-│
-├── dashboard/
-│   ├── server.py              # FastAPI — API JSON + serve HTML
-│   └── static/index.html      # Dashboard profissional
-│
-├── data/                      # Criado automaticamente
-│   ├── bot.db                 # SQLite com histórico
-│   └── state.json             # Estado atual do bot
-│
-└── logs/                      # Criado automaticamente
-    ├── bot_YYYY-MM-DD.log     # Log técnico diário (comprimido aos 30 dias)
-    └── errors_YYYY-MM-DD.log  # Somente erros
+trading_bot_pro/
+├── config/          # Configurações centralizadas (Pydantic + .env)
+├── core/            # Motor principal e orquestração
+├── data/            # Coleta e limpeza de dados
+├── strategy/        # Análise técnica e geração de sinais
+├── risk/            # Filtros e gerenciamento de risco
+├── execution/       # Execução de ordens (simulada/live)
+├── storage/         # Persistência SQLite + estado JSON
+├── dashboard/       # Interface web Flask + SocketIO
+├── monitoring/      # Health checks e alertas
+├── logs/            # Logs rotativos
+└── data_storage/    # Banco de dados e estado
 ```
 
----
+## Decisões Técnicas
 
-## Instalação
+- **SQLite**: Escolhido por ser serverless e ideal para Railway (single instance). Para multi-instance futuro, basta trocar o `storage/database.py` para PostgreSQL sem afetar o restante.
+- **Pydantic Settings**: Validação de configuração em tempo de inicialização. Erros de .env são detectados antes do bot rodar.
+- **Threading**: Engine roda em thread separada do servidor web, evitando que falhas de rede bloqueiem o dashboard.
+- **Fallback de dados**: Se Yahoo Finance falhar, o bot usa cache local. Se o cache estiver vazio, o ciclo é pulado gracefully.
+- **RotatingFileHandler**: Logs não crescem infinitamente, essencial para containers.
 
-### Requisitos
-- Python 3.11+
-- pip
-
-### Passos
+## Instalação Local
 
 ```bash
-# 1. Clone ou extraia o projeto
-cd trading-bot
+# 1. Clone/Extraia o projeto
+cd trading_bot_pro
 
-# 2. Crie ambiente virtual (recomendado)
-python -m venv .venv
-source .venv/bin/activate       # Linux/macOS
-.venv\Scripts\activate          # Windows
+# 2. Ambiente virtual
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# venv\Scripts\activate  # Windows
 
-# 3. Instale as dependências
+# 3. Dependências
 pip install -r requirements.txt
 
-# 4. Configure o ambiente
+# 4. Configuração
 cp .env.example .env
-# Edite .env conforme necessário
+# Edite .env conforme necessidade
 
-# 5. Execute
+# 5. Execução
 python main.py
 ```
 
-A dashboard ficará disponível em **http://localhost:8080**
+Acesse: http://localhost:5000
 
----
+## Deploy no Railway
 
-## Como Funciona — Módulo a Módulo
-
-### `core/engine.py` — Motor Principal
-Orquestra todo o fluxo em um loop assíncrono:
-1. Coleta dados → 2. Analisa → 3. Verifica risco → 4. Gera sinal → 5. Registra → 6. Aguarda próximo ciclo
-
-Recupera-se automaticamente de erros. Após 5 erros consecutivos, pausa 5 minutos.
-
-### `core/config.py` — Configuração
-Centraliza todas as configurações via variáveis de ambiente. Nunca use valores hardcoded no código.
-
-### `data/collector.py` — Coleta de Dados
-- Retry automático com backoff exponencial
-- Cache local como fallback quando API falha
-- Suporte a yfinance (gratuito) e Binance
-- Timeout configurável por chamada
-
-### `strategy/indicators.py` — Indicadores
-Implementações puras em pandas/numpy:
-RSI, MACD, EMA, SMA, Bollinger Bands, ATR, Stochastic, ADX, Volume SMA
-
-### `strategy/analyzer.py` — Análise e Score
-Sistema de pontuação ponderada (0-100):
-- RSI: 20 pts
-- MACD: 25 pts
-- EMA Cross: 20 pts
-- Bollinger Bands: 15 pts
-- Volume: 10 pts
-- ADX: 10 pts
-
-Detecta regime de mercado: trending_up, trending_down, ranging, volatile.
-
-### `risk/manager.py` — Gerenciamento de Risco
-7 filtros sequenciais, qualquer um pode bloquear a entrada:
-1. Máximo de trades simultâneos
-2. Limite diário de operações
-3. Drawdown máximo
-4. Volume mínimo
-5. Regime de mercado (bloqueia em volatilidade excessiva)
-6. ADX mínimo (exige direção clara)
-7. Score mínimo para entrada
-
-### `execution/handler.py` — Geração de Sinal
-Cria objeto `Signal` com SL e TP calculados automaticamente com base nas configurações de risco. Atualiza status (hit_tp/hit_sl) em cada ciclo.
-
-### `storage/state.py` — Estado Persistente
-Salva em JSON após cada ciclo: trades abertos, capital atual, peak capital, contadores diários. Restaura estado após reinicialização.
-
-### `storage/history.py` — Histórico SQLite
-Persiste todos os sinais, bloqueios e ciclos. Calcula métricas de desempenho (win rate, PnL por período).
-
-### `monitoring/health.py` — Saúde do Sistema
-Rastreia: erros, data misses, tempos de ciclo, disponibilidade de dados.
-
-### `monitoring/alerts.py` — Alertas
-Suporte nativo a Telegram. Para ativar: configure `TELEGRAM_TOKEN` e `TELEGRAM_CHAT_ID` no `.env`.
-
-### `dashboard/` — Interface Web
-FastAPI serve o HTML em `/` e a API JSON em `/api/status`. A dashboard atualiza automaticamente a cada 5 segundos.
-
----
-
-## Dashboard — O Que Mostra
-
-| Seção | Conteúdo |
-|-------|----------|
-| Header | Status do bot, uptime em tempo real |
-| KPIs | Ativo, ciclos, win rate, trades abertos |
-| Último Sinal | Direção, entrada, SL, TP, R:R, status |
-| Score | Pontuação 0-100 com barra visual e razões |
-| Indicadores | RSI, ADX, MACD, EMA, Volume, ATR, BB |
-| Performance | PnL e trades por dia/semana/mês |
-| Histórico | Tabela dos últimos 15 sinais |
-| Filtros | Quais filtros de risco estão bloqueando |
-| Erros | Log dos últimos erros com timestamp |
-| Saúde | Data misses, ciclo médio, última atualização |
-
----
-
-## Configuração Avançada
-
-### Trocar símbolo
-```env
-SYMBOL=ETH-USD
-TIMEFRAME=4h
-```
-
-### Modo mais conservador
-```env
-MIN_SIGNAL_SCORE=75.0
-MAX_OPEN_TRADES=1
-STOP_LOSS_PCT=1.5
-TAKE_PROFIT_PCT=3.0
-```
-
-### Ciclos mais rápidos (15m)
-```env
-TIMEFRAME=15m
-CYCLE_INTERVAL_SECONDS=60
-```
-
-### Habilitar Telegram
-```env
-TELEGRAM_TOKEN=seu_token_aqui
-TELEGRAM_CHAT_ID=seu_chat_id
-ALERT_ON_SIGNAL=true
-```
-
----
-
-## Adicionando Novos Provedores de Dados
-
-Em `data/collector.py`, adicione um novo método `_fetch_seuprovedor()` e registre-o no `_fetch_from()`:
-
-```python
-elif provider == "seuprovedor":
-    return await self._fetch_seuprovedor(symbol, timeframe, bars)
-```
-
----
-
-## Implantação em Produção
-
-### VPS com systemd
-
-```ini
-# /etc/systemd/system/tradingbot.service
-[Unit]
-Description=TradingBot Professional
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/trading-bot
-ExecStart=/home/ubuntu/trading-bot/.venv/bin/python main.py
-Restart=always
-RestartSec=10
-Environment=ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
+### Opção 1: Git + Railway CLI
 ```bash
-sudo systemctl enable tradingbot
-sudo systemctl start tradingbot
-sudo journalctl -u tradingbot -f
+# Inicialize git no projeto
+git init
+git add .
+git commit -m "Initial commit"
+
+# Railway
+railway login
+railway init
+railway up
 ```
 
-### Docker
-
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8080
-CMD ["python", "main.py"]
-```
-
+### Opção 2: Docker (recomendado)
+Railway detecta o Dockerfile automaticamente:
 ```bash
-docker build -t tradingbot .
-docker run -d -p 8080:8080 --env-file .env tradingbot
+railway login
+railway init
+railway up
 ```
 
----
+### Variáveis de Ambiente no Railway
+No painel do Railway, adicione as variáveis do `.env`:
+- `OPERATION_MODE=SIMULATION`
+- `TRADING_SYMBOL=BTC-USD`
+- `SECRET_KEY=<gerar aleatório forte>`
 
-## ⚠️ Aviso Legal
+### Healthcheck
+O Railway usa o endpoint `/api/health` para verificar saúde do container.
 
-Este sistema é destinado a fins **educacionais e de pesquisa**. Os sinais gerados são informativos e não constituem recomendação de investimento. Sempre consulte um profissional financeiro antes de operar com capital real.
+## Configuração (.env)
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `OPERATION_MODE` | SIMULATION ou LIVE | SIMULATION |
+| `TRADING_SYMBOL` | Ativo (Yahoo Finance) | BTC-USD |
+| `COLLECT_INTERVAL` | Segundos entre ciclos | 60 |
+| `TIMEFRAME` | Timeframe análise | 5m |
+| `MAX_RISK_PER_TRADE` | % risco por trade | 2.0 |
+| `MAX_EXPOSURE` | % exposição máxima | 10.0 |
+| `MAX_OPEN_TRADES` | Máximo simultâneo | 3 |
+| `MIN_SIGNAL_SCORE` | Score mínimo (0-100) | 65 |
+| `DASHBOARD_PORT` | Porta web | 5000 |
+
+## Funcionamento dos Módulos
+
+### Core (Engine)
+Orquestra o ciclo: coleta → limpeza → análise → filtros → sinal → execução → persistência. Roda em thread daemon com graceful shutdown.
+
+### Data
+- **Collector**: Busca dados Yahoo Finance com retry e backoff exponencial. Timeout de 15s.
+- **Cleaner**: Remove outliers (>20% variação), valida OHLC, preenche gaps.
+
+### Strategy
+- **Analyzer**: Calcula RSI, EMA(9/21), Bollinger, ATR, Volume ratio.
+- **SignalGenerator**: Score ponderado (Tendência 30%, RSI 25%, Bollinger 20%, Volume 15%, Volatilidade 10%). Só emite sinal se score >= 65.
+
+### Risk
+- **Filters**: Horário, volatilidade, volume.
+- **Manager**: Exposição máxima, limite de trades abertos, cálculo de position size.
+
+### Execution
+Modo SIMULATION: simula preenchimento e P&L aleatório realista. Modo LIVE: estrutura pronta para integração com API de corretora.
+
+### Storage
+- **TradeDatabase**: SQLite thread-safe com trades e métricas.
+- **StateManager**: JSON para estado runtime (recuperação de crash).
+
+### Dashboard
+Flask + SocketIO. Atualizações em tempo real via WebSocket. Design dark mode, responsivo.
+
+### Monitoring
+- **HealthMonitor**: Estatísticas de tempo de ciclo.
+- **AlertManager**: Sistema extensível para notificações externas.
+
+## API Endpoints
+
+| Endpoint | Método | Descrição |
+|----------|--------|-----------|
+| `/` | GET | Dashboard |
+| `/api/health` | GET | Healthcheck (Railway) |
+| `/api/state` | GET | Estado completo JSON |
+| `/api/trades` | GET | Trades recentes |
+| `/api/start` | GET | Iniciar bot |
+| `/api/stop` | GET | Parar bot |
+| `/api/pause` | GET | Pausar bot |
+| `/api/resume` | GET | Retomar bot |
+
+## Evoluções Futuras
+
+- [ ] Integração com corretora real (Binance, Bybit, etc.)
+- [ ] Múltiplos ativos simultâneos
+- [ ] Backtesting engine
+- [ ] Notificações Telegram/Discord
+- [ ] Banco PostgreSQL para multi-instance
+- [ ] Machine Learning para scoring
+
+## Licença
+
+Uso privado. Desenvolvido para operação própria.

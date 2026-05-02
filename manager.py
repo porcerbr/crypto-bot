@@ -1,127 +1,69 @@
+"""Gerenciamento de risco e exposição.
+
+Controla limites de capital, número de operações e
+exposição agregada do portfólio.
 """
-risk/manager.py — Gerenciamento de risco e filtros de segurança
-Nunca opera sem aprovação explícita do risk manager.
-Cada decisão é justificada e registrada.
-"""
+import logging
+import threading
+from typing import Dict, List
 
-from dataclasses import dataclass
-from datetime import datetime, date
-from typing import Optional
-from loguru import logger
+from config import get_settings
+from storage.database import TradeDatabase
 
-from core.config import settings
-
-
-@dataclass
-class RiskResult:
-    approved: bool
-    reason: str
-    score_penalty: float = 0.0
+logger = logging.getLogger("RiskManager")
 
 
 class RiskManager:
-    """
-    Camada de proteção multi-nível. Avalia uma análise contra todas as
-    regras de risco ativas. Bloqueia qualquer entrada insegura.
-
-    Regras (em ordem de prioridade):
-      1. Máximo de trades abertos simultâneos
-      2. Máximo de trades diários
-      3. Drawdown máximo atingido
-      4. Volume insuficiente
-      5. Regime de mercado inadequado
-      6. Spread/volatilidade excessiva
-      7. ADX muito baixo (mercado sem direção)
-    """
+    """Controlador central de risco."""
 
     def __init__(self):
-        self._active_filters: list[str] = []
+        self.settings = get_settings()
+        self.db = TradeDatabase()
+        self._lock = threading.Lock()
 
-    def evaluate(self, analysis, state) -> RiskResult:
-        self._active_filters = []
+    def is_max_exposure_reached(self) -> bool:
+        """Verifica se exposição atual ultrapassa limite.
 
-        checks = [
-            self._check_open_trades(state),
-            self._check_daily_limit(state),
-            self._check_drawdown(state),
-            self._check_volume(analysis),
-            self._check_market_regime(analysis),
-            self._check_adx(analysis),
-            self._check_score_minimum(analysis),
-        ]
+        Em modo simulação, calcula com base no valor total
+        das operações abertas vs capital fictício.
+        """
+        open_trades = self.db.get_open_trades()
+        if not open_trades:
+            return False
 
-        for result in checks:
-            if not result.approved:
-                logger.warning(f"Risk block: {result.reason}")
-                return result
+        # Capital fictício base para simulação
+        simulated_capital = 10000.0
+        total_exposure = sum(t.get("size", 0) * t.get("entry_price", 0) for t in open_trades)
+        exposure_pct = (total_exposure / simulated_capital) * 100
 
-        logger.debug("Risk manager: todos os filtros aprovados")
-        return RiskResult(approved=True, reason="all_clear")
+        result = exposure_pct >= self.settings.max_exposure
+        if result:
+            logger.warning(f"Exposição máxima atingida: {exposure_pct:.1f}%")
+        return result
 
-    def _check_open_trades(self, state) -> RiskResult:
-        open_count = len(state.get_open_trades())
-        if open_count >= settings.MAX_OPEN_TRADES:
-            self._active_filters.append("max_open_trades")
-            return RiskResult(
-                approved=False,
-                reason=f"Máximo de trades abertos atingido ({open_count}/{settings.MAX_OPEN_TRADES})",
-            )
-        return RiskResult(approved=True, reason="ok")
+    def is_max_trades_reached(self) -> bool:
+        """Verifica se atingiu limite de operações abertas."""
+        open_count = len(self.db.get_open_trades())
+        result = open_count >= self.settings.max_open_trades
+        if result:
+            logger.warning(f"Máximo de trades abertos: {open_count}/{self.settings.max_open_trades}")
+        return result
 
-    def _check_daily_limit(self, state) -> RiskResult:
-        today_count = state.get_daily_trade_count(date.today())
-        if today_count >= settings.MAX_DAILY_TRADES:
-            self._active_filters.append("daily_limit")
-            return RiskResult(
-                approved=False,
-                reason=f"Limite diário atingido ({today_count}/{settings.MAX_DAILY_TRADES})",
-            )
-        return RiskResult(approved=True, reason="ok")
+    def calculate_position_size(self, signal_score: int, entry_price: float) -> float:
+        """Calcula tamanho da posição baseado no score e risco.
 
-    def _check_drawdown(self, state) -> RiskResult:
-        drawdown = state.get_current_drawdown_pct()
-        if drawdown >= settings.MAX_DRAWDOWN_PCT:
-            self._active_filters.append("max_drawdown")
-            return RiskResult(
-                approved=False,
-                reason=f"Drawdown máximo atingido ({drawdown:.2f}% >= {settings.MAX_DRAWDOWN_PCT}%)",
-            )
-        return RiskResult(approved=True, reason="ok")
+        Quanto maior o score, maior a posição (dentro do limite).
+        """
+        max_risk = self.settings.max_risk_per_trade / 100
+        simulated_capital = 10000.0
 
-    def _check_volume(self, analysis) -> RiskResult:
-        if analysis.volume_ratio < settings.MIN_VOLUME_FACTOR:
-            self._active_filters.append("low_volume")
-            return RiskResult(
-                approved=False,
-                reason=f"Volume insuficiente ({analysis.volume_ratio:.2f}x < {settings.MIN_VOLUME_FACTOR}x)",
-            )
-        return RiskResult(approved=True, reason="ok")
+        # Fator de confiança baseado no score (0.5 a 1.0)
+        confidence = 0.5 + (signal_score / 200)
+        risk_amount = simulated_capital * max_risk * confidence
 
-    def _check_market_regime(self, analysis) -> RiskResult:
-        if analysis.market_regime == "volatile":
-            self._active_filters.append("volatile_market")
-            return RiskResult(
-                approved=False,
-                reason=f"Mercado muito volátil — regime: {analysis.market_regime}",
-            )
-        return RiskResult(approved=True, reason="ok")
+        # Tamanho da posição (assumindo stop de 1% para simplificar)
+        stop_pct = 0.01
+        position_size = risk_amount / (entry_price * stop_pct)
 
-    def _check_adx(self, analysis) -> RiskResult:
-        if analysis.adx < 15:
-            self._active_filters.append("weak_trend")
-            return RiskResult(
-                approved=False,
-                reason=f"ADX muito baixo ({analysis.adx:.1f}) — sem direção clara",
-            )
-        return RiskResult(approved=True, reason="ok")
-
-    def _check_score_minimum(self, analysis) -> RiskResult:
-        if analysis.score < settings.MIN_SIGNAL_SCORE:
-            return RiskResult(
-                approved=False,
-                reason=f"Score {analysis.score:.1f} abaixo do mínimo {settings.MIN_SIGNAL_SCORE}",
-            )
-        return RiskResult(approved=True, reason="ok")
-
-    def get_active_filters(self) -> list[str]:
-        return list(self._active_filters)
+        logger.info(f"Position size calculado: {position_size:.4f} (score={signal_score})")
+        return position_size
