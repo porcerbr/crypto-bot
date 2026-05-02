@@ -3,6 +3,7 @@ import threading
 import requests
 import pandas as pd
 from datetime import datetime, timezone
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import Config
 from utils import log, asset_name
 
@@ -24,10 +25,84 @@ def _log_invalid_candle(symbol: str):
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
         log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
         _invalid_candle_logged[symbol] = now
+
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
+
+# ── Yahoo Finance fallback ────────────────────────────────────
+_yahoo_cache: dict = {}
+_yahoo_cache_lock = threading.Lock()
+_yahoo_last_error: float = 0.0
+_YAHOO_ERROR_BACKOFF = 300  # 5 min sem tentar Yahoo após erro
+
+
+@retry(
+    stop=stop_after_attempt(Config.API_RETRY_ATTEMPTS),
+    wait=wait_exponential(min=Config.API_RETRY_MIN_WAIT, max=Config.API_RETRY_MAX_WAIT),
+    retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
+    reraise=True,
+)
+def _fetch_twelvedata_batch(symbols_str: str, params: dict) -> dict:
+    """Busca um batch do Twelve Data com retry automático (tenacity)."""
+    resp = requests.get(
+        "https://api.twelvedata.com/time_series",
+        params=params,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _refresh_cache_from_yahoo(symbols: list[str]) -> int:
+    """
+    Fallback: busca dados do Yahoo Finance para os símbolos listados.
+    Retorna o número de pares atualizados com sucesso.
+    """
+    global _yahoo_last_error
+    if not Config.USE_YAHOO_FALLBACK:
+        return 0
+    if time.time() - _yahoo_last_error < _YAHOO_ERROR_BACKOFF:
+        return 0
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        log("[YAHOO] yfinance não instalado — instale com pip install yfinance")
+        return 0
+
+    ok = 0
+    now = time.time()
+    for sym in symbols:
+        yf_sym = Config.YAHOO_SYMBOLS.get(sym)
+        if not yf_sym:
+            continue
+        try:
+            df = yf.download(yf_sym, period="60d", interval="1h",
+                             progress=False, auto_adjust=True)
+            if df is None or len(df) < 50:
+                continue
+            df.index = pd.to_datetime(df.index, utc=True)
+            df = df.rename(columns={
+                "Open": "Open", "High": "High",
+                "Low":  "Low",  "Close": "Close",
+            })
+            for col in ["Open", "High", "Low", "Close"]:
+                df[col] = df[col].astype(float)
+            df["Volume"] = df.get("Volume", 0).astype(float)
+
+            with _cache_lock:
+                _cache[sym] = (now, df)
+            with _yahoo_cache_lock:
+                _yahoo_cache[sym] = now
+            ok += 1
+        except Exception as e:
+            log(f"[YAHOO] Erro ao buscar {sym}: {e}")
+            _yahoo_last_error = time.time()
+    if ok:
+        log(f"[YAHOO] Fallback OK — {ok}/{len(symbols)} pares atualizados")
+    return ok
 
 
 def _refresh_cache():
@@ -35,11 +110,14 @@ def _refresh_cache():
     Busca todos os 11 pares em UMA chamada batch.
     Custo: 11 créditos por refresh.
     Com TTL de 20 min: ~72 refreshes/dia, dentro do free tier de 800/dia.
+    Em caso de falha, aciona fallback Yahoo Finance automaticamente.
     """
     global _last_refresh
 
     if not Config.TWELVE_DATA_API_KEY:
-        log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada no Railway.")
+        log("[TWELVEDATA] TWELVE_DATA_API_KEY não configurada — usando Yahoo fallback.")
+        _refresh_cache_from_yahoo(list(TD_SYMBOLS.keys()))
+        _last_refresh = time.time()
         return
 
     # Free tier: 8 créditos/minuto, 1 crédito por símbolo.
@@ -50,6 +128,7 @@ def _refresh_cache():
     now      = time.time()
     ok_count = 0
     merged   = {}
+    failed_symbols: list[str] = []
 
     for batch_idx, batch in enumerate(batches):
         if batch_idx > 0:
@@ -67,17 +146,12 @@ def _refresh_cache():
         }
 
         try:
-            resp = requests.get(
-                "https://api.twelvedata.com/time_series",
-                params=params,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = _fetch_twelvedata_batch(symbols_str, params)
             merged.update(data)
             log(f"[TWELVEDATA] Batch {batch_idx+1}/2 recebido ({len(batch)} pares)")
         except Exception as e:
-            log(f"[TWELVEDATA] Erro no batch {batch_idx+1}: {e}")
+            log(f"[TWELVEDATA] Erro no batch {batch_idx+1} após retries: {e}")
+            failed_symbols.extend(sym for sym, _ in batch)
             continue
 
     for sym_internal, sym_td in TD_SYMBOLS.items():
@@ -112,6 +186,11 @@ def _refresh_cache():
 
     _last_refresh = now
     log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
+
+    # Aciona fallback Yahoo para os pares que falharam no Twelve Data
+    if failed_symbols:
+        log(f"[TWELVEDATA] Acionando Yahoo fallback para: {', '.join(failed_symbols)}")
+        _refresh_cache_from_yahoo(failed_symbols)
 
 
 def force_initial_refresh(blocking: bool = True):

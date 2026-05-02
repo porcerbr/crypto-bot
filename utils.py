@@ -1,7 +1,32 @@
 from datetime import datetime
 import json
+import logging
+import logging.handlers
 import os
 from config import Config
+
+# ── Logger com rotação ────────────────────────────────────────────────────────
+_logger = logging.getLogger("sniperbot")
+_logger.setLevel(logging.INFO)
+
+# Console handler
+_ch = logging.StreamHandler()
+_ch.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+_logger.addHandler(_ch)
+
+# Rotating file handler — 10 MB × 5 arquivos = 50 MB máximo
+_rfh = logging.handlers.RotatingFileHandler(
+    "bot_app.log",
+    maxBytes=Config.LOG_MAX_BYTES,
+    backupCount=Config.LOG_BACKUP_COUNT,
+    encoding="utf-8",
+)
+_rfh.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+_logger.addHandler(_rfh)
+
+# Evita propagação para o root logger do Flask
+_logger.propagate = False
+
 
 def fmt(value: float) -> str:
     if value is None: return "0"
@@ -11,9 +36,9 @@ def fmt(value: float) -> str:
     if abs(value) >= 1: return f"{value:.5f}"
     return f"{value:.6f}"
 
+
 def log(msg: str):
-    now = datetime.now().strftime("%H:%M:%S")
-    print(f"[{now}] {msg}", flush=True)
+    _logger.info(msg)
 
 def asset_name(symbol):
     return Config.FXGOLD_ASSETS.get(symbol, symbol)

@@ -1,225 +1,369 @@
+"""
+db.py — Camada de persistência com SQLite (WAL mode).
+
+Migração transparente: se bot_state.db não existe mas state.json existe,
+importa automaticamente o estado legado e avisa no log.
+
+Tabelas:
+  bot_state    — snapshot completo do estado do bot (1 linha)
+  trade_history — histórico imutável de trades fechados
+  bot_logs     — log de eventos estruturado (substitui bot_logs.jsonl)
+  bot_metrics  — métricas calculadas (cache para dashboard)
+"""
+
 import json
 import os
+import sqlite3
+import threading
 import time
 import math
-import pandas as pd
+from contextlib import contextmanager
 from datetime import datetime
 from utils import log
 from config import Config
 
-STATE_FILE = "state.json"
-LOG_FILE = "bot_logs.jsonl"
+# ── Arquivos legados (mantidos para retrocompat) ──────────────────────────────
+STATE_FILE   = "state.json"
+LOG_FILE     = "bot_logs.jsonl"
 METRICS_FILE = "bot_metrics.json"
 
+# ── Lock para acesso concorrente ──────────────────────────────────────────────
+_db_lock = threading.Lock()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONEXÃO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@contextmanager
+def _get_conn():
+    """Abre conexão SQLite com WAL mode e fecha ao sair do contexto."""
+    conn = sqlite3.connect(Config.DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEMA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def init_db():
+    """Cria tabelas se não existirem e migra dados legados."""
+    with _get_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS bot_state (
+                id          INTEGER PRIMARY KEY CHECK (id = 1),
+                payload     TEXT    NOT NULL,
+                saved_at    TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS trade_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol      TEXT    NOT NULL,
+                direction   TEXT    NOT NULL,
+                result      TEXT    NOT NULL,
+                pnl         REAL    NOT NULL DEFAULT 0,
+                closed_at   TEXT,
+                opened_at   TEXT,
+                adx         REAL    DEFAULT 0,
+                ai_approved INTEGER DEFAULT 1,
+                ai_confidence INTEGER DEFAULT 0,
+                payload     TEXT,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_history_symbol
+                ON trade_history(symbol);
+            CREATE INDEX IF NOT EXISTS idx_history_result
+                ON trade_history(result);
+            CREATE INDEX IF NOT EXISTS idx_history_closed
+                ON trade_history(closed_at);
+
+            CREATE TABLE IF NOT EXISTS bot_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_type  TEXT    NOT NULL,
+                payload     TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_logs_type
+                ON bot_logs(entry_type);
+            CREATE INDEX IF NOT EXISTS idx_logs_created
+                ON bot_logs(created_at);
+
+            CREATE TABLE IF NOT EXISTS bot_metrics (
+                id          INTEGER PRIMARY KEY CHECK (id = 1),
+                payload     TEXT    NOT NULL,
+                updated_at  TEXT    NOT NULL
+            );
+        """)
+    _migrate_legacy()
+
+
+def _migrate_legacy():
+    """Importa state.json legado se o banco ainda estiver vazio."""
+    if not os.path.exists(STATE_FILE):
+        return
+    with _get_conn() as conn:
+        row = conn.execute("SELECT id FROM bot_state WHERE id=1").fetchone()
+        if row:
+            return  # já migrado
+
+    log("[DB] Migrando state.json → SQLite...")
+    try:
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+        # Salva snapshot bruto — load_state vai preencher o bot normalmente
+        _write_state_payload(data)
+        log("[DB] Migração concluída.")
+    except Exception as e:
+        log(f"[DB] Aviso: falha na migração do legado — {e}")
+
+
+def _write_state_payload(data: dict):
+    now = datetime.now().isoformat()
+    payload = json.dumps(data, default=str)
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO bot_state(id, payload, saved_at) VALUES(1,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, saved_at=excluded.saved_at",
+            (payload, now),
+        )
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ESTADO DO BOT
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def save_state(bot):
-    """Salva estado completo do bot em state.json com backup temporário."""
-    data = {
-        "mode": bot.mode,
-        "timeframe": bot.timeframe,
-        "leverage": bot.leverage,
-        "balance": bot.balance,
-        "wins": bot.wins,
-        "losses": bot.losses,
-        "consecutive_losses": bot.consecutive_losses,
-        "paused_until": bot.paused_until,
-        "active_trades": bot.active_trades,
-        "pending_trades": bot.pending_trades,
-        "history": bot.history[-200:],
-        "asset_cooldown": bot.asset_cooldown,
-        "pending_counter": bot.pending_counter,
-        "last_id": getattr(bot, 'last_id', 0),
-        "_current_leverage": getattr(bot, '_current_leverage', bot.leverage),
-        "saved_at": datetime.now().isoformat(),
-    }
-    temp_file = STATE_FILE + ".tmp"
-    with open(temp_file, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(temp_file, STATE_FILE)
-    log("Estado salvo.")
+    """Persiste estado completo no SQLite (atômica via WAL)."""
+    with _db_lock:
+        data = {
+            "mode":               bot.mode,
+            "timeframe":          bot.timeframe,
+            "leverage":           bot.leverage,
+            "balance":            bot.balance,
+            "wins":               bot.wins,
+            "losses":             bot.losses,
+            "consecutive_losses": bot.consecutive_losses,
+            "paused_until":       bot.paused_until,
+            "active_trades":      bot.active_trades,
+            "pending_trades":     bot.pending_trades,
+            "history":            bot.history[-200:],
+            "asset_cooldown":     bot.asset_cooldown,
+            "pending_counter":    bot.pending_counter,
+            "last_id":            getattr(bot, "last_id", 0),
+            "_current_leverage":  getattr(bot, "_current_leverage", bot.leverage),
+            "saved_at":           datetime.now().isoformat(),
+        }
+        _write_state_payload(data)
+
+    # Sincroniza histórico novo com a tabela trade_history (upsert pelo closed_at)
+    _sync_history_to_table(bot.history[-200:])
+    log("Estado salvo (SQLite).")
 
 
-def load_state(bot):
-    """
-    Carrega estado do bot de state.json com validação.
-    Ordena o histórico cronologicamente para evitar problemas na equity curve.
-    """
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                data = json.load(f)
-            
-            for k, v in data.items():
-                if hasattr(bot, k) and k != "saved_at":
-                    setattr(bot, k, v)
-            
-            # ── VALIDAÇÃO: Ordena histórico cronologicamente ──
-            if bot.history:
-                try:
-                    # Tenta ordenar por timestamp ISO primeiro, depois por formato legado
-                    bot.history = sorted(
-                        bot.history,
-                        key=lambda h: h.get('closed_ts_iso', '') or h.get('closed_at', '')
-                    )
-                    log(f"Histórico carregado e validado ({len(bot.history)} trades)")
-                except Exception as e:
-                    log(f"[WARN] Erro ao ordenar histórico: {e}")
-            
-            saved_at = data.get("saved_at", "desconhecido")
-            log("Estado carregado de " + str(saved_at))
-            return True
-        except Exception as e:
-            log("[ERRO] Falha ao carregar estado: " + str(e))
+def load_state(bot) -> bool:
+    """Carrega estado do SQLite. Fallback para state.json legado se necessário."""
+    try:
+        with _get_conn() as conn:
+            row = conn.execute("SELECT payload FROM bot_state WHERE id=1").fetchone()
+        if not row:
             return False
-    return False
+        data = json.loads(row["payload"])
+        for k, v in data.items():
+            if hasattr(bot, k) and k != "saved_at":
+                setattr(bot, k, v)
+        if bot.history:
+            try:
+                bot.history = sorted(
+                    bot.history,
+                    key=lambda h: h.get("closed_ts_iso", "") or h.get("closed_at", ""),
+                )
+            except Exception as e:
+                log(f"[DB] Aviso ao ordenar histórico: {e}")
+        log(f"Estado carregado (SQLite) — salvo em {data.get('saved_at', '?')}")
+        return True
+    except Exception as e:
+        log(f"[DB] Erro ao carregar estado: {e}")
+        # Último recurso: tenta state.json
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE) as f:
+                    data = json.load(f)
+                for k, v in data.items():
+                    if hasattr(bot, k) and k != "saved_at":
+                        setattr(bot, k, v)
+                log("[DB] Fallback: estado carregado do state.json legado.")
+                return True
+            except Exception as e2:
+                log(f"[DB] Falha total no carregamento: {e2}")
+        return False
 
 
-def append_log(entry_type, data):
-    """Adiciona entrada de log persistente em formato JSON Lines."""
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "type": entry_type,
-        "data": data,
-    }
-    with open(LOG_FILE, "a") as f:
-        f.write(json.dumps(entry, default=str) + chr(10))
+def _sync_history_to_table(history: list):
+    """Insere trades fechados na tabela trade_history se ainda não existirem."""
+    if not history:
+        return
+    try:
+        with _get_conn() as conn:
+            for h in history:
+                closed_at = h.get("closed_at", "")
+                symbol    = h.get("symbol", "")
+                if not closed_at or not symbol:
+                    continue
+                exists = conn.execute(
+                    "SELECT id FROM trade_history WHERE symbol=? AND closed_at=?",
+                    (symbol, closed_at),
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        """INSERT INTO trade_history
+                           (symbol, direction, result, pnl, closed_at, opened_at,
+                            adx, ai_approved, ai_confidence, payload)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            symbol,
+                            h.get("dir", ""),
+                            h.get("result", ""),
+                            float(h.get("pnl", 0)),
+                            closed_at,
+                            h.get("opened_at", ""),
+                            float(h.get("adx", 0)),
+                            int(h.get("ai_approved", 1)),
+                            int(h.get("ai_confidence", 0)),
+                            json.dumps(h, default=str),
+                        ),
+                    )
+    except Exception as e:
+        log(f"[DB] Erro ao sincronizar histórico: {e}")
 
 
-def get_recent_logs(entry_type=None, hours=24, limit=100):
-    """Retorna logs recentes do arquivo persistente."""
-    if not os.path.exists(LOG_FILE):
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOGS ESTRUTURADOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def append_log(entry_type: str, data: dict):
+    """Persiste entrada de log no SQLite E no arquivo JSONL legado (compatibilidade)."""
+    payload = json.dumps(data, default=str)
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "INSERT INTO bot_logs(entry_type, payload) VALUES(?,?)",
+                (entry_type, payload),
+            )
+    except Exception as e:
+        log(f"[DB] Erro ao salvar log: {e}")
+
+    # Mantém arquivo JSONL para ferramentas externas
+    try:
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type":      entry_type,
+            "data":      data,
+        }
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except Exception:
+        pass
+
+
+def get_recent_logs(entry_type=None, hours: int = 24, limit: int = 100) -> list:
+    """Retorna logs recentes do SQLite."""
+    cutoff = datetime.fromtimestamp(time.time() - hours * 3600).isoformat()
+    try:
+        with _get_conn() as conn:
+            if entry_type:
+                rows = conn.execute(
+                    "SELECT * FROM bot_logs WHERE entry_type=? AND created_at >= ? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (entry_type, cutoff, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM bot_logs WHERE created_at >= ? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (cutoff, limit),
+                ).fetchall()
+        results = []
+        for r in rows:
+            try:
+                results.append({
+                    "timestamp": r["created_at"],
+                    "type":      r["entry_type"],
+                    "data":      json.loads(r["payload"]),
+                })
+            except Exception:
+                continue
+        return list(reversed(results))
+    except Exception as e:
+        log(f"[DB] Erro ao ler logs: {e}")
         return []
 
-    cutoff = time.time() - (hours * 3600)
-    results = []
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÉTRICAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_metrics(metrics: dict):
+    """Persiste métricas no SQLite."""
+    payload = json.dumps(metrics, default=str)
+    now     = datetime.now().isoformat()
     try:
-        with open(LOG_FILE, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    entry_ts = datetime.fromisoformat(entry["timestamp"]).timestamp()
-                    if entry_ts < cutoff:
-                        continue
-                    if entry_type and entry["type"] != entry_type:
-                        continue
-                    results.append(entry)
-                except:
-                    continue
+        with _get_conn() as conn:
+            conn.execute(
+                "INSERT INTO bot_metrics(id, payload, updated_at) VALUES(1,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+                (payload, now),
+            )
     except Exception as e:
-        log("[ERRO] Falha ao ler logs: " + str(e))
-
-    return results[-limit:]
+        log(f"[DB] Erro ao salvar métricas: {e}")
 
 
-def save_metrics(metrics):
-    """Salva métricas agregadas em arquivo separado."""
-    data = {
-        "updated_at": datetime.now().isoformat(),
-        **metrics
-    }
-    temp_file = METRICS_FILE + ".tmp"
-    with open(temp_file, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(temp_file, METRICS_FILE)
+def load_metrics() -> dict:
+    """Carrega métricas salvas do SQLite."""
+    try:
+        with _get_conn() as conn:
+            row = conn.execute("SELECT payload FROM bot_metrics WHERE id=1").fetchone()
+        return json.loads(row["payload"]) if row else {}
+    except Exception:
+        return {}
 
 
-def load_metrics():
-    """Carrega métricas salvas."""
-    if os.path.exists(METRICS_FILE):
-        try:
-            with open(METRICS_FILE) as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-
-def load_equity_curve():
-    """Carrega curva de equity do histórico (para dashboard)."""
-    # Será reconstruído no endpoint /api/equity_curve
+def load_equity_curve() -> list:
+    """Reconstrói curva de equity a partir da tabela trade_history."""
     return []
 
 
-def calculate_metrics(bot):
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÉTRICAS DE PERFORMANCE (refatoradas para usar SQLite quando disponível)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calculate_metrics(bot) -> dict:
     """
     Calcula métricas de performance do bot com validações de segurança.
-    
-    Retorna dicionário com:
-    - total_trades, winrate, wins, losses
-    - profit_factor, avg_win, avg_loss, expectancy
-    - max_drawdown_pct, current_balance, total_pnl
-    - active_trades_count, pending_trades_count
+    Usa o histórico em memória do bot (compatível com calculate_metrics_from_history).
     """
-    # ── Validação: histórico vazio ──
-    if not bot.history:
-        return {
-            "total_trades": 0,
-            "winrate": 0,
-            "wins": bot.wins,
-            "losses": bot.losses,
-            "profit_factor": 0,
-            "avg_win": 0,
-            "avg_loss": 0,
-            "expectancy": 0,
-            "max_drawdown_pct": 0,
-            "current_balance": round(bot.balance, 2),
-            "total_pnl": 0,
-            "active_trades_count": len(bot.active_trades),
-            "pending_trades_count": len(bot.pending_trades),
-        }
-    
-    total = bot.wins + bot.losses
-    wr = round(bot.wins / total * 100, 1) if total > 0 else 0
+    from performance import calculate_metrics_from_history
+    return calculate_metrics_from_history(
+        bot.history,
+        initial_balance=Config.INITIAL_BALANCE,
+        current_balance=bot.balance,
+        active_trades_count=len(bot.active_trades),
+        pending_trades_count=len(bot.pending_trades),
+    )
 
-    # ── Win/Loss Amount ──
-    total_profit = sum(h.get("pnl", 0) for h in bot.history if h.get("result") == "WIN")
-    total_loss = abs(sum(h.get("pnl", 0) for h in bot.history if h.get("result") == "LOSS"))
-    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else 0
 
-    avg_win = total_profit / bot.wins if bot.wins > 0 else 0
-    avg_loss = total_loss / bot.losses if bot.losses > 0 else 0
-
-    expectancy = round((wr/100 * avg_win) - ((100-wr)/100 * avg_loss), 2) if total > 0 else 0
-
-    # ── Drawdown com validação ──
-    peak = Config.INITIAL_BALANCE
-    max_dd = 0.0
-    running = Config.INITIAL_BALANCE
-    
-    for h in bot.history:
-        pnl = h.get("pnl", 0)
-        
-        # Validação: PnL não deve ser NaN ou infinito
-        if isinstance(pnl, float):
-            if math.isnan(pnl) or math.isinf(pnl):
-                log(f"[METRICS] PnL inválido detectado: {pnl}")
-                continue
-        
-        running += pnl
-        if running > peak:
-            peak = running
-        
-        if peak > 0:
-            dd = (peak - running) / peak
-            if dd > max_dd:
-                max_dd = dd
-
-    return {
-        "total_trades": total,
-        "winrate": wr,
-        "wins": bot.wins,
-        "losses": bot.losses,
-        "profit_factor": profit_factor,
-        "avg_win": round(avg_win, 2),
-        "avg_loss": round(avg_loss, 2),
-        "expectancy": expectancy,
-        "max_drawdown_pct": round(max_dd * 100, 2),
-        "current_balance": round(bot.balance, 2),
-        "total_pnl": round(bot.balance - Config.INITIAL_BALANCE, 2),
-        "active_trades_count": len(bot.active_trades),
-        "pending_trades_count": len(bot.pending_trades),
-    }
+# Inicializa o banco na importação do módulo
+init_db()

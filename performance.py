@@ -107,7 +107,24 @@ def calculate_metrics_from_history(
             std = variance ** 0.5
         else:
             std = 0.0
-        sharpe = (avg_ret / std * sqrt(252)) if std > 0 else 0.0
+
+        # ── Sharpe anualizado corretamente ────────────────────────────────────
+        # Returns aqui são por trade, não diários. Annualizar por sqrt(252) é
+        # incorreto — usamos o número de trades/ano estimado.
+        # Se há timestamps ISO disponíveis, calcula a frequência real;
+        # caso contrário assume 250 trades/ano como proxy conservador.
+        trades_per_year = 250.0
+        if len(history_list) >= 2:
+            try:
+                t_first = _trade_time_key(history_list[0])
+                t_last  = _trade_time_key(history_list[-1])
+                span_years = (t_last - t_first) / (365.25 * 24 * 3600)
+                if span_years > 0.01:
+                    trades_per_year = len(history_list) / span_years
+            except Exception:
+                pass
+
+        sharpe = (avg_ret / std * sqrt(trades_per_year)) if std > 0 else 0.0
     else:
         sharpe = 0.0
 

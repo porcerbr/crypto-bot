@@ -68,13 +68,16 @@ class TradingBot:
             if symbol not in symbols:
                 continue
             total_risk_usd = 0.0
+            # Usa o preço USDJPY em cache, com fallback para 150.0 apenas se
+            # o cache ainda não estiver populado (primeiros segundos de startup)
+            usdjpy_rate = self._usdjpy_price if self._usdjpy_price > 0 else 150.0
             for t in self.active_trades:
                 if t["symbol"] in symbols:
                     dist = abs(t["entry"] - t["sl"])
                     cs = contract_size_for(t["symbol"])
                     risk = t["lot"] * dist * cs
                     if is_jpy_pair(t["symbol"]):
-                        risk = risk / 150.0
+                        risk = risk / usdjpy_rate
                     total_risk_usd += risk
             total_risk_usd += additional_risk_usd
             if self.balance > 0:
@@ -158,8 +161,30 @@ class TradingBot:
             log(f"[SIGNAL] {sym}: {msg}")
             return False
 
+        # ── Spread + Slippage (simulação realista de execução) ────────────────
+        entry_simulated = pend["entry"]
+        if Config.USE_SPREAD_MODEL or Config.USE_SLIPPAGE_MODEL:
+            import random
+            pf = 0.01 if is_jpy_pair(sym) or sym == "XAUUSD" else 0.0001
+            spread_cost = 0.0
+            slip_cost   = 0.0
+            if Config.USE_SPREAD_MODEL:
+                spread_pips = Config.SPREAD_PIPS.get(sym, 1.0)
+                spread_cost = spread_pips * pf
+            if Config.USE_SLIPPAGE_MODEL:
+                slip_pips = Config.SLIPPAGE_PIPS.get(sym, 0.3)
+                # Slippage aleatório entre 0 e slip_pips (sempre contra a posição)
+                slip_cost = random.uniform(0, slip_pips) * pf
+            total_cost = spread_cost + slip_cost
+            # Para BUY: entrada efetiva é maior; para SELL: menor
+            if pend.get("dir") == "BUY":
+                entry_simulated = round(pend["entry"] + total_cost, 5)
+            else:
+                entry_simulated = round(pend["entry"] - total_cost, 5)
+
         trade = {
             **pend,
+            "entry":              entry_simulated,
             "lot":                round(lot, 2),
             "margin_required":    round(margin_required, 2),
             "commission":         round(commission, 2),

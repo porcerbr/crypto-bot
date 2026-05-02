@@ -30,6 +30,55 @@ class Config:
     BACKUP_INTERVAL     = int(os.getenv("BACKUP_INTERVAL", "3600"))
 
     # ═══════════════════════════════════════════════════════════════════════════════
+    # SEGURANÇA — Dashboard API
+    # Gere com: python -c "import secrets; print(secrets.token_hex(32))"
+    # ═══════════════════════════════════════════════════════════════════════════════
+    DASHBOARD_API_TOKEN = os.getenv("DASHBOARD_API_TOKEN", "").strip()
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # PERSISTÊNCIA — SQLite (WAL mode)
+    # ═══════════════════════════════════════════════════════════════════════════════
+    DB_PATH = os.getenv("DB_PATH", "bot_state.db")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SIMULAÇÃO DE EXECUÇÃO — Spread e Slippage
+    # Valores em pips por par (spread típico de broker ECN/STP)
+    # ═══════════════════════════════════════════════════════════════════════════════
+    SPREAD_PIPS = {
+        "EURUSD": 0.6, "GBPUSD": 0.9, "USDJPY": 0.7,
+        "AUDUSD": 0.8, "USDCAD": 1.0, "USDCHF": 1.0,
+        "NZDUSD": 1.2, "EURGBP": 1.0, "EURJPY": 1.0,
+        "GBPJPY": 1.5, "XAUUSD": 25.0,
+    }
+    SLIPPAGE_PIPS = {
+        "EURUSD": 0.2, "GBPUSD": 0.3, "USDJPY": 0.2,
+        "AUDUSD": 0.3, "USDCAD": 0.3, "USDCHF": 0.3,
+        "NZDUSD": 0.4, "EURGBP": 0.3, "EURJPY": 0.3,
+        "GBPJPY": 0.5, "XAUUSD": 5.0,
+    }
+    USE_SPREAD_MODEL    = True
+    USE_SLIPPAGE_MODEL  = True
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # FALLBACK DE DADOS — Yahoo Finance
+    # ═══════════════════════════════════════════════════════════════════════════════
+    USE_YAHOO_FALLBACK  = True
+    YAHOO_FALLBACK_TTL  = 30 * 60
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # RETRY / RESILIÊNCIA
+    # ═══════════════════════════════════════════════════════════════════════════════
+    API_RETRY_ATTEMPTS  = 3
+    API_RETRY_MIN_WAIT  = 2
+    API_RETRY_MAX_WAIT  = 30
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # LOG ROTATION
+    # ═══════════════════════════════════════════════════════════════════════════════
+    LOG_MAX_BYTES       = 10 * 1024 * 1024
+    LOG_BACKUP_COUNT    = 5
+
+    # ═══════════════════════════════════════════════════════════════════════════════
     # MODO E TIMEFRAME
     # ═══════════════════════════════════════════════════════════════════════════════
     # ATENÇÃO: este bot é SINALIZADOR apenas. Não executa ordens no broker.

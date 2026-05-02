@@ -1,12 +1,18 @@
-
 """
-api.py \u2014 Endpoints HTTP do Sniper Bot (modo sinalizador).
+api.py — Endpoints HTTP do Sniper Bot (modo sinalizador).
 
-Todos os n\u00fameros de saldo / P&L s\u00e3o SIMULADOS para estat\u00edstica.
-Este bot n\u00e3o executa ordens em corretora real.
+SEGURANÇA:
+  Todos os endpoints /api/* exigem o header:
+    Authorization: Bearer <DASHBOARD_API_TOKEN>
+  ou o query param:
+    ?token=<DASHBOARD_API_TOKEN>
+
+  Se DASHBOARD_API_TOKEN estiver vazio, a API opera sem autenticação
+  (útil em desenvolvimento local, mas NÃO recomendado em produção).
 """
 
 import os
+import functools
 from pathlib import Path
 from flask import Flask, jsonify, request, Response
 
@@ -27,7 +33,7 @@ from utils import (
 
 
 def _get_cached_price(symbol: str, fallback: float) -> float:
-    """L\u00ea o \u00faltimo Close do cache local. Se falhar, usa fallback."""
+    """Lê o último Close do cache local. Se falhar, usa fallback."""
     try:
         from analysis import _cache
         if symbol in _cache:
@@ -38,8 +44,30 @@ def _get_cached_price(symbol: str, fallback: float) -> float:
 
 
 def _get_usdjpy_price() -> float:
-    """Cota\u00e7\u00e3o USDJPY do cache \u2014 usada para converter P&L de pares JPY."""
+    """Cotação USDJPY do cache — usada para converter P&L de pares JPY."""
     return _get_cached_price("USDJPY", 150.0)
+
+
+def _check_token() -> bool:
+    """Valida token de autenticação. Retorna True se OK ou se token não configurado."""
+    expected = Config.DASHBOARD_API_TOKEN
+    if not expected:
+        return True   # modo dev: sem token configurado = aberto
+
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:] == expected
+    return request.args.get("token", "") == expected
+
+
+def require_auth(f):
+    """Decorator que exige autenticação em todos os endpoints /api/*."""
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if not _check_token():
+            return jsonify({"error": "Unauthorized — token inválido ou ausente"}), 401
+        return f(*args, **kwargs)
+    return wrapper
 
 
 def create_api(bot):
@@ -96,6 +124,7 @@ def create_api(bot):
         return _dashboard_response()
 
     @app.route("/api/status")
+    @require_auth
     def status():
         usdjpy = _get_usdjpy_price()
         active = []
@@ -211,6 +240,7 @@ def create_api(bot):
         })
 
     @app.route("/api/assets", methods=["GET", "POST"])
+    @require_auth
     def assets():
         from config import Config
 
@@ -245,6 +275,7 @@ def create_api(bot):
 
 
     @app.route("/api/trade-settings", methods=["GET", "POST"])
+    @require_auth
     def trade_settings():
         if request.method == "GET":
             settings = load_trade_settings()
@@ -281,6 +312,7 @@ def create_api(bot):
         })
 
     @app.route("/api/pending")
+    @require_auth
     def pending():
         try:
             return jsonify(list(getattr(bot, "pending_trades", []) or []))
@@ -288,6 +320,7 @@ def create_api(bot):
             return jsonify({"ok": False, "error": str(e), "pending": []})
 
     @app.route("/api/execute", methods=["POST"])
+    @require_auth
     def execute():
         data = request.get_json(force=True) or {}
         pid = data.get("pending_id")
@@ -299,6 +332,7 @@ def create_api(bot):
         return jsonify({"ok": ok, "message": msg})
 
     @app.route("/api/reject", methods=["POST"])
+    @require_auth
     def reject():
         data = request.get_json(force=True) or {}
         pid = data.get("pending_id")
@@ -309,6 +343,7 @@ def create_api(bot):
     # FECHAMENTO MANUAL \u2014 com P&L real
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/close_trade", methods=["POST"])
+    @require_auth
     def close_trade():
         """Fecha um trade ativo manualmente pelo s\u00edmbolo."""
         data   = request.get_json(force=True) or {}
@@ -343,6 +378,7 @@ def create_api(bot):
     # HIST\u00d3RICO / LOGS / M\u00c9TRICAS
     # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
     @app.route("/api/history")
+    @require_auth
     def history():
         try:
             limit = request.args.get("limit", 20, type=int)
@@ -352,6 +388,7 @@ def create_api(bot):
             return jsonify({"ok": False, "error": str(e), "history": []})
 
     @app.route("/api/logs")
+    @require_auth
     def logs():
         try:
             from db import get_recent_logs
@@ -376,6 +413,7 @@ def create_api(bot):
             })
 
     @app.route("/api/metrics")
+    @require_auth
     def metrics():
         try:
             from db import calculate_metrics, load_metrics
@@ -397,6 +435,7 @@ def create_api(bot):
             })
 
     @app.route("/api/equity_curve")
+    @require_auth
     def equity_curve():
         """Curva de equity \u2014 usada pelo dashboard para gr\u00e1fico."""
         try:
@@ -416,6 +455,7 @@ def create_api(bot):
         return jsonify(curve)
 
     @app.route("/api/force-save", methods=["POST"])
+    @require_auth
     def force_save():
         try:
             from db import save_state
@@ -425,6 +465,7 @@ def create_api(bot):
             return jsonify({"ok": False, "message": str(e)})
 
     @app.route("/api/ai_params")
+    @require_auth
     def ai_params():
         defaults = {
             "live_confluence": Config.MIN_CONFLUENCE,
@@ -447,6 +488,7 @@ def create_api(bot):
             return jsonify(defaults)
 
     @app.route("/api/confluence")
+    @require_auth
     def confluence():
         try:
             from signals import get_confluence_snapshot
@@ -459,6 +501,7 @@ def create_api(bot):
             return jsonify({"ok": False, "error": str(e), "confluence": []})
 
     @app.route("/api/health")
+    @require_auth
     def health():
         """Endpoint leve para Railway health-check."""
         return jsonify({
