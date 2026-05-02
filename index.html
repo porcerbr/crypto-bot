@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot Pro | Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Trading Bot Pro</h1>
+                <div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem;">
+                    Ativo: <strong id="symbol">---</strong> | 
+                    Última atualização: <span id="last-update">---</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <span id="status-badge" class="status-badge stopped">Parado</span>
+                <div class="controls">
+                    <button class="btn btn-success" onclick="sendCommand('start')">Iniciar</button>
+                    <button class="btn btn-warning" onclick="sendCommand('pause')">Pausar</button>
+                    <button class="btn" onclick="sendCommand('resume')">Retomar</button>
+                    <button class="btn btn-danger" onclick="sendCommand('stop')">Parar</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Métricas Principais -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Performance Diária</span>
+                </div>
+                <div id="daily-pnl" class="card-value neutral">R$ 0,00</div>
+                <div class="card-sub">Realizado hoje</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Performance Semanal</span>
+                </div>
+                <div id="weekly-pnl" class="card-value neutral">R$ 0,00</div>
+                <div class="card-sub">Últimos 7 dias</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Performance Mensal</span>
+                </div>
+                <div id="monthly-pnl" class="card-value neutral">R$ 0,00</div>
+                <div class="card-sub">Últimos 30 dias</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Taxa de Acerto</span>
+                </div>
+                <div id="win-rate" class="card-value neutral">0%</div>
+                <div class="card-sub"><span id="win-count">0</span>W / <span id="loss-count">0</span>L</div>
+            </div>
+        </div>
+
+        <!-- Sinal e Filtros -->
+        <div class="grid" style="grid-template-columns: 2fr 1fr;">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Último Sinal</span>
+                    <span id="signal-score-text" class="card-sub">Score: 0</span>
+                </div>
+                <div class="signal-box">
+                    <div id="signal-direction" class="signal-direction HOLD">AGUARDANDO</div>
+                    <div id="signal-reason" class="card-sub" style="margin-top: 0.5rem;">Nenhum sinal gerado ainda</div>
+                    <div class="score-bar">
+                        <div id="score-fill" class="score-fill low" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Filtros Ativos</span>
+                </div>
+                <div id="filters-list" class="filters-list empty"></div>
+            </div>
+        </div>
+
+        <!-- Trades e Logs -->
+        <div class="grid" style="grid-template-columns: 2fr 1fr;">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Trades Recentes</span>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="trades-table">
+                        <thead>
+                            <tr>
+                                <th>Horário</th>
+                                <th>Direção</th>
+                                <th>Preço</th>
+                                <th>Score</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-body">
+                            <tr><td colspan="6" style="text-align:center;color:var(--text-secondary)">Nenhum trade registrado</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Alertas & Erros</span>
+                </div>
+                <div id="logs-container" class="logs-container">
+                    <div class="log-entry">Sistema iniciado. Aguardando dados...</div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            Trading Bot Pro v1.0 | Modo: <span id="mode-text">SIMULAÇÃO</span> | 
+            Uptime: <span id="uptime">0s</span>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
