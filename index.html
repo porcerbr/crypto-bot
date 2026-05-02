@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TradingBot — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #050b12;
+    --bg2:      #0a1520;
+    --bg3:      #0f1e2e;
+    --border:   rgba(0,200,255,0.12);
+    --accent:   #00c8ff;
+    --green:    #00e5a0;
+    --red:      #ff4d6d;
+    --yellow:   #ffd166;
+    --muted:    #3a5068;
+    --text:     #c8dff0;
+    --text2:    #6a8faa;
+    --glow:     0 0 20px rgba(0,200,255,0.15);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'JetBrains Mono',monospace;
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before{
+    content:'';
+    position:fixed;inset:0;
+    background:repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.04) 2px,
+      rgba(0,0,0,0.04) 4px
+    );
+    pointer-events:none;z-index:1000;
+  }
+
+  /* ── Header ── */
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:18px 32px;
+    background:var(--bg2);
+    border-bottom:1px solid var(--border);
+    position:sticky;top:0;z-index:100;
+    backdrop-filter:blur(12px);
+  }
+  .logo{
+    font-family:'Syne',sans-serif;
+    font-size:1.1rem;font-weight:800;
+    letter-spacing:0.12em;
+    color:var(--accent);
+    text-transform:uppercase;
+  }
+  .logo span{color:var(--text2)}
+  .header-meta{display:flex;align-items:center;gap:20px}
+  .pulse-dot{
+    width:8px;height:8px;border-radius:50%;
+    background:var(--green);
+    box-shadow:0 0 8px var(--green);
+    animation:pulse 1.8s ease-in-out infinite;
+  }
+  .pulse-dot.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+  .pulse-dot.warn{background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+  .status-label{font-size:.7rem;letter-spacing:.1em;color:var(--text2);text-transform:uppercase}
+  #status-text{font-size:.75rem;font-weight:600;color:var(--green)}
+  .time-badge{font-size:.7rem;color:var(--muted)}
+
+  /* ── Layout ── */
+  main{padding:24px 32px;display:grid;gap:20px}
+  .row{display:grid;gap:20px}
+  .row-4{grid-template-columns:repeat(4,1fr)}
+  .row-3{grid-template-columns:repeat(3,1fr)}
+  .row-2{grid-template-columns:1fr 1fr}
+  .row-21{grid-template-columns:2fr 1fr}
+  .row-12{grid-template-columns:1fr 2fr}
+  @media(max-width:1100px){
+    .row-4{grid-template-columns:1fr 1fr}
+    .row-3{grid-template-columns:1fr 1fr}
+    .row-2,.row-21,.row-12{grid-template-columns:1fr}
+  }
+
+  /* ── Cards ── */
+  .card{
+    background:var(--bg2);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:20px;
+    position:relative;
+    overflow:hidden;
+    transition:border-color .2s;
+  }
+  .card::before{
+    content:'';
+    position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    opacity:.4;
+  }
+  .card:hover{border-color:rgba(0,200,255,0.25)}
+  .card-title{
+    font-size:.65rem;letter-spacing:.14em;color:var(--text2);
+    text-transform:uppercase;margin-bottom:14px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .card-title .dot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+
+  /* ── KPI ── */
+  .kpi{display:flex;flex-direction:column;gap:6px}
+  .kpi-val{
+    font-family:'Syne',sans-serif;
+    font-size:2rem;font-weight:800;
+    letter-spacing:-.02em;
+    line-height:1;
+  }
+  .kpi-label{font-size:.65rem;color:var(--text2);letter-spacing:.08em}
+  .kpi-sub{font-size:.72rem;color:var(--muted);margin-top:4px}
+  .up{color:var(--green)}
+  .dn{color:var(--red)}
+  .neu{color:var(--accent)}
+
+  /* ── Signal card ── */
+  .signal-box{
+    padding:18px;border-radius:10px;
+    border:1px solid var(--border);
+    background:var(--bg3);
+    display:flex;flex-direction:column;gap:10px;
+  }
+  .sig-dir{
+    font-family:'Syne',sans-serif;
+    font-size:1.6rem;font-weight:800;
+    letter-spacing:.06em;
+  }
+  .sig-dir.long{color:var(--green)}
+  .sig-dir.short{color:var(--red)}
+  .sig-dir.neutral{color:var(--muted)}
+  .sig-row{display:flex;justify-content:space-between;font-size:.72rem}
+  .sig-row .lbl{color:var(--text2)}
+  .sig-row .val{font-weight:600}
+
+  /* ── Score bar ── */
+  .score-wrap{display:flex;flex-direction:column;gap:6px}
+  .score-val{
+    font-family:'Syne',sans-serif;font-size:2.6rem;font-weight:800;
+    line-height:1;
+  }
+  .score-bar-bg{
+    height:6px;border-radius:3px;background:var(--bg3);
+    overflow:hidden;margin-top:4px;
+  }
+  .score-bar-fill{
+    height:100%;border-radius:3px;
+    transition:width .6s ease;
+    background:linear-gradient(90deg,var(--accent),var(--green));
+  }
+
+  /* ── Table ── */
+  .tbl{width:100%;border-collapse:collapse;font-size:.7rem}
+  .tbl th{
+    text-align:left;padding:8px 10px;
+    color:var(--text2);font-weight:400;letter-spacing:.1em;
+    border-bottom:1px solid var(--border);font-size:.6rem;
+    text-transform:uppercase;
+  }
+  .tbl td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl tr:hover td{background:rgba(0,200,255,.03)}
+  .badge{
+    display:inline-flex;align-items:center;
+    padding:2px 8px;border-radius:4px;
+    font-size:.6rem;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+  .badge-long{background:rgba(0,229,160,.15);color:var(--green)}
+  .badge-short{background:rgba(255,77,109,.15);color:var(--red)}
+  .badge-open{background:rgba(0,200,255,.1);color:var(--accent)}
+  .badge-tp{background:rgba(0,229,160,.15);color:var(--green)}
+  .badge-sl{background:rgba(255,77,109,.15);color:var(--red)}
+
+  /* ── Chart ── */
+  .chart-wrap{position:relative;height:220px}
+
+  /* ── Filters ── */
+  .filter-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .filter-tag{
+    padding:3px 10px;border-radius:20px;
+    font-size:.6rem;letter-spacing:.08em;font-weight:600;
+    background:rgba(255,209,102,.1);
+    color:var(--yellow);
+    border:1px solid rgba(255,209,102,.2);
+    text-transform:uppercase;
+  }
+  .filter-none{font-size:.72rem;color:var(--muted)}
+
+  /* ── Error log ── */
+  .err-item{
+    display:flex;gap:10px;padding:8px 0;
+    border-bottom:1px solid var(--border);
+    font-size:.68rem;
+  }
+  .err-item:last-child{border-bottom:none}
+  .err-time{color:var(--muted);white-space:nowrap;min-width:140px}
+  .err-msg{color:var(--red)}
+
+  /* ── Indicators grid ── */
+  .ind-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ind-item{
+    background:var(--bg3);border-radius:8px;
+    padding:10px 14px;
+    display:flex;flex-direction:column;gap:3px;
+  }
+  .ind-name{font-size:.6rem;color:var(--text2);letter-spacing:.1em;text-transform:uppercase}
+  .ind-val{font-size:.95rem;font-weight:600}
+
+  /* ── Uptime ── */
+  #uptime{font-size:.72rem;color:var(--muted)}
+
+  /* ── Loading ── */
+  .loading{
+    display:flex;align-items:center;justify-content:center;
+    height:200px;color:var(--muted);font-size:.8rem;
+    letter-spacing:.1em;
+  }
+
+  /* ── Animations ── */
+  .fade-in{animation:fadein .4s ease}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+  .shimmer{
+    background:linear-gradient(90deg,var(--bg3) 25%,var(--bg2) 50%,var(--bg3) 75%);
+    background-size:200% 100%;
+    animation:shimmer 1.5s infinite;
+    border-radius:4px;
+    color:transparent!important;
+  }
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* ── Performance row ── */
+  .perf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .perf-card{
+    background:var(--bg3);border-radius:8px;
+    padding:14px;text-align:center;
+  }
+  .perf-period{font-size:.6rem;color:var(--text2);letter-spacing:.1em;text-transform:uppercase}
+  .perf-pnl{font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:700;margin:4px 0}
+  .perf-trades{font-size:.65rem;color:var(--muted)}
+
+  footer{
+    text-align:center;padding:20px;
+    font-size:.6rem;color:var(--muted);
+    letter-spacing:.1em;border-top:1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">Trading<span>Bot</span> <span style="opacity:.4;font-weight:400">Pro</span></div>
+  <div class="header-meta">
+    <div>
+      <div class="status-label">Sistema</div>
+      <div id="status-text">—</div>
+    </div>
+    <div id="pulse" class="pulse-dot"></div>
+    <div class="time-badge" id="uptime">—</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ROW 1: KPIs rápidos -->
+  <div class="row row-4">
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Ativo</div>
+      <div class="kpi">
+        <div class="kpi-val neu" id="kpi-symbol">—</div>
+        <div class="kpi-label" id="kpi-tf">—</div>
+        <div class="kpi-sub" id="kpi-price">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Ciclos Executados</div>
+      <div class="kpi">
+        <div class="kpi-val neu" id="kpi-cycles">—</div>
+        <div class="kpi-label">ciclos</div>
+        <div class="kpi-sub" id="kpi-cycle-time">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Win Rate</div>
+      <div class="kpi">
+        <div class="kpi-val up" id="kpi-winrate">—</div>
+        <div class="kpi-label">win rate</div>
+        <div class="kpi-sub" id="kpi-trades">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Trades Abertos</div>
+      <div class="kpi">
+        <div class="kpi-val neu" id="kpi-open">0</div>
+        <div class="kpi-label">abertos agora</div>
+        <div class="kpi-sub" id="kpi-drawdown">DD: —</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 2: Sinal + Score + Indicadores -->
+  <div class="row row-3">
+
+    <!-- Último Sinal -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Último Sinal Gerado</div>
+      <div id="signal-empty" class="loading" style="height:160px">Aguardando sinal...</div>
+      <div id="signal-box" class="signal-box" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="sig-dir" id="sig-dir">LONG</div>
+          <div style="font-size:.65rem;color:var(--text2)" id="sig-time">—</div>
+        </div>
+        <div class="sig-row"><span class="lbl">Entrada</span><span class="val" id="sig-entry">—</span></div>
+        <div class="sig-row"><span class="lbl">Stop Loss</span><span class="val dn" id="sig-sl">—</span></div>
+        <div class="sig-row"><span class="lbl">Take Profit</span><span class="val up" id="sig-tp">—</span></div>
+        <div class="sig-row"><span class="lbl">R:R</span><span class="val neu" id="sig-rr">—</span></div>
+        <div class="sig-row"><span class="lbl">Status</span><span id="sig-status">—</span></div>
+        <div class="sig-row"><span class="lbl">Regime</span><span class="val" id="sig-regime">—</span></div>
+      </div>
+    </div>
+
+    <!-- Score -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Score de Entrada</div>
+      <div class="score-wrap">
+        <div class="score-val neu" id="score-val">—</div>
+        <div class="score-bar-bg">
+          <div class="score-bar-fill" id="score-bar" style="width:0%"></div>
+        </div>
+        <div style="font-size:.65rem;color:var(--text2);margin-top:8px">
+          Mínimo para entrada: <span id="score-min" style="color:var(--accent)">—</span>
+        </div>
+      </div>
+      <div style="margin-top:18px">
+        <div class="card-title"><span class="dot"></span>Razões da Análise</div>
+        <ul id="reasons-list" style="list-style:none;display:flex;flex-direction:column;gap:6px"></ul>
+      </div>
+    </div>
+
+    <!-- Indicadores -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Indicadores Técnicos</div>
+      <div class="ind-grid" id="indicators-grid">
+        <div class="ind-item"><div class="ind-name">RSI</div><div class="ind-val" id="ind-rsi">—</div></div>
+        <div class="ind-item"><div class="ind-name">ADX</div><div class="ind-val" id="ind-adx">—</div></div>
+        <div class="ind-item"><div class="ind-name">MACD Hist</div><div class="ind-val" id="ind-macd">—</div></div>
+        <div class="ind-item"><div class="ind-name">EMA Fast</div><div class="ind-val" id="ind-ema-f">—</div></div>
+        <div class="ind-item"><div class="ind-name">EMA Slow</div><div class="ind-val" id="ind-ema-s">—</div></div>
+        <div class="ind-item"><div class="ind-name">Vol Ratio</div><div class="ind-val" id="ind-vol">—</div></div>
+        <div class="ind-item"><div class="ind-name">ATR</div><div class="ind-val" id="ind-atr">—</div></div>
+        <div class="ind-item"><div class="ind-name">BB Position</div><div class="ind-val" id="ind-bb">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 3: Performance -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span>Desempenho por Período</div>
+    <div class="perf-grid">
+      <div class="perf-card">
+        <div class="perf-period">Hoje</div>
+        <div class="perf-pnl" id="perf-day">—</div>
+        <div class="perf-trades" id="perf-day-trades">— trades</div>
+      </div>
+      <div class="perf-card">
+        <div class="perf-period">Semana</div>
+        <div class="perf-pnl" id="perf-week">—</div>
+        <div class="perf-trades" id="perf-week-trades">— trades</div>
+      </div>
+      <div class="perf-card">
+        <div class="perf-period">Mês</div>
+        <div class="perf-pnl" id="perf-month">—</div>
+        <div class="perf-trades" id="perf-month-trades">— trades</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 4: Histórico + Filtros + Erros -->
+  <div class="row row-21">
+
+    <!-- Tabela de sinais -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Histórico de Sinais</div>
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>ID</th><th>Timestamp</th><th>Ativo</th>
+              <th>Dir</th><th>Entrada</th><th>Score</th>
+              <th>R:R</th><th>Status</th><th>PnL%</th>
+            </tr>
+          </thead>
+          <tbody id="signals-tbody">
+            <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Sem dados ainda</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Filtros + Erros -->
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+      <div class="card">
+        <div class="card-title"><span class="dot"></span>Filtros de Risco Ativos</div>
+        <div id="filters-container">
+          <div class="filter-none">Nenhum filtro ativo</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="dot"></span>Log de Erros Recentes</div>
+        <div id="errors-container">
+          <div class="filter-none">Nenhum erro registrado</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="dot"></span>Saúde do Sistema</div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:.72rem">
+          <div class="sig-row"><span class="lbl">Data misses</span><span id="health-misses">—</span></div>
+          <div class="sig-row"><span class="lbl">Total erros</span><span id="health-errors">—</span></div>
+          <div class="sig-row"><span class="lbl">Ciclo médio</span><span id="health-cycle">—</span></div>
+          <div class="sig-row"><span class="lbl">Último preço</span><span id="health-price">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<footer>TradingBot Professional · Ambiente: <span id="footer-env">—</span> · Todos os sinais são informativos — não constituem recomendação financeira</footer>
+
+<script>
+const API = '/api/status';
+const REFRESH_MS = 5000;
+
+let scoreChartInstance = null;
+let lastData = null;
+
+// ── Format helpers ──────────────────────────────────────────────
+const fmt = (n, d=2) => n != null ? Number(n).toFixed(d) : '—';
+const fmtPnl = (n) => {
+  if(n == null) return '—';
+  const v = Number(n).toFixed(2);
+  return n >= 0 ? `+${v}%` : `${v}%`;
+};
+const fmtTime = (iso) => {
+  if(!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('pt-BR',{timeZone:'UTC',hour12:false}).replace(',','');
+};
+const pnlClass = (n) => n >= 0 ? 'up' : 'dn';
+const fmtUptime = (secs) => {
+  const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = Math.floor(secs%60);
+  return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+};
+
+// ── DOM helpers ──────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const set = (id, val, cls='') => {
+  const el = $(id); if(!el) return;
+  el.textContent = val;
+  if(cls) el.className = cls;
+};
+
+// ── Main render ──────────────────────────────────────────────────
+function render(d) {
+  lastData = d;
+
+  // Status / pulse
+  const status = d.status || 'unknown';
+  $('status-text').textContent = status.replace(/_/g,' ').toUpperCase();
+  $('status-text').className = status === 'running' ? 'up' : status === 'paused_on_error' ? 'dn' : 'neu';
+  const pulse = $('pulse');
+  pulse.className = 'pulse-dot' + (status === 'running' ? '' : status.includes('error') ? ' err' : ' warn');
+  $('uptime').textContent = fmtUptime(d.uptime_seconds || 0);
+
+  // KPIs
+  set('kpi-symbol', d.symbol || '—');
+  set('kpi-tf', d.timeframe || '—');
+  set('kpi-price', d.current_price ? `$${fmt(d.current_price, 2)}` : '—');
+  set('kpi-cycles', d.cycle_count ?? '—');
+  set('kpi-cycle-time', d.last_cycle_seconds ? `${fmt(d.last_cycle_seconds, 1)}s por ciclo` : '—');
+
+  const perf = d.performance || {};
+  const wr = perf.win_rate;
+  set('kpi-winrate', wr != null ? `${wr.toFixed(1)}%` : '—');
+  $('kpi-winrate').className = 'kpi-val ' + (wr >= 50 ? 'up' : 'dn');
+  set('kpi-trades', `${perf.wins||0}W / ${perf.losses||0}L / ${perf.total||0} total`);
+  set('kpi-open', (d.open_trades || []).length);
+
+  // Footer env
+  $('footer-env') && ($('footer-env').textContent = d.status || '—');
+
+  // Sinal
+  const sig = d.last_signal;
+  if(sig) {
+    $('signal-empty').style.display = 'none';
+    $('signal-box').style.display = 'flex';
+    const dir = sig.direction || 'neutral';
+    $('sig-dir').textContent = dir.toUpperCase();
+    $('sig-dir').className = 'sig-dir ' + dir;
+    set('sig-time', fmtTime(sig.timestamp));
+    set('sig-entry', `$${fmt(sig.entry_price)}`);
+    set('sig-sl', `$${fmt(sig.stop_loss)}`);
+    set('sig-tp', `$${fmt(sig.take_profit)}`);
+    set('sig-rr', `1:${fmt(sig.risk_reward,2)}`);
+
+    const statusMap = {open:'badge badge-open',hit_tp:'badge badge-tp',hit_sl:'badge badge-sl'};
+    const statusEl = $('sig-status');
+    statusEl.textContent = (sig.status||'—').replace('_',' ').toUpperCase();
+    statusEl.className = statusMap[sig.status] || 'badge badge-open';
+    set('sig-regime', sig.market_regime || '—');
+
+    // Score
+    const score = sig.score || 0;
+    set('score-val', `${fmt(score, 1)}`);
+    $('score-val').className = 'score-val ' + (score >= 75 ? 'up' : score >= 60 ? 'neu' : 'dn');
+    $('score-bar').style.width = `${Math.min(score, 100)}%`;
+    set('score-min', '65.0');
+
+    // Razões
+    const ul = $('reasons-list');
+    ul.innerHTML = '';
+    (sig.reasons || []).forEach(r => {
+      const li = document.createElement('li');
+      li.style.cssText = 'font-size:.65rem;color:var(--text2);display:flex;gap:6px;align-items:center';
+      li.innerHTML = `<span style="color:var(--green)">›</span> ${r}`;
+      ul.appendChild(li);
+    });
+  } else {
+    $('signal-empty').style.display = 'flex';
+    $('signal-box').style.display = 'none';
+  }
+
+  // Indicadores (do último sinal se disponível)
+  if(sig) {
+    const rsi = sig.rsi ?? d.last_analysis?.rsi;
+    set('ind-rsi', sig.rsi != null ? fmt(sig.rsi,1) : '—');
+    set('ind-adx', sig.adx != null ? fmt(sig.adx,1) : '—');
+    set('ind-macd', sig.macd_hist != null ? fmt(sig.macd_hist,5) : '—');
+    set('ind-ema-f', sig.ema_fast != null ? fmt(sig.ema_fast,2) : '—');
+    set('ind-ema-s', sig.ema_slow != null ? fmt(sig.ema_slow,2) : '—');
+    set('ind-vol', sig.volume_ratio != null ? `${fmt(sig.volume_ratio,2)}x` : '—');
+    set('ind-atr', sig.atr != null ? fmt(sig.atr,2) : '—');
+    set('ind-bb', sig.bb_upper != null ? fmt(((sig.entry_price-sig.bb_lower)/(sig.bb_upper-sig.bb_lower)*100),1)+'%' : '—');
+  }
+
+  // Performance
+  set('perf-day', fmtPnl(perf.today_pnl));
+  $('perf-day').className = 'perf-pnl ' + pnlClass(perf.today_pnl||0);
+  set('perf-day-trades', `${perf.today_trades||0} trades`);
+
+  set('perf-week', fmtPnl(perf.week_pnl));
+  $('perf-week').className = 'perf-pnl ' + pnlClass(perf.week_pnl||0);
+  set('perf-week-trades', `${perf.week_trades||0} trades`);
+
+  set('perf-month', fmtPnl(perf.month_pnl));
+  $('perf-month').className = 'perf-pnl ' + pnlClass(perf.month_pnl||0);
+  set('perf-month-trades', `${perf.month_trades||0} trades`);
+
+  // Histórico
+  const tbody = $('signals-tbody');
+  const recents = (perf.recent_signals || []).slice(0, 15);
+  if(recents.length > 0){
+    tbody.innerHTML = recents.map(s => `
+      <tr class="fade-in">
+        <td style="font-family:monospace;color:var(--muted)">${s.id||'—'}</td>
+        <td style="color:var(--text2)">${fmtTime(s.timestamp)}</td>
+        <td>${s.symbol||'—'}</td>
+        <td><span class="badge badge-${s.direction}">${(s.direction||'—').toUpperCase()}</span></td>
+        <td>$${fmt(s.entry_price)}</td>
+        <td style="color:var(--accent)">${fmt(s.score,1)}</td>
+        <td>${fmt(s.risk_reward,2)}</td>
+        <td><span class="badge ${s.status==='hit_tp'?'badge-tp':s.status==='hit_sl'?'badge-sl':'badge-open'}">${(s.status||'—').replace('_',' ').toUpperCase()}</span></td>
+        <td class="${pnlClass(s.pnl_pct||0)}">${fmtPnl(s.pnl_pct)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Filtros
+  const filters = d.filters_active || [];
+  const fc = $('filters-container');
+  if(filters.length > 0){
+    fc.innerHTML = `<div class="filter-list">${filters.map(f=>`<span class="filter-tag">${f.replace(/_/g,' ')}</span>`).join('')}</div>`;
+  } else {
+    fc.innerHTML = '<div class="filter-none" style="color:var(--green)">✓ Nenhum filtro ativo</div>';
+  }
+
+  // Erros
+  const errors = d.errors || [];
+  const ec = $('errors-container');
+  if(errors.length > 0){
+    ec.innerHTML = errors.slice(0,5).map(e=>`
+      <div class="err-item">
+        <div class="err-time">${fmtTime(e.timestamp)}</div>
+        <div class="err-msg">${e.message||'—'}</div>
+      </div>
+    `).join('');
+  } else {
+    ec.innerHTML = '<div class="filter-none" style="color:var(--green)">✓ Sem erros recentes</div>';
+  }
+
+  // Health
+  const health = d.health || {};
+  set('health-misses', health.data_misses ?? '—');
+  set('health-errors', health.total_errors ?? '—');
+  set('health-cycle', health.avg_cycle_seconds ? `${health.avg_cycle_seconds}s` : '—');
+  set('health-price', fmtTime(health.last_price_update));
+}
+
+// ── Polling ──────────────────────────────────────────────────────
+async function fetchData() {
+  try {
+    const r = await fetch(API);
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    render(data);
+  } catch(e) {
+    $('status-text').textContent = 'DESCONECTADO';
+    $('status-text').className = 'dn';
+    $('pulse').className = 'pulse-dot err';
+  }
+}
+
+fetchData();
+setInterval(fetchData, REFRESH_MS);
+
+// ── Clock ────────────────────────────────────────────────────────
+setInterval(()=>{
+  if(lastData?.uptime_seconds != null){
+    lastData.uptime_seconds += REFRESH_MS/1000;
+    $('uptime').textContent = fmtUptime(lastData.uptime_seconds);
+  }
+}, 1000);
+</script>
+</body>
+</html>
