@@ -10,8 +10,8 @@ from datetime import datetime
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHAT_ID = os.environ.get('CHAT_ID')
+BOT_TOKEN = os.environ.get('7952260034:AAHTy0sTn5jIA0a7O9yJOQ9qPwZLxQDbxf4')
+CHAT_ID = os.environ.get('1056795017')
 if not BOT_TOKEN or not CHAT_ID:
     print("❌ Set BOT_TOKEN e CHAT_ID!")
     exit(1)
