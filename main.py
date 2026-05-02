@@ -12,6 +12,10 @@ from core.config import settings
 from core.engine import BotEngine
 from dashboard.server import start_dashboard
 
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 def configure_logging():
     logger.remove()
