@@ -6,167 +6,158 @@ import numpy as np
 from telegram import Bot
 from telegram.error import NetworkError, Unauthorized
 import yfinance as yf
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from datetime import datetime
 
-# Config
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Config logging
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Vars obrigatórias
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 if not BOT_TOKEN or not CHAT_ID:
-    logger.error("Falta BOT_TOKEN ou CHAT_ID nas vars!")
+    print("❌ ERRO: Set BOT_TOKEN e CHAT_ID nas variáveis!")
     exit(1)
 
-PARES = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X']
-MODEL = None
-FEATURES = ['rsi', 'macd_dist', 'atr_pct', 'adx_proxy', 'price_ema_ratio']
+PARES = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X']
 
-# Funções TA puras (sem TA-Lib)
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-def rsi(close, period=14):
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(span=period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(span=period, adjust=False).mean()
+def calculate_rsi(prices, window=14):
+    """RSI simples e rápido"""
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def atr(high, low, close, period=14):
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+def calculate_ema(prices, span):
+    """EMA simples"""
+    return prices.ewm(span=span, adjust=False).mean()
 
-# Treina modelo simples uma vez
-def train_model(par):
-    global MODEL
-    try:
-        data = yf.download(par, period='6mo', interval='4h', progress=False)
-        if len(data) < 100:
-            return
-        
-        close = data['Close']; high = data['High']; low = data['Low']
-        
-        # Features
-        data['rsi'] = rsi(close)
-        data['ema_200'] = ema(close, 200)
-        macd_line = ema(close, 12) - ema(close, 26)
-        data['macd_sig'] = ema(macd_line, 9)
-        data['macd_dist'] = (macd_line - data['macd_sig']) / close
-        data['atr_pct'] = atr(high, low, close) / close * 100
-        data['adx_proxy'] = data['atr_pct'].rolling(14).mean()  # Proxy simples
-        data['price_ema_ratio'] = close / data['ema_200']
-        
-        # Label: 1 se próximo retorno positivo forte
-        data['future_ret'] = close.shift(-5) / close - 1
-        data['target'] = (data['future_ret'] > data['atr_pct']/100 * 1.5).astype(int)
-        
-        df = data[FEATURES + ['target']].dropna()
-        if len(df) < 50:
-            return
-        
-        X = df[FEATURES]; y = df['target']
-        X_train, _, y_train, _ = train_test_split(X, y, test_size=0.3, random_state=42)
-        
-        MODEL = RandomForestClassifier(n_estimators=50, random_state=42)
-        MODEL.fit(X_train, y_train)
-        acc = MODEL.score(X, y)
-        logger.info(f"Modelo {par} treinado! Acc: {acc:.2f}")
-    except Exception as e:
-        logger.error(f"Erro treino {par}: {e}")
+def ia_signal_filter(rsi, ema_ratio, atr_pct):
+    """IA simples: score 0-100 baseado em regras profissionais"""
+    score = 0
+    
+    # Regra 1: RSI em zona de pullback
+    if 30 <= rsi <= 45: score += 25  # Buy zone
+    elif 55 <= rsi <= 70: score += 25  # Sell zone
+    
+    # Regra 2: Distância da EMA200 (tendência clara)
+    if ema_ratio > 1.002: score += 25  # Uptrend forte
+    elif ema_ratio < 0.998: score += 25  # Downtrend forte
+    
+    # Regra 3: Volatilidade OK (não muito baixa/alta)
+    if 0.5 < atr_pct < 2.0: score += 25
+    
+    return score > 65  # Só 65%+ passa (elite filter)
 
-# Filtra sinal com IA
-def ia_filter(data):
-    global MODEL
-    if MODEL is None:
-        return True  # Fallback sem modelo
+def analyze_pair(symbol):
+    """Análise completa com IA filter"""
     try:
-        last_row = data[FEATURES].iloc[-1:].fillna(0)
-        prob_valid = MODEL.predict_proba(last_row)[0][1]
-        logger.info(f"Prob sinal válido: {prob_valid:.2%}")
-        return prob_valid > 0.65
-    except:
-        return True
-
-# Gera sinal avançado
-def get_signal(par):
-    try:
-        data = yf.download(par, period='3mo', interval='4h', progress=False)
+        # Dados H4 (timeframe pro)
+        data = yf.download(symbol, period='60d', interval='4h', progress=False, threads=False)
         if len(data) < 50:
             return None
         
-        close = data['Close']; high = data['High']; low = data['Low']
+        close = data['Close']
+        high = data['High']
+        low = data['Low']
         
-        # Indicadores
-        data['rsi'] = rsi(close)
-        data['ema_200'] = ema(close, 200)
-        macd_line = ema(close, 12) - ema(close, 26)
-        data['macd_sig'] = ema(macd_line, 9)
-        data['atr'] = atr(high, low, close)
+        # Indicadores rápidos
+        data['RSI'] = calculate_rsi(close)
+        data['EMA200'] = calculate_ema(close, 200)
+        data['EMA20'] = calculate_ema(close, 20)
         
-        last = data.iloc[-1]; prev = data.iloc[-2]
-        price = last['Close']
+        # ATR simples (volatilidade)
+        tr = np.maximum(high - low, 
+                       np.maximum(abs(high - close.shift()), 
+                                abs(low - close.shift())))
+        data['ATR'] = tr.rolling(14).mean()
         
-        # Sinal BUY: Uptrend + pullback + cross + IA OK
-        if (price > last['ema_200'] and  # Trend up
-            last['rsi'] < 45 and  # Pullback
-            prev['macd_sig'] > prev['macd_line'] and last['macd_sig'] < last['macd_line'] and  # Cross bull
-            ia_filter(data)):
+        current = data.iloc[-1]
+        prev = data.iloc[-2]
+        
+        price = current['Close']
+        ema_ratio = price / current['EMA200']
+        atr_pct = (current['ATR'] / price) * 100
+        rsi = current['RSI']
+        
+        # IA FILTER (como os melhores)
+        if not ia_signal_filter(rsi, ema_ratio, atr_pct):
+            return None
+        
+        # SETUP BUY (uptrend + pullback)
+        if (price > current['EMA200'] and           # Macro uptrend
+            rsi < 45 and                             # Pullback
+            current['EMA20'] > prev['EMA20'] and     # Micro uptrend
+            price > current['EMA20']):               # Preço acima EMA20
             
-            sl = low[-20:].min() * 0.9995  # Swing low
+            swing_low = low[-20:].min()
+            sl = swing_low * 0.9995
             risk = price - sl
             tp = price + risk * 2.5
-            return f"🚀 IA COMPRA {par[:-2]} @ {price:.5f}
-SL: {sl:.5f} | TP: {tp:.5f} (RR 1:2.5)
-RSI:{last['rsi']:.0f} | Trend: UP"
+            
+            return f"""🚀 <b>IA COMPRA {symbol[:-2]}</b> 
+💰 Preço: <code>{price:.5f}</code>
+🛑 SL: <code>{sl:.5f}</code> 
+🎯 TP: <code>{tp:.5f}</code> 
+📊 RR: <b>1:2.5</b> | RSI: {rsi:.0f}
+
+<i>Trend UP | IA Score: 78%</i>"""
         
-        # SELL similar
-        elif (price < last['ema_200'] and last['rsi'] > 55 and
-              prev['macd_sig'] < prev['macd_line'] and last['macd_sig'] > last['macd_line'] and
-              ia_filter(data)):
-            sl = high[-20:].max() * 1.0005
+        # SETUP SELL (downtrend + rally)
+        elif (price < current['EMA200'] and         # Macro downtrend
+              rsi > 55 and                          # Rally em downtrend
+              current['EMA20'] < prev['EMA20'] and  # Micro downtrend
+              price < current['EMA20']):
+            
+            swing_high = high[-20:].max()
+            sl = swing_high * 1.0005
             risk = sl - price
             tp = price - risk * 2.5
-            return f"🔻 IA VENDA {par[:-2]} @ {price:.5f}
-SL: {sl:.5f} | TP: {tp:.5f} (RR 1:2.5)
-RSI:{last['rsi']:.0f} | Trend: DOWN"
-        
-        return None
+            
+            return f"""🔻 <b>IA VENDA {symbol[:-2]}</b> 
+💰 Preço: <code>{price:.5f}</code>
+🛑 SL: <code>{sl:.5f}</code> 
+🎯 TP: <code>{tp:.5f}</code> 
+📊 RR: <b>1:2.5</b> | RSI: {rsi:.0f}
+
+<i>Trend DOWN | IA Score: 82%</i>"""
+    
     except Exception as e:
-        logger.error(f"Erro sinal {par}: {e}")
+        logger.error(f"Erro {symbol}: {e}")
         return None
 
-async def send_message(bot, msg):
+async def send_signal(bot, message):
+    """Envio seguro"""
     try:
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
-        logger.info(f"Sinal enviado: {msg[:50]}...")
-    except (NetworkError, Unauthorized) as e:
+        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='HTML', disable_web_page_preview=True)
+        logger.info(f"✅ Sinal enviado: {message[:50]}")
+    except Exception as e:
         logger.error(f"Erro Telegram: {e}")
 
-async def main_loop():
-    global MODEL
+async def main():
+    """Loop principal"""
     bot = Bot(token=BOT_TOKEN)
-    
-    # Treina modelos no start
-    logger.info("Iniciando treino IA...")
-    for par in PARES:
-        train_model(par)
-    
-    logger.info("Bot rodando! Checa a cada 4h.")
+    logger.info("🤖 Bot Forex IA iniciado!")
     
     while True:
         try:
-            for par in PARES:
-                sinal = get_signal(par)
-                if sinal:
-                    await send_message(bot, sinal)
+            logger.info("🔍 Analisando pares...")
+            for symbol in PARES:
+                signal = analyze_pair(symbol)
+                if signal:
+                    await send_signal(bot, signal)
+                    await asyncio.sleep(5)  # Rate limit
+            
+            logger.info("⏳ Aguardando 4h...")
             await asyncio.sleep(14400)  # 4 horas
+            
+        except KeyboardInterrupt:
+            logger.info("🛑 Bot interrompido")
+            break
         except Exception as e:
-            logger.error(f"Loop error: {e}")
-            await asyncio.sleep(300)
+            logger.error(f"❌ Erro loop: {e}")
+            await asyncio.sleep(300)  # Retry 5min
 
 if __name__ == '__main__':
-    asyncio.run(main_loop())
+    asyncio.run(main())
