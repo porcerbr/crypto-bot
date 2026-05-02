@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sniper Bot — Dashboard</title>
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#11182b; --panel2:#0f1627; --line:#23304d; --text:#e9eef8; --muted:#91a0b7;
+      --green:#31c48d; --red:#f87171; --amber:#fbbf24; --blue:#60a5fa; --purple:#a78bfa;
+      --shadow:0 20px 60px rgba(0,0,0,.35); --r:20px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:radial-gradient(circle at top,#14203a 0,#0b1020 55%);color:var(--text)
+    }
+    .wrap{max-width:1500px;margin:0 auto;padding:20px}
+    .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+    .brand h1{margin:0;font-size:30px;letter-spacing:-.03em}
+    .brand p{margin:6px 0 0;color:var(--muted)}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);
+      border-radius:999px;background:rgba(255,255,255,.03);font-size:12px;color:var(--muted)
+    }
+    .pill strong{color:var(--text)}
+    .status{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .ok{background:var(--green)} .warn{background:var(--amber)} .bad{background:var(--red)}
+    .grid{display:grid;gap:14px}
+    .cards{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px}
+    .card{
+      background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+      border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:18px
+    }
+    .stat .label{color:var(--muted);font-size:12px;margin-bottom:8px}
+    .stat .value{font-size:28px;font-weight:800;letter-spacing:-.03em}
+    .stat .sub{color:var(--muted);font-size:12px;margin-top:6px}
+    .layout{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;align-items:start}
+    .section{display:grid;gap:14px}
+    .section h2{margin:0 0 10px;font-size:16px;letter-spacing:-.02em}
+    .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+    button{
+      border:0;border-radius:14px;padding:10px 14px;font-weight:700;cursor:pointer;
+      background:#22314f;color:var(--text);transition:.2s ease
+    }
+    button:hover{transform:translateY(-1px)}
+    button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+    .primary{background:linear-gradient(180deg,#2f6bff,#2959e5)}
+    .success{background:linear-gradient(180deg,#1fa971,#15845a)}
+    .danger{background:linear-gradient(180deg,#e25b5b,#b83c3c)}
+    .ghost{background:rgba(255,255,255,.04);border:1px solid var(--line)}
+    .control{width:100%;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font:inherit;outline:none}
+    .control:focus{border-color:rgba(47,107,255,.7);box-shadow:0 0 0 3px rgba(47,107,255,.14)}
+    input[type="checkbox"]{transform:scale(1.15)}
+    .muted{color:var(--muted)}
+    .list{display:grid;gap:10px}
+    .row{
+      display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;
+      border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.02)
+    }
+    .row .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .tag{
+      padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700;
+      background:rgba(255,255,255,.06);border:1px solid var(--line)
+    }
+    .tag.green{color:var(--green)} .tag.red{color:var(--red)} .tag.amber{color:var(--amber)}
+    .tag.blue{color:var(--blue)} .tag.purple{color:var(--purple)}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
+    th{color:#c8d4e3;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+    .table-wrap{overflow:auto;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.02)}
+    .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .chips{display:flex;gap:8px;flex-wrap:wrap}
+    .footer{margin:18px 0 6px;color:var(--muted);font-size:12px;text-align:center}
+    .error{
+      display:none;margin-bottom:14px;padding:12px 14px;border:1px solid rgba(248,113,113,.35);
+      background:rgba(248,113,113,.09);color:#fecaca;border-radius:16px;white-space:pre-wrap
+    }
+    .tiny{font-size:12px;color:var(--muted)}
+    .assets-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .asset{
+      display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;
+      border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02)
+    }
+    .asset small{display:block;color:var(--muted);font-size:11px}
+    @media (max-width:1200px){
+      .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .layout{grid-template-columns:1fr}
+      .assets-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+    @media (max-width:720px){
+      .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .assets-grid{grid-template-columns:1fr}
+      .split{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>Sniper Bot</h1>
+        <p>Dashboard operacional com seleção de ativos, sinais, histórico e IA.</p>
+      </div>
+      <div class="status">
+        <span class="pill"><span class="dot ok" id="dot-api"></span><strong id="api-state">API</strong> <span id="api-health">carregando</span></span>
+        <span class="pill"><strong id="mode">—</strong> <span id="timeframe">—</span></span>
+        <span class="pill"><strong id="updated-at">—</strong></span>
+      </div>
+    </div>
+
+    <div id="error-banner" class="error"></div>
+
+    <div class="grid cards">
+      <div class="card stat"><div class="label">Saldo</div><div class="value" id="balance">—</div><div class="sub" id="balance-sub">Inicial: —</div></div>
+      <div class="card stat"><div class="label">Win Rate</div><div class="value" id="winrate">—</div><div class="sub" id="wr-sub">—</div></div>
+      <div class="card stat"><div class="label">Trades ativos</div><div class="value" id="active-count">—</div><div class="sub">P&L em tempo real</div></div>
+      <div class="card stat"><div class="label">Pendentes</div><div class="value" id="pending-count">—</div><div class="sub">Sinais aguardando execução</div></div>
+      <div class="card stat"><div class="label">Max trades</div><div class="value" id="max-trades">—</div><div class="sub">Limite dinâmico</div></div>
+      <div class="card stat"><div class="label">Confluência</div><div class="value" id="live-conf">—</div><div class="sub" id="ai-bias">—</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="section">
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Seleção de ativos</h2>
+            <div class="chips">
+              <button class="ghost" id="btn-refresh">Atualizar</button>
+              <button class="primary" id="btn-save-assets">Salvar ativos</button>
+            </div>
+          </div>
+          <div id="assets-meta" class="tiny" style="margin-bottom:10px">Carregando ativos…</div>
+          <div id="assets-grid" class="assets-grid"></div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Limite de trades ativos</h2>
+            <span class="tag blue" id="trade-limit-mode">Auto</span>
+          </div>
+          <div class="tiny" style="margin-bottom:10px">Controle quantos trades podem ficar abertos ao mesmo tempo. O modo Auto usa o limite dinâmico por banca.</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <select id="trade-limit-select" class="control" style="max-width:260px">
+              <option value="auto">Auto (dinâmico)</option>
+              <option value="1">1 trade ativo</option>
+              <option value="2">2 trades ativos</option>
+              <option value="3">3 trades ativos</option>
+              <option value="4">4 trades ativos</option>
+              <option value="5">5 trades ativos</option>
+              <option value="6">6 trades ativos</option>
+              <option value="7">7 trades ativos</option>
+              <option value="8">8 trades ativos</option>
+              <option value="9">9 trades ativos</option>
+              <option value="10">10 trades ativos</option>
+            </select>
+            <button class="primary" id="btn-save-trade-limit">Salvar limite</button>
+          </div>
+          <div class="tiny" style="margin-top:10px">
+            Atual: <strong id="trade-limit-current">—</strong> • Limite padrão: <strong id="trade-limit-default">—</strong>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Trades ativos</h2>
+            <span class="tag blue" id="allowed-symbols">—</span>
+          </div>
+          <div id="active-trades" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Histórico</h2>
+            <div class="chips">
+              <span class="tag green" id="wins-tag">0W</span>
+              <span class="tag red" id="losses-tag">0L</span>
+              <span class="tag amber" id="dd-tag">DD 0%</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fechado</th><th>Ativo</th><th>Dir.</th><th>Resultado</th><th>P&L</th><th>Conf.</th></tr></thead>
+              <tbody id="history-body"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>IA e regime</h2>
+            <span class="tag purple" id="regime-badge">—</span>
+          </div>
+          <div class="split">
+            <div class="card" style="padding:14px;background:rgba(255,255,255,.02)"><div class="tiny">ADX médio</div><div style="font-size:24px;font-weight:800" id="adx-avg">—</div></div>
+            <div class="card" style="padding:14px;background:rgba(255,255,255,.02)"><div class="tiny">RR mínimo</div><div style="font-size:24px;font-weight:800" id="min-rr">—</div></div>
+          </div>
+          <div style="margin-top:12px" class="tiny" id="ai-summary">Nenhuma informação de IA ainda.</div>
+          <div style="margin-top:10px" class="tiny" id="regime-summary"></div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Confluência atual</h2>
+            <span class="tag green" id="conf-refresh">—</span>
+          </div>
+          <div id="confluence-list" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Sinais pendentes</h2>
+            <span class="tag amber" id="pending-meta">—</span>
+          </div>
+          <div id="pending-list" class="list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="toolbar" style="justify-content:space-between">
+        <h2>Logs recentes</h2>
+        <span class="tag" id="log-count">—</span>
+      </div>
+      <div id="logs-list" class="list"></div>
+    </div>
+
+    <div class="footer">Atualização automática a cada 15 segundos.</div>
+  </div>
+
+<script>
+const API = '/api';
+const state = { assets: [], selected: [], allowed: [], ai: {}, status: {}, confluence: [], logs: [], tradeSettings: {} };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#39;');
+
+function fmtMoney(v){
+  const n = Number(v || 0);
+  return (n >= 0 ? '$' : '-$') + Math.abs(n).toFixed(2);
+}
+function badgeColor(dir){ return String(dir || '').toUpperCase() === 'BUY' ? 'green' : 'red'; }
+function setError(msg){
+  const el = $('error-banner');
+  if (!el) return;
+  if (!msg){ el.style.display = 'none'; el.textContent = ''; return; }
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+async function requestJSON(url, opts = {}){
+  try{
+    const r = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      ...opts
+    });
+    const raw = await r.text();
+    let data = null;
+    if (raw && raw.trim()){
+      try { data = JSON.parse(raw); }
+      catch { data = { raw }; }
+    } else {
+      data = null;
+    }
+    return { ok: r.ok, status: r.status, data };
+  }catch(err){
+    return { ok: false, status: 0, data: null, error: err?.message || String(err) };
+  }
+}
+
+function setOffline(msg){
+  $('dot-api').className = 'dot bad';
+  $('api-health').textContent = 'offline';
+  setError(msg || 'Falha ao conectar na API.');
+}
+
+async function loadHealth(){
+  const res = await requestJSON(API + '/health');
+  if (!res.ok || !res.data){
+    setOffline('Falha ao conectar na API.');
+    return;
+  }
+  $('dot-api').className = 'dot ok';
+  $('api-state').textContent = 'API';
+  $('api-health').textContent = 'online';
+  $('mode').textContent = res.data.signal_only ? 'Signal only' : 'Live';
+  $('timeframe').textContent = res.data.signal_only ? 'Modo sinalizador' : '';
+}
+
+function renderStatus(status){
+  $('balance').textContent = fmtMoney(status.balance);
+  $('balance-sub').textContent = `Inicial: ${fmtMoney(status.initial_balance)}`;
+  $('winrate').textContent = `${Number(status.winrate || 0).toFixed(1)}%`;
+  $('wr-sub').textContent = `${status.wins || 0}W / ${status.losses || 0}L`;
+  $('active-count').textContent = (status.active_trades || []).length;
+  $('pending-count').textContent = status.pending_count ?? 0;
+  $('max-trades').textContent = status.max_trades_allowed ?? '—';
+  $('mode').textContent = status.signal_only ? 'Signal only' : 'Live';
+  $('trade-limit-current').textContent = (status.max_trades_override === null || status.max_trades_override === undefined)
+    ? 'Auto'
+    : String(status.max_trades_override);
+  $('trade-limit-default').textContent = String(status.max_trades_default ?? '—');
+  $('trade-limit-mode').textContent = status.max_trades_source === 'manual' ? 'Manual' : 'Auto';
+  $('timeframe').textContent = status.timeframe || '—';
+  $('allowed-symbols').textContent = `${(status.allowed_symbols || []).length} liberados`;
+  $('wins-tag').textContent = `${status.wins || 0}W`;
+  $('losses-tag').textContent = `${status.losses || 0}L`;
+  $('dd-tag').textContent = `DD ${Number(status.max_drawdown_pct || 0).toFixed(1)}%`;
+  $('updated-at').textContent = new Date().toLocaleTimeString('pt-BR');
+  renderActiveTrades(status.active_trades || []);
+}
+
+async function loadStatus(){
+  const res = await requestJSON(API + '/status');
+  if (!res.ok || !res.data){
+    $('balance').textContent = '—';
+    $('winrate').textContent = '—';
+    $('active-count').textContent = '—';
+    $('pending-count').textContent = '—';
+    return;
+  }
+  state.status = res.data;
+  renderStatus(res.data);
+}
+
+async function loadAssets(){
+  const res = await requestJSON(API + '/assets');
+  if (!res.ok || !res.data){
+    $('assets-meta').textContent = 'Ativos indisponíveis no momento.';
+    $('assets-grid').innerHTML = '';
+    return;
+  }
+  const data = res.data || {};
+  state.assets = data.assets || [];
+  state.selected = data.selected_symbols || [];
+  state.allowed = data.allowed_symbols || [];
+  $('assets-meta').textContent = `${state.selected.length} ativos selecionados • ${state.allowed.length} permitidos pela banca`;
+  $('assets-grid').innerHTML = state.assets.length ? state.assets.map(a => `
+    <label class="asset">
+      <div>
+        <strong>${esc(a.symbol)}</strong>
+        <small>${esc(a.name)}</small>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="tag ${a.allowed ? 'green' : 'red'}">${a.allowed ? 'OK' : 'Bloq.'}</span>
+        <input type="checkbox" data-symbol="${esc(a.symbol)}" ${a.selected ? 'checked' : ''} ${a.allowed ? '' : 'disabled'}>
+      </div>
+    </label>
+  `).join('') : '<div class="row"><span class="muted">Nenhum ativo disponível.</span></div>';
+}
+
+function selectedAssetSymbols(){
+  return [...document.querySelectorAll('#assets-grid input[type="checkbox"]')]
+    .filter(el => el.checked)
+    .map(el => el.dataset.symbol);
+}
+
+async function saveAssets(){
+  const selected_symbols = selectedAssetSymbols();
+  const res = await requestJSON(API + '/assets', {
+    method: 'POST',
+    body: JSON.stringify({ selected_symbols })
+  });
+  if (res.ok){
+    setError('');
+    await refreshAll();
+    return;
+  }
+  setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar ativos');
+}
+
+async function loadTradeSettings(){
+  const res = await requestJSON(API + '/trade-settings');
+  if (!res.ok || !res.data){
+    $('trade-limit-current').textContent = 'Auto';
+    $('trade-limit-default').textContent = '—';
+    $('trade-limit-mode').textContent = 'Auto';
+    $('trade-limit-select').value = 'auto';
+    return;
+  }
+  const s = res.data || {};
+  state.tradeSettings = s.settings || {};
+  const current = s.max_active_trades;
+  $('trade-limit-select').value = current === null || current === undefined ? 'auto' : String(current);
+  $('trade-limit-current').textContent = current === null || current === undefined ? 'Auto' : `${current}`;
+  $('trade-limit-default').textContent = `${s.default_max_active_trades ?? '—'}`;
+  $('trade-limit-mode').textContent = s.mode === 'manual' ? 'Manual' : 'Auto';
+}
+
+async function saveTradeSettings(){
+  const value = $('trade-limit-select').value;
+  const payload = { max_active_trades: value === 'auto' ? null : Number(value) };
+  const res = await requestJSON(API + '/trade-settings', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  if (res.ok){
+    setError('');
+    await refreshAll();
+    return;
+  }
+  setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar limite de trades');
+}
+
+function renderActiveTrades(list){
+  const el = $('active-trades');
+  if (!list || !list.length){
+    el.innerHTML = '<div class="row"><span class="muted">Nenhum trade ativo no momento.</span></div>';
+    return;
+  }
+  el.innerHTML = list.map(t => `
+    <div class="row">
+      <div class="left">
+        <strong>${esc(t.symbol)}</strong>
+        <span class="tag ${badgeColor(t.dir)}">${esc(t.dir)}</span>
+        <span class="tag ${Number(t.pnl) >= 0 ? 'green' : 'red'}">${fmtMoney(t.pnl)}</span>
+        <span class="tag blue">RR 1:${esc(t.rr ?? '—')}</span>
+      </div>
+      <div class="left">
+        <span class="muted">Entrada ${esc(Number(t.entry || 0).toFixed(5))}</span>
+        <button class="ghost" onclick="closeTrade(${JSON.stringify(t.symbol)})">Fechar</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadPending(){
+  const res = await requestJSON(API + '/pending');
+  const list = Array.isArray(res.data) ? res.data : (res.data?.pending || []);
+  $('pending-meta').textContent = `${list.length} sinal(is)`;
+  const el = $('pending-list');
+  if (!list.length){
+    el.innerHTML = '<div class="row"><span class="muted">Nenhum sinal pendente.</span></div>';
+    return;
+  }
+  el.innerHTML = list.map((p, idx) => {
+    const pid = p.pending_id ?? p.id ?? idx;
+    return `
+      <div class="row" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+          <div class="left">
+            <strong>${esc(p.symbol)}</strong>
+            <span class="tag ${badgeColor(p.dir)}">${esc(p.dir)}</span>
+            <span class="tag amber">Score ${esc(p.score)}/${esc(p.max_score)}</span>
+            <span class="tag purple">IA ${esc(p.ai_confidence ?? 0)}/10</span>
+          </div>
+          <div class="left muted">${esc(p.created_at || '')}</div>
+        </div>
+        <div class="tiny" style="margin-top:8px;line-height:1.6">
+          Entrada ${esc(Number(p.entry || 0).toFixed(5))} • SL ${esc(Number(p.sl || 0).toFixed(5))} • TP ${esc(Number(p.tp || 0).toFixed(5))}<br>
+          RR 1:${esc(p.rr ?? '—')} • Risco sugerido ${fmtMoney(p.suggested_risk_usd)} • Margem mínima ${fmtMoney(p.min_lot_margin)}
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <input id="amt-${esc(pid)}" type="number" min="0" step="1" value="${Math.max(1, Math.ceil(Number(p.min_lot_margin || 1)))}" style="max-width:140px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text)">
+          <button class="success" onclick="executePending(${JSON.stringify(pid)})">Executar</button>
+          <button class="danger" onclick="rejectPending(${JSON.stringify(pid)})">Rejeitar</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadHistory(){
+  const res = await requestJSON(API + '/history');
+  const list = Array.isArray(res.data) ? res.data : [];
+  const body = $('history-body');
+  if (!list.length){
+    body.innerHTML = '<tr><td colspan="6" class="muted">Nenhuma operação ainda.</td></tr>';
+    return;
+  }
+  body.innerHTML = list.slice().reverse().map(h => `
+    <tr>
+      <td>${esc(h.closed_at || '')}</td>
+      <td><strong>${esc(h.symbol)}</strong></td>
+      <td><span class="tag ${badgeColor(h.dir)}">${esc(h.dir)}</span></td>
+      <td><span class="tag ${h.result === 'WIN' ? 'green' : 'red'}">${esc(h.result)}</span></td>
+      <td style="color:${Number(h.pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${fmtMoney(h.pnl)}</td>
+      <td>${esc(h.ai_confidence ?? 0)}/10</td>
+    </tr>
+  `).join('');
+}
+
+async function loadAI(){
+  const res = await requestJSON(API + '/ai_params');
+  const a = res.data && typeof res.data === 'object' ? res.data : {};
+  state.ai = a;
+  $('live-conf').textContent = `${a.live_confluence ?? 7}/11`;
+  $('ai-bias').textContent = `Viés: ${a.strategy_bias || 'balanced'}`;
+  $('adx-avg').textContent = a.live_adx_avg ?? '—';
+  $('min-rr').textContent = a.min_rr ?? '—';
+  $('regime-badge').textContent = (a.live_regime || 'neutral').toUpperCase();
+  $('regime-summary').textContent = a.opus_summary || 'Sem resumo estratégico ainda.';
+  $('ai-summary').textContent = a.last_suggestion || (res.ok ? 'Sem sugestão da IA no momento.' : 'IA indisponível no momento.');
+}
+
+async function loadConfluence(){
+  const res = await requestJSON(API + '/confluence');
+  const data = Array.isArray(res.data) ? res.data : [];
+  $('conf-refresh').textContent = new Date().toLocaleTimeString('pt-BR');
+  $('confluence-list').innerHTML = data.slice(0, 10).map(item => `
+    <div class="row">
+      <div class="left">
+        <strong>${esc(item.symbol)}</strong>
+        <span class="tag ${badgeColor(item.best_dir)}">${esc(item.best_dir)}</span>
+      </div>
+      <div class="left muted">${esc(item.best_score)}/${esc(item.total)}</div>
+    </div>
+  `).join('') || '<div class="row"><span class="muted">Sem dados de confluência.</span></div>';
+}
+
+async function loadLogs(){
+  const res = await requestJSON(API + '/logs?limit=12&hours=24');
+  const payload = res.data && typeof res.data === 'object' ? res.data : {};
+  const logs = Array.isArray(payload.logs) ? payload.logs : [];
+  $('log-count').textContent = `${payload.count ?? logs.length} entradas`;
+  $('logs-list').innerHTML = logs.length ? logs.map(l => `
+    <div class="row">
+      <div class="left"><strong>${esc(l.type || 'log')}</strong><span class="muted">${esc(l.created_at || '')}</span></div>
+      <div class="muted" style="max-width:70ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.message || JSON.stringify(l))}</div>
+    </div>
+  `).join('') : '<div class="row"><span class="muted">Nenhum log recente.</span></div>';
+}
+
+async function closeTrade(symbol){
+  if (!confirm(`Fechar trade de ${symbol}?`)) return;
+  const res = await requestJSON(API + '/close_trade', {
+    method: 'POST',
+    body: JSON.stringify({ symbol })
+  });
+  if (!res.ok){
+    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao fechar trade');
+    return;
+  }
+  setError('');
+  await refreshAll();
+}
+
+async function executePending(pid){
+  const inp = document.getElementById('amt-' + pid);
+  const amount = Number(inp?.value || 0);
+  if (!amount || amount <= 0){ alert('Margem inválida'); return; }
+  const res = await requestJSON(API + '/execute', {
+    method: 'POST',
+    body: JSON.stringify({ pending_id: pid, amount })
+  });
+  if (!res.ok){
+    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao executar');
+    return;
+  }
+  setError('');
+  await refreshAll();
+}
+
+async function rejectPending(pid){
+  const res = await requestJSON(API + '/reject', {
+    method: 'POST',
+    body: JSON.stringify({ pending_id: pid })
+  });
+  if (!res.ok){
+    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao rejeitar');
+    return;
+  }
+  await refreshAll();
+}
+
+async function refreshAll(){
+  const errors = [];
+  try { await loadHealth(); } catch (e) { errors.push(`health: ${e.message}`); }
+  try { await loadStatus(); } catch (e) { errors.push(`status: ${e.message}`); }
+  try { await loadAssets(); } catch (e) { errors.push(`assets: ${e.message}`); }
+  try { await loadTradeSettings(); } catch (e) { errors.push(`tradeSettings: ${e.message}`); }
+  try { await loadAI(); } catch (e) { errors.push(`ai: ${e.message}`); }
+  try { await loadConfluence(); } catch (e) { errors.push(`confluence: ${e.message}`); }
+  try { await loadPending(); } catch (e) { errors.push(`pending: ${e.message}`); }
+  try { await loadHistory(); } catch (e) { errors.push(`history: ${e.message}`); }
+  try { await loadLogs(); } catch (e) { errors.push(`logs: ${e.message}`); }
+
+  if (errors.length){
+    setError(`Algumas áreas ficaram indisponíveis:\n- ${errors.slice(0, 4).join('\n- ')}`);
+  } else {
+    setError('');
+  }
+}
+
+$('btn-refresh').addEventListener('click', refreshAll);
+$('btn-save-assets').addEventListener('click', saveAssets);
+$('btn-save-trade-limit').addEventListener('click', saveTradeSettings);
+
+refreshAll();
+setInterval(refreshAll, 15000);
+</script>
+</body>
+</html>
