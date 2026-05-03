@@ -601,7 +601,12 @@ def create_api(bot):
 
         except Exception as e:
             import traceback
-            log(f"[BACKTEST-UPLOAD] Erro: {e}\n{traceback.format_exc()}")
+            _tb = traceback.format_exc()
+            try:
+                from utils import log as _log
+                _log(f"[BACKTEST-UPLOAD] Erro: {e}\n{_tb}")
+            except Exception:
+                print(f"[BACKTEST-UPLOAD] Erro: {e}\n{_tb}")
             return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
 
     @app.route("/api/backtest/test")

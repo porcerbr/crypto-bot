@@ -43,7 +43,18 @@ def parse_investing_csv(content: str | bytes) -> list[dict]:
         "low": float, "close": float}, ...]
     """
     if isinstance(content, bytes):
-        content = content.decode("utf-8-sig", errors="replace")
+        # Tenta UTF-8 com BOM, depois latin-1 (comum em CSVs do Windows/Excel)
+        for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+            try:
+                content = content.decode(enc, errors="strict")
+                break
+            except (UnicodeDecodeError, AttributeError):
+                continue
+        else:
+            content = content.decode("utf-8-sig", errors="replace")
+
+    # Normaliza quebras de linha (Windows \r\n → \n)
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     # Detecta colunas: Data, Preço, Abertura, Alta, Baixa
     COL_MAP = {
@@ -56,7 +67,7 @@ def parse_investing_csv(content: str | bytes) -> list[dict]:
         "fechamento":"close",
     }
 
-    reader = csv.reader(io.StringIO(content))
+    reader = csv.reader(io.StringIO(content, newline=''))
     rows   = list(reader)
     if not rows:
         return []
