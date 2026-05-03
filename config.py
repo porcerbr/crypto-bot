@@ -145,8 +145,8 @@ class Config:
     SL_MIN_PCT            = 0.5
     TP_SL_RATIO           = 2.5
 
-    ATR_SL_MULT = 1.5
-    ATR_TP_MULT = 2.5
+    ATR_SL_MULT = 2.0
+    ATR_TP_MULT = 3.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # SISTEMA DE PESOS PARA CONFLUÊNCIA
@@ -176,7 +176,7 @@ class Config:
     MIN_CONFLUENCE_WEIGHTED = 10  # score mínimo para gerar sinal (default, pode ser ajustado pela IA)
 
     # Legado — mantido para compatibilidade
-    MIN_CONFLUENCE = 6
+    MIN_CONFLUENCE = 7
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # PERFIL PROFISSIONAL DE EXECUÇÃO
