@@ -1,17 +1,16 @@
 """
-backtester.py — Backtester integrado com a estratégia real do bot.
+backtester.py — Backtester com estratégia de pullback em tendência.
 
-Melhorias v2:
-  - Filtro de sessão (07h-17h UTC — Londres + Nova York)
-  - SL atrás de swing high/low real (não só ATR)
-  - FVG detection simplificado
-  - Filtro de tendência D1 (EMA200 diária via H1)
-  - Confluence melhorado com FVG e estrutura
-  - Sem re-entrada na mesma barra que fechou trade
-  - Cooldown de 3 barras após loss (evita revenge trading)
+Lógica baseada em evidências:
+  - Trend-following com pullback (maior edge comprovado em H1)
+  - SL fixo em 1.5×ATR (consistente, sem distorção por swing)
+  - TP em 2.5×ATR → RR = 1.67 (atingível no H1)
+  - Filtro de sessão, ADX mínimo e cooldown
+  - Sem confluência excessiva que filtra tudo
 
-Uso:
-    python backtester.py EURUSD.csv --symbol EURUSD --balance 500
+Por que pullback funciona: você entra quando o preço retorna à média
+após excesso, com o vento da tendência a favor. É o setup com maior
+win rate comprovado em forex H1.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import csv
 import math
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, time as dt_time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -54,7 +53,7 @@ class BacktestResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CARREGAMENTO DE DADOS
+# CSV
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_bars_from_csv(path: str | Path) -> list[Bar]:
@@ -90,285 +89,214 @@ def load_bars_from_csv(path: str | Path) -> list[Bar]:
 def bars_to_dataframe(bars: list[Bar]) -> pd.DataFrame:
     records = [{"Open": b.open, "High": b.high, "Low": b.low, "Close": b.close}
                for b in bars]
-    idx = pd.to_datetime([b.timestamp for b in bars], utc=True)
-    df  = pd.DataFrame(records, index=idx)
+    df = pd.DataFrame(records,
+                      index=pd.to_datetime([b.timestamp for b in bars], utc=True))
     df["Volume"] = 0.0
     return df
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FILTRO DE SESSÃO
+# SESSÃO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Sessões de melhor liquidez por tipo de par
-_SESSION_RULES = {
-    "JPY":  (0,  9),   # Tokyo + London open
-    "AUD":  (22, 10),  # Sydney + Tokyo
-    "NZD":  (21, 9),
-    "XAU":  (7,  20),  # Ouro: London + NY completo
-    "DEFAULT": (7, 17), # Londres + NY overlap
-}
-
 def _in_session(bar: Bar, symbol: str) -> bool:
-    """Retorna True se a barra está dentro da sessão de maior liquidez."""
-    hour = bar.timestamp.hour
+    """Retorna True se estamos dentro da janela de liquidez do par."""
+    h = bar.timestamp.hour
+    if symbol == "XAUUSD":
+        return 7 <= h < 20        # London + NY completo
     if is_jpy_pair(symbol):
-        start, end = _SESSION_RULES["JPY"]
-    elif "AUD" in symbol or "NZD" in symbol:
-        start, end = _SESSION_RULES.get("AUD" if "AUD" in symbol else "NZD", (21,10))
-    elif symbol == "XAUUSD":
-        start, end = _SESSION_RULES["XAU"]
-    else:
-        start, end = _SESSION_RULES["DEFAULT"]
-
-    if start < end:
-        return start <= hour < end
-    else:  # overnight (ex: 22-10)
-        return hour >= start or hour < end
+        return h < 9 or h >= 23  # Tokyo
+    if "AUD" in symbol or "NZD" in symbol:
+        return h < 8 or h >= 22  # Sydney + Tokyo
+    return 7 <= h < 17            # London + NY overlap (EUR/GBP/CHF/CAD)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # INDICADORES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _compute_indicators(df: pd.DataFrame) -> dict | None:
-    if len(df) < 60:
+def _indicators(df: pd.DataFrame) -> dict | None:
+    n = len(df)
+    if n < 50:
         return None
 
-    close = df["Close"]
-    high  = df["High"]
-    low   = df["Low"]
-    open_ = df["Open"]
+    c = df["Close"]
+    h = df["High"]
+    l = df["Low"]
+    o = df["Open"]
 
-    ema9   = close.ewm(span=9,   adjust=False).mean()
-    ema21  = close.ewm(span=21,  adjust=False).mean()
-    ema50  = close.ewm(span=50,  adjust=False).mean()
-    ema200 = close.ewm(span=200, adjust=False).mean()
+    # Tendência
+    ema21  = c.ewm(span=21,  adjust=False).mean()
+    ema50  = c.ewm(span=50,  adjust=False).mean()
+    ema200 = c.ewm(span=200, adjust=False).mean()
 
-    # Tendência D1 aproximada: EMA das últimas 24 barras H1
-    ema_d1 = close.ewm(span=min(24 * 20, len(df)), adjust=False).mean()
-
-    # MACD
-    macd = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
-    macd_signal = macd.ewm(span=9, adjust=False).mean()
+    # Momentum
+    macd_line   = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
 
     # RSI
-    delta = close.diff()
-    gain  = delta.clip(lower=0).ewm(span=14, adjust=False).mean()
-    loss  = (-delta.clip(upper=0)).ewm(span=14, adjust=False).mean()
-    rsi   = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
+    d    = c.diff()
+    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean()
+    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean()
+    rsi  = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
 
     # ATR
-    tr  = pd.concat([high - low,
-                     (high - close.shift()).abs(),
-                     (low  - close.shift()).abs()], axis=1).max(axis=1)
+    tr  = pd.concat([h - l,
+                     (h - c.shift()).abs(),
+                     (l - c.shift()).abs()], axis=1).max(axis=1)
     atr = tr.ewm(span=14, adjust=False).mean()
 
     # ADX
-    plus_dm  = (high.diff()).clip(lower=0)
-    minus_dm = (-low.diff()).clip(lower=0)
-    plus_di  = 100 * (plus_dm.ewm(span=14).mean() / atr.replace(0, 1e-10))
-    minus_di = 100 * (minus_dm.ewm(span=14).mean() / atr.replace(0, 1e-10))
-    dx       = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)) * 100
-    adx      = dx.ewm(span=14, adjust=False).mean()
+    pdm = (h.diff()).clip(lower=0)
+    ndm = (-l.diff()).clip(lower=0)
+    pdi = 100 * pdm.ewm(span=14).mean() / atr.replace(0, 1e-10)
+    ndi = 100 * ndm.ewm(span=14).mean() / atr.replace(0, 1e-10)
+    adx = ((abs(pdi - ndi) / (pdi + ndi + 1e-10)) * 100).ewm(span=14).mean()
 
-    # Bollinger Bands
-    sma20 = close.rolling(20).mean()
-    std20 = close.rolling(20).std()
-    bb_upper = sma20 + 2 * std20
-    bb_lower = sma20 - 2 * std20
-    bb_width = (bb_upper - bb_lower) / sma20.replace(0, 1e-10)
+    # Pullback: distância do preço à EMA21 em múltiplos de ATR
+    price   = float(c.iloc[-1])
+    e21     = float(ema21.iloc[-1])
+    e50     = float(ema50.iloc[-1])
+    e200    = float(ema200.iloc[-1])
+    atr_val = float(atr.iloc[-1])
+    dist_e21 = (price - e21) / atr_val if atr_val > 0 else 0
 
-    # FVG detection (Fair Value Gap)
-    # Bullish FVG: candle[i-2].high < candle[i].low (gap de alta)
-    # Bearish FVG: candle[i-2].low  > candle[i].high (gap de baixa)
-    fvg_bull = bool(high.iloc[-3] < low.iloc[-1])  if len(df) >= 3 else False
-    fvg_bear = bool(low.iloc[-3]  > high.iloc[-1]) if len(df) >= 3 else False
+    # MACD cruzou a signal line neste candle?
+    macd_cross_up   = (float(macd_line.iloc[-1]) > float(macd_signal.iloc[-1]) and
+                       float(macd_line.iloc[-2]) <= float(macd_signal.iloc[-2]))
+    macd_cross_down = (float(macd_line.iloc[-1]) < float(macd_signal.iloc[-1]) and
+                       float(macd_line.iloc[-2]) >= float(macd_signal.iloc[-2]))
 
-    # Swing High/Low (últimas 10 barras)
-    lookback = min(10, len(df) - 1)
-    swing_high = float(high.iloc[-lookback:].max())
-    swing_low  = float(low.iloc[-lookback:].min())
+    # Candle de confirmação
+    candle_bull = float(c.iloc[-1]) > float(o.iloc[-1])
+    candle_bear = float(c.iloc[-1]) < float(o.iloc[-1])
 
-    # Momentum: candle atual forte
-    last = -1
-    price     = float(close.iloc[last])
-    candle_body = abs(price - float(open_.iloc[last]))
-    candle_range = float(high.iloc[last]) - float(low.iloc[last])
-    candle_momentum = candle_body / candle_range if candle_range > 0 else 0
+    # RSI saindo de zona de sobrevenda/sobrecompra
+    rsi_val       = float(rsi.iloc[-1])
+    rsi_prev      = float(rsi.iloc[-2]) if n >= 2 else rsi_val
+    rsi_bounce_up = rsi_prev < 40 and rsi_val >= 40   # saiu de sobrevenda
+    rsi_bounce_dn = rsi_prev > 60 and rsi_val <= 60   # saiu de sobrecompra
 
     return {
-        "price":        price,
-        "ema9":         float(ema9.iloc[last]),
-        "ema21":        float(ema21.iloc[last]),
-        "ema50":        float(ema50.iloc[last]),
-        "ema200":       float(ema200.iloc[last]),
-        "ema_d1":       float(ema_d1.iloc[last]),
-        "macd":         float(macd.iloc[last]),
-        "macd_signal":  float(macd_signal.iloc[last]),
-        "macd_bull":    float(macd.iloc[last]) > float(macd_signal.iloc[last]),
-        "macd_bear":    float(macd.iloc[last]) < float(macd_signal.iloc[last]),
-        "rsi":          float(rsi.iloc[last]),
-        "adx":          float(adx.iloc[last]),
-        "atr":          float(atr.iloc[last]),
-        "bb_upper":     float(bb_upper.iloc[last]),
-        "bb_lower":     float(bb_lower.iloc[last]),
-        "bb_width":     float(bb_width.iloc[last]),
-        "fvg_bull":     fvg_bull,
-        "fvg_bear":     fvg_bear,
-        "swing_high":   swing_high,
-        "swing_low":    swing_low,
-        "candle_bull":  price > float(open_.iloc[last]),
-        "candle_bear":  price < float(open_.iloc[last]),
-        "candle_momentum": candle_momentum,
-        "plus_di":      float(plus_di.iloc[last]),
-        "minus_di":     float(minus_di.iloc[last]),
+        "price":          price,
+        "ema21":          e21,
+        "ema50":          e50,
+        "ema200":         e200,
+        "atr":            atr_val,
+        "adx":            float(adx.iloc[-1]),
+        "pdi":            float(pdi.iloc[-1]),
+        "ndi":            float(ndi.iloc[-1]),
+        "rsi":            rsi_val,
+        "macd":           float(macd_line.iloc[-1]),
+        "macd_signal":    float(macd_signal.iloc[-1]),
+        "macd_cross_up":  macd_cross_up,
+        "macd_cross_down": macd_cross_down,
+        "dist_e21":       dist_e21,       # >0 = acima, <0 = abaixo
+        "candle_bull":    candle_bull,
+        "candle_bear":    candle_bear,
+        "rsi_bounce_up":  rsi_bounce_up,
+        "rsi_bounce_dn":  rsi_bounce_dn,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFLUENCE MELHORADO
+# ESTRATÉGIA: PULLBACK EM TENDÊNCIA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _confluence(res: dict, direction: str) -> tuple[int, int]:
+def _check_signal(res: dict) -> str | None:
     """
-    Confluence com 10 critérios, pesos até 14 pontos.
-    Inclui: tendência D1, FVG, MACD cruzamento, RSI zona, ADX, momentum de candle.
-    """
-    score = 0
-    price = res["price"]
+    Retorna 'BUY', 'SELL' ou None.
 
+    Critérios BUY (todos necessários):
+      1. Preço acima da EMA200 (tendência de alta)
+      2. EMA21 acima da EMA50 (estrutura de alta)
+      3. Preço puxou de volta: entre -0.5 e +1.5 ATR da EMA21 (pullback zone)
+      4. MACD cruzou a signal OU RSI saiu de sobrevenda
+      5. Candle de confirmação bullish
+      6. ADX >= 18 (mercado direcional, não ranging)
+      7. +DI > -DI (força direcional confirmada)
+
+    Critérios SELL: espelho.
+    """
+    p      = res["price"]
+    d21    = res["dist_e21"]   # distância em ATRs da EMA21
+    adx    = res["adx"]
+
+    # BUY
+    trend_up    = p > res["ema200"] and res["ema21"] > res["ema50"]
+    pullback_ok = -0.5 <= d21 <= 1.5   # preço próximo ou ligeiramente acima da EMA21
+    trigger_up  = res["macd_cross_up"] or res["rsi_bounce_up"]
+    confirm_up  = res["candle_bull"]
+    direction_up = res["pdi"] > res["ndi"]
+
+    if (trend_up and pullback_ok and trigger_up and
+            confirm_up and adx >= 18 and direction_up):
+        return "BUY"
+
+    # SELL
+    trend_dn     = p < res["ema200"] and res["ema21"] < res["ema50"]
+    pullback_dn  = -1.5 <= d21 <= 0.5
+    trigger_dn   = res["macd_cross_down"] or res["rsi_bounce_dn"]
+    confirm_dn   = res["candle_bear"]
+    direction_dn = res["ndi"] > res["pdi"]
+
+    if (trend_dn and pullback_dn and trigger_dn and
+            confirm_dn and adx >= 18 and direction_dn):
+        return "SELL"
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SL / TP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sl_tp(entry: float, direction: str, atr: float) -> tuple[float, float]:
+    """SL = 1.5×ATR, TP = 2.5×ATR → RR 1.67 (atingível em H1)."""
+    sl_dist = atr * 1.5
+    tp_dist = atr * 2.5
     if direction == "BUY":
-        # Tendência macro (D1 aproximado) — peso 2
-        if price > res["ema_d1"]:       score += 2
-
-        # Tendência H1 (EMA200) — peso 2
-        if price > res["ema200"]:       score += 2
-
-        # Alinhamento EMA curto/médio — peso 1
-        if res["ema9"] > res["ema21"] > res["ema50"]: score += 1
-
-        # MACD acima da signal line (momentum) — peso 1
-        if res["macd_bull"]:            score += 1
-
-        # MACD positivo (tendência) — peso 1
-        if res["macd"] > 0:             score += 1
-
-        # RSI em zona saudável de alta (não sobrecomprado) — peso 1
-        if 45 < res["rsi"] < 65:        score += 1
-
-        # ADX mostra tendência — peso 2
-        if res["adx"] >= Config.REGIME_ADX_TRENDING:
-            score += 2
-        elif res["adx"] >= Config.REGIME_ADX_RANGING:
-            score += 1
-
-        # +DI > -DI (direcionalidade bullish) — peso 1
-        if res["plus_di"] > res["minus_di"]: score += 1
-
-        # FVG bullish presente — peso 2
-        if res["fvg_bull"]:             score += 2
-
-        # Candle de alta com momentum — peso 1
-        if res["candle_bull"] and res["candle_momentum"] > 0.5: score += 1
-
-    else:  # SELL
-        if price < res["ema_d1"]:       score += 2
-        if price < res["ema200"]:       score += 2
-        if res["ema9"] < res["ema21"] < res["ema50"]: score += 1
-        if res["macd_bear"]:            score += 1
-        if res["macd"] < 0:             score += 1
-        if 35 < res["rsi"] < 55:        score += 1
-        if res["adx"] >= Config.REGIME_ADX_TRENDING:
-            score += 2
-        elif res["adx"] >= Config.REGIME_ADX_RANGING:
-            score += 1
-        if res["minus_di"] > res["plus_di"]: score += 1
-        if res["fvg_bear"]:             score += 2
-        if res["candle_bear"] and res["candle_momentum"] > 0.5: score += 1
-
-    return score, 15
+        return round(entry - sl_dist, 5), round(entry + tp_dist, 5)
+    return round(entry + sl_dist, 5), round(entry - tp_dist, 5)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SL/TP BASEADO EM ESTRUTURA + ATR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _structure_sl_tp(entry: float, direction: str, res: dict, atr: float
-                     ) -> tuple[float, float]:
-    """
-    SL atrás do swing high/low real (+ buffer de 0.3 ATR).
-    TP com RR mínimo de 1.8 a partir do SL real.
-    """
-    buffer = atr * 0.3
-    min_rr = 1.8
-
-    if direction == "BUY":
-        sl = round(res["swing_low"] - buffer, 5)
-        # Garante SL mínimo de 1 ATR abaixo da entrada
-        if entry - sl < atr:
-            sl = round(entry - atr, 5)
-        dist = entry - sl
-        tp   = round(entry + dist * min_rr, 5)
-    else:
-        sl = round(res["swing_high"] + buffer, 5)
-        if sl - entry < atr:
-            sl = round(entry + atr, 5)
-        dist = sl - entry
-        tp   = round(entry - dist * min_rr, 5)
-
-    return sl, tp
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SPREAD / SLIPPAGE
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _apply_spread_slippage(entry: float, direction: str, symbol: str) -> float:
-    if not (Config.USE_SPREAD_MODEL or Config.USE_SLIPPAGE_MODEL):
-        return entry
+def _spread(entry: float, direction: str, symbol: str) -> float:
     pf   = 0.01 if (is_jpy_pair(symbol) or symbol == "XAUUSD") else 0.0001
-    cost = 0.0
-    if Config.USE_SPREAD_MODEL:
-        cost += Config.SPREAD_PIPS.get(symbol, 1.0) * pf
-    if Config.USE_SLIPPAGE_MODEL:
-        cost += random.uniform(0, Config.SLIPPAGE_PIPS.get(symbol, 0.3)) * pf
+    cost = Config.SPREAD_PIPS.get(symbol, 1.0) * pf
+    cost += random.uniform(0, Config.SLIPPAGE_PIPS.get(symbol, 0.3)) * pf
     return round(entry + cost if direction == "BUY" else entry - cost, 5)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOTOR PRINCIPAL
+# MOTOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_backtest(
     bars:            list[Bar],
     symbol:          str,
     initial_balance: float | None = None,
-    min_confluence:  int          = 7,
+    min_confluence:  int          = 5,    # não usado nessa estratégia, mantido por compat
     warmup_bars:     int          = 60,
 ) -> BacktestResult:
-    """
-    Executa backtest sobre barras históricas com todos os filtros de qualidade.
-    """
+
     initial_balance = float(initial_balance or Config.INITIAL_BALANCE)
-    balance      = initial_balance
-    trades:      list[dict]  = []
-    active_trade: dict | None = None
-    df_full      = bars_to_dataframe(bars)
-    cooldown     = 0          # barras de cooldown após loss
-    MAX_BARS_OPEN = 72        # força fechamento após 3 dias (evita trades eternos)
+    balance         = initial_balance
+    trades:         list[dict]  = []
+    active:         dict | None = None
+    df_full         = bars_to_dataframe(bars)
+    cooldown        = 0
+    MAX_BARS        = 48         # fecha trade após 2 dias sem hit
 
     for i in range(warmup_bars, len(bars)):
         bar   = bars[i]
-        price = bar.close
 
         if cooldown > 0:
             cooldown -= 1
 
         # ── Gerencia trade ativo ──────────────────────────────────────────────
-        if active_trade is not None:
-            t         = active_trade
-            bars_open = i - t["bar_open"]
+        if active is not None:
+            t    = active
+            open_bars = i - t["bar_i"]
 
             if t["dir"] == "BUY":
                 hit_sl = bar.low  <= t["sl"]
@@ -377,155 +305,124 @@ def run_backtest(
                 hit_sl = bar.high >= t["sl"]
                 hit_tp = bar.low  <= t["tp"]
 
-            # Força fechamento após MAX_BARS_OPEN
-            if bars_open >= MAX_BARS_OPEN and not hit_tp:
-                hit_sl = True
+            # Se os dois são atingidos na mesma barra → assume SL (pior caso)
+            if hit_sl and hit_tp:
+                hit_tp = False
 
-            if hit_sl or hit_tp:
-                exit_price = t["tp"] if hit_tp else t["sl"]
-                result     = "WIN" if hit_tp else "LOSS"
-                pnl = calc_pnl_usd(
-                    symbol, t["dir"], t["entry"], exit_price,
-                    t["lot"], usdjpy_price=150.0
-                ) - t.get("commission", 0)
+            force_close = open_bars >= MAX_BARS
+
+            if hit_sl or hit_tp or force_close:
+                exit_px = t["tp"] if hit_tp else t["sl"]
+                if force_close and not hit_sl and not hit_tp:
+                    exit_px = bar.close
+
+                result = "WIN" if hit_tp else ("LOSS" if hit_sl else "OPEN")
+                pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], exit_px,
+                                   t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
                 balance = round(balance + t["margin"] + pnl, 2)
                 trades.append({
-                    "symbol":       symbol,
-                    "dir":          t["dir"],
-                    "result":       result,
-                    "pnl":          round(pnl, 2),
-                    "entry":        t["entry"],
-                    "exit":         exit_price,
-                    "sl":           t["sl"],
-                    "tp":           t["tp"],
-                    "lot":          t["lot"],
-                    "bars_open":    bars_open,
-                    "opened_at":    t["opened_at"].isoformat(),
-                    "closed_at":    bar.timestamp.isoformat(),
-                    "closed_ts":    bar.timestamp.timestamp(),
+                    "symbol":        symbol,
+                    "dir":           t["dir"],
+                    "result":        result,
+                    "pnl":           round(pnl, 2),
+                    "entry":         t["entry"],
+                    "exit":          exit_px,
+                    "sl":            t["sl"],
+                    "tp":            t["tp"],
+                    "lot":           t["lot"],
+                    "opened_at":     t["opened_at"].isoformat(),
+                    "closed_at":     bar.timestamp.isoformat(),
+                    "closed_ts":     bar.timestamp.timestamp(),
                     "closed_ts_iso": bar.timestamp.isoformat(),
-                    "score":        t["score"],
+                    "adx":           t.get("adx", 0),
                 })
-                active_trade = None
+                active = None
                 if result == "LOSS":
-                    cooldown = 3   # pausa 3 barras após loss
-            continue   # uma barra de cada vez — não reabre no mesmo candle
-
-        # ── Filtros de qualidade ──────────────────────────────────────────────
-
-        # 1. Sessão de maior liquidez
-        if not _in_session(bar, symbol):
+                    cooldown = 2
             continue
 
-        # 2. Cooldown pós-loss
-        if cooldown > 0:
+        # ── Filtros pré-sinal ─────────────────────────────────────────────────
+        if cooldown > 0 or not _in_session(bar, symbol):
             continue
 
-        # 3. Calcula indicadores (janela deslizante de 250 barras)
         df_win = df_full.iloc[max(0, i - 250): i + 1]
-        res    = _compute_indicators(df_win)
-        if not res:
+        res    = _indicators(df_win)
+        if not res or res["atr"] <= 0:
             continue
 
-        atr = res["atr"]
-        if atr <= 0:
+        direction = _check_signal(res)
+        if not direction:
             continue
 
-        # 4. Mercado não pode estar em consolidação muito estreita
-        if res["bb_width"] < 0.001:
+        # ── Abre trade ────────────────────────────────────────────────────────
+        entry    = _spread(bar.close, direction, symbol)
+        sl, tp   = _sl_tp(entry, direction, res["atr"])
+
+        if direction == "BUY"  and (sl >= entry or tp <= entry): continue
+        if direction == "SELL" and (sl <= entry or tp >= entry): continue
+
+        try:
+            from risk import calc_lot_for_risk
+            lot, _, _ = calc_lot_for_risk(symbol, entry, sl, balance)
+        except Exception:
+            lot = Config.MIN_LOT
+
+        cs     = 100 if symbol == "XAUUSD" else 100_000
+        margin = round(entry * lot * cs / Config.DEFAULT_LEVERAGE, 2)
+        if margin > balance * 0.4 or margin <= 0:
             continue
 
-        # ── Geração de sinal ──────────────────────────────────────────────────
-        for direction in ("BUY", "SELL"):
-            score, max_score = _confluence(res, direction)
-            if score < min_confluence:
-                continue
+        comm   = Config.COMMISSION_PER_LOT.get("FOREX", 6.0) * lot
+        balance -= margin
 
-            entry        = _apply_spread_slippage(price, direction, symbol)
-            sl, tp       = _structure_sl_tp(entry, direction, res, atr)
+        active = {
+            "dir":       direction,
+            "entry":     entry,
+            "sl":        sl,
+            "tp":        tp,
+            "lot":       lot,
+            "margin":    margin,
+            "comm":      comm,
+            "bar_i":     i,
+            "opened_at": bar.timestamp,
+            "adx":       res["adx"],
+        }
 
-            # Valida SL/TP
-            if direction == "BUY"  and (sl >= entry or tp <= entry): continue
-            if direction == "SELL" and (sl <= entry or tp >= entry): continue
-
-            dist = abs(entry - sl)
-            if dist <= 0: continue
-
-            rr = abs(tp - entry) / dist
-            if rr < 1.5:   # RR mínimo absoluto
-                continue
-
-            # Position sizing
-            try:
-                from risk import calc_lot_for_risk
-                lot, risk_usd, _ = calc_lot_for_risk(symbol, entry, sl, balance)
-            except Exception:
-                lot = Config.MIN_LOT
-
-            cs     = Config.CONTRACT_SIZES.get("XAUUSD" if symbol == "XAUUSD" else "FOREX", 100000)
-            margin = round(entry * lot * cs / Config.DEFAULT_LEVERAGE, 2)
-
-            if margin > balance * 0.5 or margin <= 0:
-                continue
-
-            commission = Config.COMMISSION_PER_LOT.get("FOREX", 6.0) * lot
-
-            balance -= margin
-            active_trade = {
-                "dir":        direction,
-                "entry":      entry,
-                "sl":         sl,
-                "tp":         tp,
-                "lot":        lot,
-                "margin":     margin,
-                "commission": commission,
-                "bar_open":   i,
-                "opened_at":  bar.timestamp,
-                "score":      score,
-            }
-            break
-
-    # Fecha trade ainda aberto ao fim dos dados (sem contabilizar como win/loss)
-    if active_trade is not None:
-        t   = active_trade
+    # Trade ainda aberto no fim dos dados
+    if active is not None:
+        t   = active
         pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], bars[-1].close,
-                            t["lot"], usdjpy_price=150.0) - t.get("commission", 0)
+                            t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
         balance = round(balance + t["margin"] + pnl, 2)
         trades.append({
-            "symbol":    symbol, "dir": t["dir"], "result": "OPEN",
-            "pnl":       round(pnl, 2), "entry": t["entry"],
-            "exit":      bars[-1].close, "sl": t["sl"], "tp": t["tp"],
-            "lot":       t["lot"], "bars_open": len(bars) - t["bar_open"],
+            "symbol": symbol, "dir": t["dir"], "result": "OPEN",
+            "pnl": round(pnl, 2), "entry": t["entry"], "exit": bars[-1].close,
+            "sl": t["sl"], "tp": t["tp"], "lot": t["lot"],
             "opened_at": t["opened_at"].isoformat(),
             "closed_at": bars[-1].timestamp.isoformat(),
             "closed_ts": bars[-1].timestamp.timestamp(),
             "closed_ts_iso": bars[-1].timestamp.isoformat(),
-            "score":     t["score"],
+            "adx": t.get("adx", 0),
         })
 
     metrics = calculate_metrics_from_history(
         trades, initial_balance=initial_balance, current_balance=balance,
     )
     return BacktestResult(
-        metrics=metrics,
-        trades=trades,
+        metrics=metrics, trades=trades,
         equity_curve=metrics.pop("equity_curve", []),
-        params={"symbol": symbol, "min_confluence": min_confluence},
+        params={"symbol": symbol, "strategy": "pullback_trend"},
     )
 
 
-# ── Compatibilidade legado ────────────────────────────────────────────────────
+# ── Legado ────────────────────────────────────────────────────────────────────
 
 def backtest_trades(trades: Iterable[dict], initial_balance: float | None = None) -> dict:
     return calculate_metrics_from_history(trades, initial_balance=initial_balance)
 
 
-def backtest_from_strategy(
-    bars:            list[Bar],
-    strategy:        Callable[[list[Bar], int], list[dict]],
-    initial_balance: float | None = None,
-) -> dict:
-    all_trades: list[dict] = []
+def backtest_from_strategy(bars, strategy, initial_balance=None) -> dict:
+    all_trades = []
     for i in range(1, len(bars)):
         for t in (strategy(bars, i) or []):
             t = dict(t)
@@ -539,31 +436,30 @@ def backtest_from_strategy(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="Backtester Sniper Bot v2")
-    parser.add_argument("csv",               help="CSV com OHLC histórico")
-    parser.add_argument("--symbol",          default="EURUSD")
-    parser.add_argument("--balance",         type=float, default=Config.INITIAL_BALANCE)
-    parser.add_argument("--min-confluence",  type=int,   default=7)
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("csv")
+    p.add_argument("--symbol",  default="EURUSD")
+    p.add_argument("--balance", type=float, default=Config.INITIAL_BALANCE)
+    a = p.parse_args()
 
-    bars = load_bars_from_csv(args.csv)
+    bars = load_bars_from_csv(a.csv)
     if not bars:
-        raise SystemExit("Nenhum candle válido no CSV.")
+        raise SystemExit("Nenhum candle válido.")
 
-    log(f"[BACKTEST] {len(bars)} barras | {bars[0].timestamp} → {bars[-1].timestamp}")
-    result = run_backtest(bars, args.symbol, args.balance, args.min_confluence)
-    m = result.metrics
+    log(f"[BACKTEST] {len(bars)} barras | {bars[0].timestamp:%d/%m/%Y} → {bars[-1].timestamp:%d/%m/%Y}")
+    r = run_backtest(bars, a.symbol, a.balance)
+    m = r.metrics
 
-    print("\n" + "═" * 50)
-    print(f"  {args.symbol} · confluence≥{args.min_confluence}")
-    print("═" * 50)
+    print(f"\n{'═'*50}")
+    print(f"  {a.symbol} · Pullback em Tendência H1")
+    print(f"{'═'*50}")
     print(f"  Trades:        {m['total_trades']} ({m['wins']}W / {m['losses']}L)")
     print(f"  Win Rate:      {m['winrate']}%")
     print(f"  Profit Factor: {m['profit_factor']}")
     print(f"  Max Drawdown:  {m['max_drawdown_pct']}%")
     print(f"  Sharpe:        {m.get('sharpe_ratio', 0)}")
     print(f"  P&L:           ${m['total_pnl']}")
-    print("═" * 50 + "\n")
+    print(f"{'═'*50}\n")
 
 
 if __name__ == "__main__":
