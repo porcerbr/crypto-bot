@@ -524,37 +524,27 @@ def create_api(bot):
         except ImportError as e:
             return jsonify({"ok": False, "error": f"yfinance não instalado: {e}"})
 
-        # Testa diferentes formatos de ticker
-        test_tickers = {
-            "EURUSD=X":  "EURUSD formato padrão",
-            "EURUSD=X":  "EURUSD",
-            "GC=F":      "Ouro (futures)",
-            "^GSPC":     "S&P 500 (controle de rede)",
-        }
-
-        for ticker, label in test_tickers.items():
-            try:
-                import yfinance as yf
-                df = yf.download(ticker, period="5d", interval="1h",
-                                 progress=False, auto_adjust=True,
-                                 multi_level_index=False)
-                results[label] = {
-                    "rows":    len(df) if df is not None else 0,
-                    "columns": list(df.columns) if df is not None else [],
-                    "ok":      len(df) > 0 if df is not None else False,
-                }
-            except Exception as e:
-                results[label] = {"ok": False, "error": str(e)}
-            break  # só testa o primeiro para não demorar
-
-        # Testa conectividade básica com Yahoo
+        # Testa download real de EURUSD
         try:
-            import requests as req
-            r = req.get("https://query1.finance.yahoo.com/v1/test/getcrumb",
-                        timeout=5, headers={"User-Agent": "Mozilla/5.0"})
-            results["yahoo_http"] = {"status": r.status_code, "ok": r.status_code < 500}
+            df = yf.download("EURUSD=X", period="5d", interval="1h", progress=False)
+            results["download_test"] = {
+                "ok":      df is not None and len(df) > 0,
+                "rows":    len(df) if df is not None else 0,
+                "columns": list(df.columns) if df is not None else [],
+            }
         except Exception as e:
-            results["yahoo_http"] = {"ok": False, "error": str(e)}
+            results["download_test"] = {"ok": False, "error": str(e)}
+
+        # Testa via Ticker.history (alternativa)
+        try:
+            ticker = yf.Ticker("EURUSD=X")
+            df2 = ticker.history(period="5d", interval="1h")
+            results["ticker_history_test"] = {
+                "ok":   df2 is not None and len(df2) > 0,
+                "rows": len(df2) if df2 is not None else 0,
+            }
+        except Exception as e:
+            results["ticker_history_test"] = {"ok": False, "error": str(e)}
 
         return jsonify({"ok": True, "diagnostics": results})
 
@@ -607,29 +597,28 @@ def create_api(bot):
             df = None
             last_error = ""
 
-            # Tentativa 1: multi_level_index=False (yfinance ≥0.2.38)
+            # Tentativa 1: download padrão (yfinance 0.2.x)
             try:
                 df = yf.download(yf_sym, period=period, interval=interval,
-                                 progress=False, auto_adjust=True,
-                                 multi_level_index=False)
+                                 progress=False, auto_adjust=True)
                 if df is not None and len(df) > 0:
-                    log(f"[BACKTEST] Download OK via tentativa 1: {len(df)} barras")
+                    log(f"[BACKTEST] Download OK tentativa 1: {len(df)} barras")
             except Exception as e:
                 last_error = str(e)
                 df = None
 
-            # Tentativa 2: sem multi_level_index (versão antiga)
+            # Tentativa 2: sem auto_adjust
             if df is None or len(df) == 0:
                 try:
                     df = yf.download(yf_sym, period=period, interval=interval,
                                      progress=False, auto_adjust=False)
                     if df is not None and len(df) > 0:
-                        log(f"[BACKTEST] Download OK via tentativa 2: {len(df)} barras")
+                        log(f"[BACKTEST] Download OK tentativa 2: {len(df)} barras")
                 except Exception as e:
                     last_error = str(e)
                     df = None
 
-            # Tentativa 3: usa Ticker em vez de download()
+            # Tentativa 3: Ticker.history (mais estável para forex)
             if df is None or len(df) == 0:
                 try:
                     ticker = yf.Ticker(yf_sym)
