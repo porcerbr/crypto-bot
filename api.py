@@ -520,31 +520,41 @@ def create_api(bot):
         results = {}
         try:
             import yfinance as yf
+            import requests as req_lib
             results["yfinance_version"] = yf.__version__
+
+            session = req_lib.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/json,*/*",
+            })
+
+            # Testa download com session customizada
+            try:
+                df = yf.download("EURUSD=X", period="1mo", interval="1h",
+                                 progress=False, session=session)
+                results["download_with_session"] = {
+                    "ok":      df is not None and len(df) > 0,
+                    "rows":    len(df) if df is not None else 0,
+                    "columns": list(df.columns) if df is not None else [],
+                }
+            except Exception as e:
+                results["download_with_session"] = {"ok": False, "error": str(e)}
+
+            # Testa sem session (para comparar)
+            try:
+                df2 = yf.download("EURUSD=X", period="1mo", interval="1h", progress=False)
+                results["download_no_session"] = {
+                    "ok":   df2 is not None and len(df2) > 0,
+                    "rows": len(df2) if df2 is not None else 0,
+                }
+            except Exception as e:
+                results["download_no_session"] = {"ok": False, "error": str(e)}
+
         except ImportError as e:
             return jsonify({"ok": False, "error": f"yfinance não instalado: {e}"})
-
-        # Testa download real de EURUSD
-        try:
-            df = yf.download("EURUSD=X", period="5d", interval="1h", progress=False)
-            results["download_test"] = {
-                "ok":      df is not None and len(df) > 0,
-                "rows":    len(df) if df is not None else 0,
-                "columns": list(df.columns) if df is not None else [],
-            }
-        except Exception as e:
-            results["download_test"] = {"ok": False, "error": str(e)}
-
-        # Testa via Ticker.history (alternativa)
-        try:
-            ticker = yf.Ticker("EURUSD=X")
-            df2 = ticker.history(period="5d", interval="1h")
-            results["ticker_history_test"] = {
-                "ok":   df2 is not None and len(df2) > 0,
-                "rows": len(df2) if df2 is not None else 0,
-            }
-        except Exception as e:
-            results["ticker_history_test"] = {"ok": False, "error": str(e)}
 
         return jsonify({"ok": True, "diagnostics": results})
 
@@ -593,14 +603,25 @@ def create_api(bot):
                 interval    = "1h"
                 warmup_bars = 60
 
+            # ── Session com User-Agent de browser (evita bloqueio do Yahoo) ──
+            import requests as req_lib
+            _session = req_lib.Session()
+            _session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/json,*/*",
+            })
+
             # ── Download com múltiplas tentativas ────────────────────────────
             df = None
             last_error = ""
 
-            # Tentativa 1: download padrão (yfinance 0.2.x)
+            # Tentativa 1: download com session customizada
             try:
                 df = yf.download(yf_sym, period=period, interval=interval,
-                                 progress=False, auto_adjust=True)
+                                 progress=False, auto_adjust=True,
+                                 session=_session)
                 if df is not None and len(df) > 0:
                     log(f"[BACKTEST] Download OK tentativa 1: {len(df)} barras")
             except Exception as e:
@@ -611,17 +632,18 @@ def create_api(bot):
             if df is None or len(df) == 0:
                 try:
                     df = yf.download(yf_sym, period=period, interval=interval,
-                                     progress=False, auto_adjust=False)
+                                     progress=False, auto_adjust=False,
+                                     session=_session)
                     if df is not None and len(df) > 0:
                         log(f"[BACKTEST] Download OK tentativa 2: {len(df)} barras")
                 except Exception as e:
                     last_error = str(e)
                     df = None
 
-            # Tentativa 3: Ticker.history (mais estável para forex)
+            # Tentativa 3: Ticker.history com session
             if df is None or len(df) == 0:
                 try:
-                    ticker = yf.Ticker(yf_sym)
+                    ticker = yf.Ticker(yf_sym, session=_session)
                     df = ticker.history(period=period, interval=interval, auto_adjust=True)
                     if df is not None and len(df) > 0:
                         log(f"[BACKTEST] Download OK via Ticker.history: {len(df)} barras")
