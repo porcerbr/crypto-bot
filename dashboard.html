@@ -229,6 +229,95 @@
       <div id="logs-list" class="list"></div>
     </div>
 
+    <div class="card" style="margin-top:14px" id="backtest-card">
+      <div class="toolbar" style="justify-content:space-between">
+        <h2>📊 Backtest histórico</h2>
+        <span class="tag" id="bt-status-tag" style="display:none">—</span>
+      </div>
+      <div class="tiny" style="margin-bottom:16px;color:var(--muted)">
+        Baixa dados históricos reais e valida a estratégia no passado. Nenhum CSV necessário.
+      </div>
+
+      <!-- Controles -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px">
+        <div>
+          <div class="tiny" style="margin-bottom:4px">Par</div>
+          <select id="bt-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+            <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
+            <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
+            <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
+            <option>GBPJPY</option><option selected>XAUUSD</option>
+          </select>
+        </div>
+        <div>
+          <div class="tiny" style="margin-bottom:4px">Período</div>
+          <select id="bt-period" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+            <option value="6mo">6 meses</option>
+            <option value="1y">1 ano</option>
+            <option value="2y" selected>2 anos</option>
+            <option value="3y">3 anos</option>
+            <option value="5y">5 anos</option>
+          </select>
+        </div>
+        <div>
+          <div class="tiny" style="margin-bottom:4px">Saldo inicial ($)</div>
+          <input id="bt-balance" type="number" min="100" max="100000" value="500"
+            style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <div class="tiny" style="margin-bottom:4px">Confluência mínima</div>
+          <select id="bt-confluence" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+            <option value="4">4</option><option value="5">5</option>
+            <option value="6" selected>6</option><option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="btn-run-backtest" style="background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%;margin-bottom:18px">
+        ▶ Rodar Backtest
+      </button>
+
+      <!-- Loader -->
+      <div id="bt-loading" style="display:none;text-align:center;padding:24px;color:var(--muted)">
+        <div style="font-size:28px;margin-bottom:8px">⏳</div>
+        <div id="bt-loading-msg" class="tiny">Baixando dados históricos via Yahoo Finance...</div>
+      </div>
+
+      <!-- Erro -->
+      <div id="bt-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:14px;color:#f87171;font-size:13px;margin-bottom:16px"></div>
+
+      <!-- Resultados -->
+      <div id="bt-results" style="display:none">
+
+        <!-- Período analisado -->
+        <div id="bt-meta" class="tiny" style="margin-bottom:14px;color:var(--muted);text-align:center"></div>
+
+        <!-- Cards de métricas -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px" id="bt-metrics-grid"></div>
+
+        <!-- Avaliação geral -->
+        <div id="bt-verdict" style="border-radius:14px;padding:14px 16px;margin-bottom:18px;font-size:13px;font-weight:600;text-align:center"></div>
+
+        <!-- Curva de equity -->
+        <div style="margin-bottom:6px;font-size:13px;font-weight:700">Curva de equity</div>
+        <canvas id="bt-chart" height="180" style="width:100%;border-radius:12px;background:var(--panel2);display:block"></canvas>
+
+        <!-- Últimos trades -->
+        <div style="margin:16px 0 8px;font-size:13px;font-weight:700">Últimos trades simulados</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Par</th><th>Dir</th><th>Resultado</th>
+              <th>Entrada</th><th>Saída</th><th>P&L</th><th>Data</th>
+            </tr></thead>
+            <tbody id="bt-trades-body"></tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
     <div class="footer">Atualização automática a cada 15 segundos.</div>
   </div>
 
@@ -594,6 +683,186 @@ async function refreshAll(){
 $('btn-refresh').addEventListener('click', refreshAll);
 $('btn-save-assets').addEventListener('click', saveAssets);
 $('btn-save-trade-limit').addEventListener('click', saveTradeSettings);
+
+// ══════════════════════════════════════════════════════════
+// BACKTEST
+// ══════════════════════════════════════════════════════════
+
+function btShow(el, show){ $(el).style.display = show ? '' : 'none'; }
+
+function btMetricCard(label, value, color){
+  return `<div style="background:var(--panel2);border-radius:12px;padding:12px;text-align:center">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div>
+    <div style="font-size:20px;font-weight:800;color:${color||'var(--text)'}">${value}</div>
+  </div>`;
+}
+
+function btVerdict(m){
+  const pf  = parseFloat(m.profit_factor);
+  const wr  = parseFloat(m.winrate);
+  const dd  = parseFloat(m.max_drawdown_pct);
+  const tot = parseInt(m.total_trades);
+
+  if(tot < 10) return { bg:'rgba(99,102,241,.15)', border:'rgba(99,102,241,.3)', color:'#a5b4fc', icon:'🔬',
+    text:'Trades insuficientes para conclusão — tente um período maior ou reduzir a confluência mínima.' };
+  if(pf >= 1.5 && wr >= 50 && dd <= 25) return { bg:'rgba(34,197,94,.1)', border:'rgba(34,197,94,.3)', color:'#4ade80', icon:'✅',
+    text:`Estratégia válida. PF ${pf.toFixed(2)} · WR ${wr}% · DD ${dd}% — dentro dos parâmetros profissionais.` };
+  if(pf >= 1.2 && wr >= 45) return { bg:'rgba(251,191,36,.1)', border:'rgba(251,191,36,.3)', color:'#fbbf24', icon:'⚠️',
+    text:`Resultado marginal. Considere ajustar a confluência mínima ou o RR e rodar de novo.` };
+  return { bg:'rgba(239,68,68,.1)', border:'rgba(239,68,68,.3)', color:'#f87171', icon:'❌',
+    text:`Estratégia com resultado negativo neste período. Não operar com esses parâmetros.` };
+}
+
+function btDrawChart(ec){
+  const canvas = $('bt-chart');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = canvas.offsetWidth || 600;
+  canvas.height = 180;
+
+  if(!ec || ec.length < 2){ ctx.fillStyle='var(--muted)'; ctx.fillText('Sem dados',10,20); return; }
+
+  const vals  = ec.map(p => p.balance);
+  const min   = Math.min(...vals);
+  const max   = Math.max(...vals);
+  const range = max - min || 1;
+  const W     = canvas.width;
+  const H     = canvas.height;
+  const pad   = 12;
+
+  const x = i => pad + (i / (ec.length - 1)) * (W - pad * 2);
+  const y = v => H - pad - ((v - min) / range) * (H - pad * 2);
+
+  // Gradiente de fundo
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  const isPos = vals[vals.length-1] >= vals[0];
+  grad.addColorStop(0, isPos ? 'rgba(74,222,128,.25)' : 'rgba(248,113,113,.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(vals[0]));
+  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
+  ctx.lineTo(x(ec.length-1), H);
+  ctx.lineTo(x(0), H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Linha
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(vals[0]));
+  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
+  ctx.strokeStyle = isPos ? '#4ade80' : '#f87171';
+  ctx.lineWidth   = 2;
+  ctx.stroke();
+
+  // Linha de base (saldo inicial)
+  const baseY = y(vals[0]);
+  ctx.beginPath();
+  ctx.setLineDash([4,4]);
+  ctx.moveTo(pad, baseY);
+  ctx.lineTo(W - pad, baseY);
+  ctx.strokeStyle = 'rgba(255,255,255,.15)';
+  ctx.lineWidth   = 1;
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+async function runBacktest(){
+  const symbol  = $('bt-symbol').value;
+  const period  = $('bt-period').value;
+  const balance = parseFloat($('bt-balance').value) || 500;
+  const conf    = parseInt($('bt-confluence').value) || 6;
+
+  // Reset UI
+  btShow('bt-loading', true);
+  btShow('bt-results', false);
+  btShow('bt-error',   false);
+  $('bt-loading-msg').textContent = `Baixando ${period} de dados para ${symbol}...`;
+  $('btn-run-backtest').disabled = true;
+  $('bt-status-tag').style.display = '';
+  $('bt-status-tag').textContent   = 'Rodando...';
+  $('bt-status-tag').className     = 'tag amber';
+
+  try {
+    const data = await requestJSON('/api/backtest', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify({ symbol, period, balance, min_confluence: conf }),
+    });
+
+    btShow('bt-loading', false);
+
+    if(!data.ok){
+      $('bt-error').textContent = '❌ ' + (data.error || 'Erro desconhecido');
+      btShow('bt-error', true);
+      $('bt-status-tag').textContent = 'Erro';
+      $('bt-status-tag').className   = 'tag red';
+      return;
+    }
+
+    const m = data.metrics;
+
+    // Meta
+    $('bt-meta').textContent = `${data.symbol} · ${data.start} → ${data.end} · ${data.bars} barras H1`;
+
+    // Métricas
+    const pnlColor = parseFloat(m.total_pnl) >= 0 ? '#4ade80' : '#f87171';
+    $('bt-metrics-grid').innerHTML = [
+      btMetricCard('Trades',       m.total_trades,                  'var(--text)'),
+      btMetricCard('Win Rate',     m.winrate + '%',                 parseFloat(m.winrate)>=50?'#4ade80':'#f87171'),
+      btMetricCard('Profit Factor',parseFloat(m.profit_factor).toFixed(2), parseFloat(m.profit_factor)>=1.5?'#4ade80':parseFloat(m.profit_factor)>=1?'#fbbf24':'#f87171'),
+      btMetricCard('Max Drawdown', m.max_drawdown_pct + '%',        parseFloat(m.max_drawdown_pct)<=20?'#4ade80':'#f87171'),
+      btMetricCard('Sharpe',       parseFloat(m.sharpe_ratio||0).toFixed(2), 'var(--text)'),
+      btMetricCard('P&L Total',    (parseFloat(m.total_pnl)>=0?'+':'')+parseFloat(m.total_pnl).toFixed(2)+'$', pnlColor),
+      btMetricCard('Saldo final',  '$'+parseFloat(m.current_balance).toFixed(2), pnlColor),
+      btMetricCard('Expectancy',   '$'+parseFloat(m.expectancy).toFixed(2),      parseFloat(m.expectancy)>=0?'#4ade80':'#f87171'),
+    ].join('');
+
+    // Veredicto
+    const v = btVerdict(m);
+    $('bt-verdict').innerHTML = `${v.icon} ${v.text}`;
+    $('bt-verdict').style.background  = v.bg;
+    $('bt-verdict').style.border      = '1px solid ' + v.border;
+    $('bt-verdict').style.color       = v.color;
+
+    // Gráfico
+    btDrawChart(data.equity_curve);
+
+    // Trades
+    const tbody = $('bt-trades-body');
+    tbody.innerHTML = '';
+    (data.trades || []).slice().reverse().forEach(t => {
+      const win = t.result === 'WIN';
+      tbody.innerHTML += `<tr>
+        <td>${esc(t.symbol)}</td>
+        <td><span class="tag ${t.dir==='BUY'?'green':'red'}">${esc(t.dir)}</span></td>
+        <td><span class="tag ${win?'green':'red'}">${esc(t.result)}</span></td>
+        <td>${parseFloat(t.entry).toFixed(5)}</td>
+        <td>${parseFloat(t.exit).toFixed(5)}</td>
+        <td style="color:${win?'#4ade80':'#f87171'}">${(parseFloat(t.pnl)>=0?'+':'')+parseFloat(t.pnl).toFixed(2)}</td>
+        <td class="tiny">${(t.closed_at||'').slice(0,10)}</td>
+      </tr>`;
+    });
+    if(!data.trades || !data.trades.length){
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum trade gerado</td></tr>';
+    }
+
+    btShow('bt-results', true);
+    $('bt-status-tag').textContent = 'Concluído';
+    $('bt-status-tag').className   = 'tag green';
+
+  } catch(e) {
+    btShow('bt-loading', false);
+    $('bt-error').textContent = '❌ Falha na requisição: ' + e.message;
+    btShow('bt-error', true);
+    $('bt-status-tag').textContent = 'Erro';
+    $('bt-status-tag').className   = 'tag red';
+  } finally {
+    $('btn-run-backtest').disabled = false;
+  }
+}
+
+$('btn-run-backtest').addEventListener('click', runBacktest);
 
 refreshAll();
 setInterval(refreshAll, 15000);
