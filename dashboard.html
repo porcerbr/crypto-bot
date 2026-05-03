@@ -235,7 +235,7 @@
         <span class="tag" id="bt-status-tag" style="display:none">—</span>
       </div>
       <div class="tiny" style="margin-bottom:16px;color:var(--muted)">
-        Baixa dados históricos reais e valida a estratégia no passado. Nenhum CSV necessário.
+        Usa o Twelve Data (já configurado no bot) para baixar dados H1 reais e validar a estratégia no passado.
       </div>
 
       <!-- Controles -->
@@ -250,13 +250,13 @@
           </select>
         </div>
         <div>
-          <div class="tiny" style="margin-bottom:4px">Período</div>
+          <div class="tiny" style="margin-bottom:4px">Histórico (barras H1)</div>
           <select id="bt-period" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-            <option value="6mo">6 meses</option>
-            <option value="1y">1 ano</option>
-            <option value="2y" selected>2 anos</option>
-            <option value="3y">3 anos</option>
-            <option value="5y">5 anos</option>
+            <option value="500">~3 semanas (500)</option>
+            <option value="1000">~6 semanas (1000)</option>
+            <option value="2000" selected>~3 meses (2000)</option>
+            <option value="3500">~5 meses (3500)</option>
+            <option value="5000">~7 meses (5000)</option>
           </select>
         </div>
         <div>
@@ -281,7 +281,7 @@
       <!-- Loader -->
       <div id="bt-loading" style="display:none;text-align:center;padding:24px;color:var(--muted)">
         <div style="font-size:28px;margin-bottom:8px">⏳</div>
-        <div id="bt-loading-msg" class="tiny">Baixando dados históricos via Yahoo Finance...</div>
+        <div id="bt-loading-msg" class="tiny">Buscando dados históricos via Twelve Data...</div>
       </div>
 
       <!-- Erro -->
@@ -768,10 +768,11 @@ function btDrawChart(ec){
 }
 
 async function runBacktest(){
-  const symbol  = $('bt-symbol').value;
-  const period  = $('bt-period').value;
-  const balance = parseFloat($('bt-balance').value) || 500;
-  const conf    = parseInt($('bt-confluence').value) || 6;
+  const symbol   = $('bt-symbol').value;
+  const conf_val = $('bt-period').value;
+  const period   = conf_val;
+  const balance  = parseFloat($('bt-balance').value) || 500;
+  const conf     = parseInt($('bt-confluence').value) || 6;
 
   // Reset UI
   btShow('bt-loading', true);
@@ -787,7 +788,7 @@ async function runBacktest(){
     const resp = await fetch('/api/backtest', {
       method:  'POST',
       headers: {'Content-Type':'application/json'},
-      body:    JSON.stringify({ symbol, period, balance, min_confluence: conf }),
+      body: JSON.stringify({ symbol, outputsize: parseInt(conf_val || 2000), balance, min_confluence: conf }),
     });
 
     let data;
@@ -807,7 +808,8 @@ async function runBacktest(){
     const m = data.metrics;
 
     // Meta
-    $('bt-meta').textContent = `${data.symbol} · ${data.start} → ${data.end} · ${data.bars} barras H1`;
+    const intervalLabel = data.interval === '1d' ? 'D1' : 'H1';
+    $('bt-meta').textContent = `${data.symbol} · ${data.start} → ${data.end} · ${data.bars} barras ${intervalLabel}`;
 
     // Métricas
     const pnlColor = parseFloat(m.total_pnl) >= 0 ? '#4ade80' : '#f87171';

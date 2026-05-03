@@ -516,6 +516,184 @@ def create_api(bot):
     @app.route("/api/backtest/test")
     @require_auth
     def backtest_test():
+        """Endpoint de diagnóstico — testa fonte de dados do backtest."""
+        from analysis import TD_SYMBOLS
+        results = {
+            "twelve_data_key": "configurada" if Config.TWELVE_DATA_API_KEY else "AUSENTE",
+            "symbols_supported": list(TD_SYMBOLS.keys()),
+        }
+        # Testa uma chamada real ao Twelve Data
+        if Config.TWELVE_DATA_API_KEY:
+            try:
+                import requests as req_lib
+                resp = req_lib.get(
+                    "https://api.twelvedata.com/time_series",
+                    params={
+                        "symbol":     "EUR/USD",
+                        "interval":   "1h",
+                        "outputsize": 5,
+                        "apikey":     Config.TWELVE_DATA_API_KEY,
+                        "format":     "JSON",
+                    },
+                    timeout=10,
+                )
+                data = resp.json()
+                ok = "values" in data and len(data["values"]) > 0
+                results["twelve_data_test"] = {
+                    "ok":   ok,
+                    "bars": len(data.get("values", [])),
+                    "status": data.get("status", ""),
+                }
+            except Exception as e:
+                results["twelve_data_test"] = {"ok": False, "error": str(e)}
+        return jsonify({"ok": True, "diagnostics": results})
+
+    def _fetch_twelvedata_for_backtest(symbol: str, outputsize: int = 5000) -> list:
+        """
+        Busca dados históricos do Twelve Data para backtest.
+        Retorna lista de dicts com open/high/low/close/datetime.
+        outputsize máximo: 5000 barras H1 ≈ 7 meses de histórico.
+        """
+        from analysis import TD_SYMBOLS
+        import requests as req_lib
+
+        td_sym = TD_SYMBOLS.get(symbol)
+        if not td_sym or not Config.TWELVE_DATA_API_KEY:
+            return []
+
+        try:
+            resp = req_lib.get(
+                "https://api.twelvedata.com/time_series",
+                params={
+                    "symbol":     td_sym,
+                    "interval":   "1h",
+                    "outputsize": outputsize,
+                    "apikey":     Config.TWELVE_DATA_API_KEY,
+                    "format":     "JSON",
+                    "timezone":   "UTC",
+                },
+                timeout=30,
+            )
+            data = resp.json()
+            if data.get("status") == "error":
+                log(f"[BACKTEST] Twelve Data erro: {data.get('message', '')}")
+                return []
+            return list(reversed(data.get("values", [])))  # mais antigo primeiro
+        except Exception as e:
+            log(f"[BACKTEST] Falha ao buscar Twelve Data: {e}")
+            return []
+
+    @app.route("/api/backtest", methods=["POST"])
+    @require_auth
+    def run_backtest_endpoint():
+        """
+        Busca dados históricos via Twelve Data e roda o backtester integrado.
+        Body JSON: { symbol, outputsize, balance, min_confluence }
+        """
+        try:
+            from backtester import run_backtest, Bar
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Erro ao carregar backtester: {e}"}), 500
+
+        try:
+            body           = request.get_json(force=True, silent=True) or {}
+            symbol         = str(body.get("symbol",         "EURUSD")).upper().strip()
+            outputsize     = int(body.get("outputsize",     5000))
+            balance        = float(body.get("balance",      Config.INITIAL_BALANCE))
+            min_confluence = int(body.get("min_confluence", 6))
+
+            # Limites de segurança
+            outputsize = max(200, min(outputsize, 5000))
+
+            from analysis import TD_SYMBOLS
+            if symbol not in TD_SYMBOLS:
+                return jsonify({"ok": False, "error": f"Símbolo {symbol} não suportado"}), 400
+
+            if not Config.TWELVE_DATA_API_KEY:
+                return jsonify({"ok": False,
+                                "error": "TWELVE_DATA_API_KEY não configurada no Railway"}), 500
+
+            # ── Busca dados ───────────────────────────────────────────────────
+            raw = _fetch_twelvedata_for_backtest(symbol, outputsize)
+            if not raw:
+                return jsonify({"ok": False,
+                                "error": "Twelve Data não retornou dados. "
+                                         "Verifique se TWELVE_DATA_API_KEY está correta."}), 400
+
+            # ── Converte para lista de Bar ────────────────────────────────────
+            from datetime import datetime, timezone
+            bars = []
+            for row in raw:
+                try:
+                    bars.append(Bar(
+                        timestamp=datetime.strptime(
+                            row["datetime"], "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=timezone.utc),
+                        open= float(row["open"]),
+                        high= float(row["high"]),
+                        low=  float(row["low"]),
+                        close=float(row["close"]),
+                    ))
+                except Exception:
+                    continue
+
+            if len(bars) < 100:
+                return jsonify({"ok": False,
+                                "error": f"Apenas {len(bars)} barras válidas — dados insuficientes"}), 400
+
+            # ── Roda backtest ─────────────────────────────────────────────────
+            result = run_backtest(
+                bars,
+                symbol=symbol,
+                initial_balance=balance,
+                min_confluence=min_confluence,
+                warmup_bars=60,
+            )
+
+            m  = result.metrics
+            ec = result.equity_curve
+
+            if not ec and result.trades:
+                bal = balance
+                ec  = [{"i": 0, "balance": round(bal, 2)}]
+                for i, t in enumerate(result.trades, 1):
+                    bal += t.get("pnl", 0)
+                    ec.append({"i": i, "balance": round(bal, 2)})
+
+            # Período aproximado
+            period_label = f"~{round(len(bars)/24/5)} semanas H1"
+
+            return jsonify({
+                "ok":             True,
+                "symbol":         symbol,
+                "period":         period_label,
+                "interval":       "1h",
+                "bars":           len(bars),
+                "start":          bars[0].timestamp.strftime("%d/%m/%Y"),
+                "end":            bars[-1].timestamp.strftime("%d/%m/%Y"),
+                "balance":        balance,
+                "min_confluence": min_confluence,
+                "metrics": {
+                    "total_trades":     m.get("total_trades",     0),
+                    "wins":             m.get("wins",             0),
+                    "losses":           m.get("losses",           0),
+                    "winrate":          m.get("winrate",          0),
+                    "profit_factor":    m.get("profit_factor",    0),
+                    "expectancy":       m.get("expectancy",       0),
+                    "max_drawdown_pct": m.get("max_drawdown_pct", 0),
+                    "sharpe_ratio":     m.get("sharpe_ratio",     0),
+                    "initial_balance":  m.get("initial_balance",  balance),
+                    "current_balance":  m.get("current_balance",  balance),
+                    "total_pnl":        m.get("total_pnl",        0),
+                },
+                "equity_curve": ec,
+                "trades":        result.trades[-50:],
+            })
+
+        except Exception as e:
+            import traceback
+            log(f"[BACKTEST] Erro: {e}\n{traceback.format_exc()}")
+            return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
         """Endpoint de diagnóstico — testa conectividade com Yahoo Finance."""
         results = {}
         try:
