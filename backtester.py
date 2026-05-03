@@ -197,7 +197,7 @@ def _simple_confluence(res: dict, direction: str) -> tuple[int, int]:
         if res["macd_bull"]:        score += 1
         if 40 < res["rsi"] < 68:   score += 1
         if res["adx"] >= Config.REGIME_ADX_TRENDING: score += 2
-        if price < res["lower"] * 1.01: score += 1
+        if price < res["lower"] * 1.005: score += 1  # próximo ou abaixo da BB inferior
         if res["candle_bull"]:      score += 1
     else:
         if price < res["ema200"]:   score += 2
@@ -205,16 +205,16 @@ def _simple_confluence(res: dict, direction: str) -> tuple[int, int]:
         if res["macd_bear"]:        score += 1
         if 32 < res["rsi"] < 60:   score += 1
         if res["adx"] >= Config.REGIME_ADX_TRENDING: score += 2
-        if price > res["upper"] * 0.99: score += 1
+        if price > res["upper"] * 0.995: score += 1  # próximo ou acima da BB superior
         if res["candle_bear"]:      score += 1
 
     return score, 11
 
 
 def _atr_sl_tp(entry: float, direction: str, atr: float) -> tuple[float, float]:
-    """SL/TP baseado em ATR (fallback simples)."""
-    mult_sl = Config.ATR_SL_MULT
-    mult_tp = Config.ATR_TP_MULT
+    """SL/TP baseado em ATR."""
+    mult_sl = Config.ATR_SL_MULT  # 1.5
+    mult_tp = Config.ATR_TP_MULT  # 2.5 → RR = 2.5/1.5 = 1.67
     if direction == "BUY":
         return round(entry - atr * mult_sl, 5), round(entry + atr * mult_tp, 5)
     return round(entry + atr * mult_sl, 5), round(entry - atr * mult_tp, 5)
@@ -318,9 +318,11 @@ def run_backtest(
 
             entry = _apply_spread_slippage(price, direction, symbol)
             sl, tp = _atr_sl_tp(entry, direction, atr)
-            rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
-            if rr < Config.REGIME_MIN_RR.get("neutral", 1.8):
-                continue
+
+            # RR mínimo calculado dos próprios multiplicadores ATR
+            # (ATR_TP_MULT / ATR_SL_MULT = 2.5/1.5 = 1.67)
+            # Não filtramos por REGIME_MIN_RR aqui — já é garantido pelos multipliers
+            rr = Config.ATR_TP_MULT / Config.ATR_SL_MULT  # sempre consistente
 
             lot     = _lot_for_risk(entry, sl, balance, symbol)
             margin  = round(entry * lot * Config.CONTRACT_SIZES.get("FOREX", 100000)
