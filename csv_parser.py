@@ -123,13 +123,29 @@ _PRICE_RANGES = [
     ("XAUUSD", 1200.0, 3800.0),
 ]
 
-def detect_symbol(bars: list[dict]) -> str | None:
-    """Tenta identificar o símbolo pelo preço médio."""
+def detect_symbol(bars: list[dict], filename: str = "") -> str | None:
+    """
+    Tenta identificar o símbolo.
+    1. Tenta pelo nome do arquivo (ex: AUDUSD.csv, eurusd_weekly.csv)
+    2. Usa o preço mediano de TODAS as barras (não apenas as 10 primeiras)
+       para evitar falso positivo em períodos de volatilidade.
+    """
     if not bars:
         return None
-    sample = [b["close"] for b in bars[:10]]
-    avg    = sum(sample) / len(sample)
-    for sym, lo, hi in _PRICE_RANGES:
-        if lo <= avg <= hi:
+
+    # 1. Tenta pelo nome do arquivo
+    fname_up = filename.upper()
+    for sym, _, _ in _PRICE_RANGES:
+        if sym in fname_up:
+            return sym
+
+    # 2. Usa mediana de todas as barras (mais robusto que média das 10 primeiras)
+    closes = sorted(b["close"] for b in bars)
+    median = closes[len(closes) // 2]
+
+    # Prioriza matches mais específicos (ranges menores) primeiro
+    sorted_ranges = sorted(_PRICE_RANGES, key=lambda x: x[2] - x[1])
+    for sym, lo, hi in sorted_ranges:
+        if lo <= median <= hi:
             return sym
     return None

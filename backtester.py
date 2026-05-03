@@ -411,9 +411,20 @@ def run_backtest(
         except Exception:
             lot = Config.MIN_LOT
 
-        cs     = 100 if symbol == "XAUUSD" else 100_000
+        # W1: ATR semanal é ~10-15x maior que H1. O calc_lot_for_risk
+        # já limita pelo risco%, mas nunca deixa abaixo do MIN_LOT (0.01).
+        # Com saldo pequeno e ATR semanal alto, até 0.01 lot pode ser
+        # excessivo — limitamos o risco máximo por trade a 3% do saldo.
+        cs      = 100 if symbol == "XAUUSD" else 100_000
+        sl_dist = abs(entry - sl)
+        max_risk_usd = balance * 0.03   # máximo 3% do saldo por trade
+        if sl_dist > 0:
+            lot_by_risk = max_risk_usd / (sl_dist * cs)
+            lot = min(lot, lot_by_risk)
+        lot = max(Config.MIN_LOT, round(lot, 2))
+
         margin = round(entry * lot * cs / Config.DEFAULT_LEVERAGE, 2)
-        if margin > balance * 0.4 or margin <= 0:
+        if margin > balance * 0.4 or margin <= 0 or margin > balance:
             continue
 
         comm    = Config.COMMISSION_PER_LOT.get("FOREX", 6.0) * lot

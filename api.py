@@ -544,11 +544,11 @@ def create_api(bot):
             # Símbolo: do form ou autodetectado
             symbol = (request.form.get("symbol") or "").upper().strip()
             if not symbol:
-                symbol = detect_symbol(raw_bars) or "EURUSD"
+                symbol = detect_symbol(raw_bars, filename=file.filename or "") or "EURUSD"
 
             from analysis import TD_SYMBOLS
             if symbol not in TD_SYMBOLS and symbol not in ["USDCHF"]:
-                symbol = detect_symbol(raw_bars) or "EURUSD"
+                symbol = detect_symbol(raw_bars, filename=file.filename or "") or "EURUSD"
 
             balance        = float(request.form.get("balance",       Config.INITIAL_BALANCE))
             min_confluence = int(request.form.get("min_confluence",  5))
