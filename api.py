@@ -513,9 +513,244 @@ def create_api(bot):
             "signal_only": Config.BOT_IS_SIGNAL_ONLY,
         })
 
+    @app.route("/api/backtest/test")
+    @require_auth
+    def backtest_test():
+        """Endpoint de diagnóstico — testa conectividade com Yahoo Finance."""
+        results = {}
+        try:
+            import yfinance as yf
+            results["yfinance_version"] = yf.__version__
+        except ImportError as e:
+            return jsonify({"ok": False, "error": f"yfinance não instalado: {e}"})
+
+        # Testa diferentes formatos de ticker
+        test_tickers = {
+            "EURUSD=X":  "EURUSD formato padrão",
+            "EURUSD=X":  "EURUSD",
+            "GC=F":      "Ouro (futures)",
+            "^GSPC":     "S&P 500 (controle de rede)",
+        }
+
+        for ticker, label in test_tickers.items():
+            try:
+                import yfinance as yf
+                df = yf.download(ticker, period="5d", interval="1h",
+                                 progress=False, auto_adjust=True,
+                                 multi_level_index=False)
+                results[label] = {
+                    "rows":    len(df) if df is not None else 0,
+                    "columns": list(df.columns) if df is not None else [],
+                    "ok":      len(df) > 0 if df is not None else False,
+                }
+            except Exception as e:
+                results[label] = {"ok": False, "error": str(e)}
+            break  # só testa o primeiro para não demorar
+
+        # Testa conectividade básica com Yahoo
+        try:
+            import requests as req
+            r = req.get("https://query1.finance.yahoo.com/v1/test/getcrumb",
+                        timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+            results["yahoo_http"] = {"status": r.status_code, "ok": r.status_code < 500}
+        except Exception as e:
+            results["yahoo_http"] = {"ok": False, "error": str(e)}
+
+        return jsonify({"ok": True, "diagnostics": results})
+
     @app.route("/api/backtest", methods=["POST"])
     @require_auth
     def run_backtest_endpoint():
+        """
+        Baixa dados históricos via yfinance e roda o backtester integrado.
+        Body JSON: { symbol, period, balance, min_confluence }
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            return jsonify({
+                "ok":    False,
+                "error": "yfinance não instalado. Adicione 'yfinance==0.2.40' ao requirements.txt e faça redeploy."
+            }), 500
+
+        import pandas as pd
+
+        try:
+            from backtester import run_backtest, Bar
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Erro ao carregar backtester: {e}"}), 500
+
+        try:
+            body           = request.get_json(force=True, silent=True) or {}
+            symbol         = str(body.get("symbol",         "EURUSD")).upper().strip()
+            period         = str(body.get("period",         "2y"))
+            balance        = float(body.get("balance",      Config.INITIAL_BALANCE))
+            min_confluence = int(body.get("min_confluence", 6))
+
+            valid_periods = {"6mo", "1y", "2y", "3y", "5y"}
+            if period not in valid_periods:
+                period = "2y"
+
+            yf_sym = Config.YAHOO_SYMBOLS.get(symbol)
+            if not yf_sym:
+                return jsonify({"ok": False, "error": f"Símbolo {symbol} não suportado"}), 400
+
+            # Yahoo Finance limita H1 a ~730 dias; acima disso usa D1
+            if period in ("3y", "5y"):
+                interval    = "1d"
+                warmup_bars = 30
+            else:
+                interval    = "1h"
+                warmup_bars = 60
+
+            # ── Download com múltiplas tentativas ────────────────────────────
+            df = None
+            last_error = ""
+
+            # Tentativa 1: multi_level_index=False (yfinance ≥0.2.38)
+            try:
+                df = yf.download(yf_sym, period=period, interval=interval,
+                                 progress=False, auto_adjust=True,
+                                 multi_level_index=False)
+                if df is not None and len(df) > 0:
+                    log(f"[BACKTEST] Download OK via tentativa 1: {len(df)} barras")
+            except Exception as e:
+                last_error = str(e)
+                df = None
+
+            # Tentativa 2: sem multi_level_index (versão antiga)
+            if df is None or len(df) == 0:
+                try:
+                    df = yf.download(yf_sym, period=period, interval=interval,
+                                     progress=False, auto_adjust=False)
+                    if df is not None and len(df) > 0:
+                        log(f"[BACKTEST] Download OK via tentativa 2: {len(df)} barras")
+                except Exception as e:
+                    last_error = str(e)
+                    df = None
+
+            # Tentativa 3: usa Ticker em vez de download()
+            if df is None or len(df) == 0:
+                try:
+                    ticker = yf.Ticker(yf_sym)
+                    df = ticker.history(period=period, interval=interval, auto_adjust=True)
+                    if df is not None and len(df) > 0:
+                        log(f"[BACKTEST] Download OK via Ticker.history: {len(df)} barras")
+                except Exception as e:
+                    last_error = str(e)
+                    df = None
+
+            if df is None or len(df) == 0:
+                return jsonify({
+                    "ok":    False,
+                    "error": f"Yahoo Finance retornou dados vazios para {symbol} ({yf_sym}). "
+                             f"Erro: {last_error or 'sem resposta'}. "
+                             f"Acesse /api/backtest/test para diagnóstico detalhado."
+                }), 400
+
+            # ── Normalização robusta de colunas ──────────────────────────────
+            try:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                else:
+                    df.columns = [
+                        col[0] if isinstance(col, tuple) else col
+                        for col in df.columns
+                    ]
+                df.columns = [str(c).strip() for c in df.columns]
+            except Exception as e:
+                log(f"[BACKTEST] Aviso ao normalizar colunas: {e} — colunas: {list(df.columns)}")
+
+            # Verifica colunas OHLC
+            needed = {"Open", "High", "Low", "Close"}
+            if not needed.issubset(set(df.columns)):
+                col_remap = {col.lower(): col for col in df.columns}
+                rename = {col_remap[n.lower()]: n for n in needed if n.lower() in col_remap}
+                if rename:
+                    df = df.rename(columns=rename)
+                else:
+                    return jsonify({
+                        "ok":    False,
+                        "error": f"Colunas OHLC não encontradas. Recebidas: {list(df.columns)}"
+                    }), 500
+
+            if len(df) < 50:
+                return jsonify({"ok": False,
+                                "error": f"Dados insuficientes ({len(df)} barras)."}), 400
+
+            # ── Converte para lista de Bar ────────────────────────────────────
+            bars = []
+            first_error = None
+            for ts, row in df.iterrows():
+                try:
+                    bars.append(Bar(
+                        timestamp=ts.to_pydatetime(),
+                        open= float(row["Open"]),
+                        high= float(row["High"]),
+                        low=  float(row["Low"]),
+                        close=float(row["Close"]),
+                    ))
+                except Exception as e:
+                    if first_error is None:
+                        first_error = str(e)
+                    continue
+
+            if len(bars) < 50:
+                detail = f" (erro: {first_error})" if first_error else ""
+                return jsonify({"ok": False,
+                                "error": f"Apenas {len(bars)} barras válidas após conversão{detail}"}), 400
+
+            # ── Roda backtest ─────────────────────────────────────────────────
+            result = run_backtest(
+                bars,
+                symbol=symbol,
+                initial_balance=balance,
+                min_confluence=min_confluence,
+                warmup_bars=warmup_bars,
+            )
+
+            m  = result.metrics
+            ec = result.equity_curve
+
+            if not ec and result.trades:
+                bal = balance
+                ec  = [{"i": 0, "balance": round(bal, 2)}]
+                for i, t in enumerate(result.trades, 1):
+                    bal += t.get("pnl", 0)
+                    ec.append({"i": i, "balance": round(bal, 2)})
+
+            return jsonify({
+                "ok":             True,
+                "symbol":         symbol,
+                "period":         period,
+                "interval":       interval,
+                "bars":           len(bars),
+                "start":          bars[0].timestamp.strftime("%d/%m/%Y"),
+                "end":            bars[-1].timestamp.strftime("%d/%m/%Y"),
+                "balance":        balance,
+                "min_confluence": min_confluence,
+                "metrics": {
+                    "total_trades":     m.get("total_trades",     0),
+                    "wins":             m.get("wins",             0),
+                    "losses":           m.get("losses",           0),
+                    "winrate":          m.get("winrate",          0),
+                    "profit_factor":    m.get("profit_factor",    0),
+                    "expectancy":       m.get("expectancy",       0),
+                    "max_drawdown_pct": m.get("max_drawdown_pct", 0),
+                    "sharpe_ratio":     m.get("sharpe_ratio",     0),
+                    "initial_balance":  m.get("initial_balance",  balance),
+                    "current_balance":  m.get("current_balance",  balance),
+                    "total_pnl":        m.get("total_pnl",        0),
+                },
+                "equity_curve": ec,
+                "trades":        result.trades[-50:],
+            })
+
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            log(f"[BACKTEST] Erro inesperado: {e}\n{tb}")
+            return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
         """
         Baixa dados históricos via yfinance e roda o backtester integrado.
         Body JSON: { symbol, period, balance, min_confluence }
