@@ -784,11 +784,15 @@ async function runBacktest(){
   $('bt-status-tag').className     = 'tag amber';
 
   try {
-    const data = await requestJSON('/api/backtest', {
+    const resp = await fetch('/api/backtest', {
       method:  'POST',
       headers: {'Content-Type':'application/json'},
       body:    JSON.stringify({ symbol, period, balance, min_confluence: conf }),
     });
+
+    let data;
+    try { data = await resp.json(); }
+    catch(e) { data = { ok: false, error: `Servidor retornou status ${resp.status} (resposta não-JSON)` }; }
 
     btShow('bt-loading', false);
 

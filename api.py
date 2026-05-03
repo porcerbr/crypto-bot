@@ -520,99 +520,117 @@ def create_api(bot):
         Baixa dados históricos via yfinance e roda o backtester integrado.
         Body JSON: { symbol, period, balance, min_confluence }
         """
-        import yfinance as yf
+        # ── Verifica dependências ────────────────────────────────────────────
+        try:
+            import yfinance as yf
+        except ImportError:
+            return jsonify({
+                "ok":    False,
+                "error": "yfinance não instalado. Adicione 'yfinance==0.2.40' ao requirements.txt e faça redeploy."
+            }), 500
+
         import pandas as pd
-        from backtester import run_backtest, Bar
 
-        body           = request.get_json(force=True, silent=True) or {}
-        symbol         = str(body.get("symbol",         "EURUSD")).upper().strip()
-        period         = str(body.get("period",         "2y"))
-        balance        = float(body.get("balance",      Config.INITIAL_BALANCE))
-        min_confluence = int(body.get("min_confluence", 6))
-
-        # Período máximo permitido para não travar o servidor
-        valid_periods = {"6mo", "1y", "2y", "3y", "5y"}
-        if period not in valid_periods:
-            period = "2y"
-
-        yf_sym = Config.YAHOO_SYMBOLS.get(symbol)
-        if not yf_sym:
-            return jsonify({"ok": False, "error": f"Símbolo {symbol} não suportado"}), 400
-
-        # ── Download ────────────────────────────────────────────────────────
         try:
-            df = yf.download(yf_sym, period=period, interval="1h",
-                             progress=False, auto_adjust=True)
+            from backtester import run_backtest, Bar
         except Exception as e:
-            return jsonify({"ok": False, "error": f"Falha ao baixar dados: {e}"}), 500
+            return jsonify({"ok": False, "error": f"Erro ao carregar backtester: {e}"}), 500
 
-        if df is None or len(df) < 100:
-            return jsonify({"ok": False,
-                            "error": "Dados insuficientes — tente um período maior"}), 400
-
-        # ── Converte para lista de Bar ───────────────────────────────────────
-        bars = []
-        for ts, row in df.iterrows():
-            try:
-                bars.append(Bar(
-                    timestamp=ts.to_pydatetime(),
-                    open= float(row["Open"]),
-                    high= float(row["High"]),
-                    low=  float(row["Low"]),
-                    close=float(row["Close"]),
-                ))
-            except Exception:
-                continue
-
-        if len(bars) < 100:
-            return jsonify({"ok": False, "error": "Barras insuficientes após limpeza"}), 400
-
-        # ── Roda backtest ────────────────────────────────────────────────────
         try:
+            body           = request.get_json(force=True, silent=True) or {}
+            symbol         = str(body.get("symbol",         "EURUSD")).upper().strip()
+            period         = str(body.get("period",         "2y"))
+            balance        = float(body.get("balance",      Config.INITIAL_BALANCE))
+            min_confluence = int(body.get("min_confluence", 6))
+
+            valid_periods = {"6mo", "1y", "2y", "3y", "5y"}
+            if period not in valid_periods:
+                period = "2y"
+
+            yf_sym = Config.YAHOO_SYMBOLS.get(symbol)
+            if not yf_sym:
+                return jsonify({"ok": False, "error": f"Símbolo {symbol} não suportado"}), 400
+
+            # ── Download ─────────────────────────────────────────────────────
+            try:
+                df = yf.download(yf_sym, period=period, interval="1h",
+                                 progress=False, auto_adjust=True)
+            except Exception as e:
+                return jsonify({"ok": False, "error": f"Falha ao baixar dados do Yahoo Finance: {e}"}), 500
+
+            if df is None or len(df) < 100:
+                return jsonify({"ok": False,
+                                "error": f"Dados insuficientes ({len(df) if df is not None else 0} barras) — tente um período maior"}), 400
+
+            # Normaliza colunas (yfinance às vezes retorna MultiIndex)
+            if hasattr(df.columns, 'levels'):
+                df.columns = df.columns.get_level_values(0)
+
+            # ── Converte para lista de Bar ────────────────────────────────────
+            bars = []
+            for ts, row in df.iterrows():
+                try:
+                    bars.append(Bar(
+                        timestamp=ts.to_pydatetime(),
+                        open= float(row["Open"]),
+                        high= float(row["High"]),
+                        low=  float(row["Low"]),
+                        close=float(row["Close"]),
+                    ))
+                except Exception:
+                    continue
+
+            if len(bars) < 100:
+                return jsonify({"ok": False, "error": f"Apenas {len(bars)} barras válidas após limpeza — dados insuficientes"}), 400
+
+            # ── Roda backtest ─────────────────────────────────────────────────
             result = run_backtest(
                 bars,
                 symbol=symbol,
                 initial_balance=balance,
                 min_confluence=min_confluence,
             )
+
+            m  = result.metrics
+            ec = result.equity_curve
+
+            if not ec and result.trades:
+                bal = balance
+                ec  = [{"i": 0, "balance": round(bal, 2)}]
+                for i, t in enumerate(result.trades, 1):
+                    bal += t.get("pnl", 0)
+                    ec.append({"i": i, "balance": round(bal, 2)})
+
+            return jsonify({
+                "ok":             True,
+                "symbol":         symbol,
+                "period":         period,
+                "bars":           len(bars),
+                "start":          bars[0].timestamp.strftime("%d/%m/%Y"),
+                "end":            bars[-1].timestamp.strftime("%d/%m/%Y"),
+                "balance":        balance,
+                "min_confluence": min_confluence,
+                "metrics": {
+                    "total_trades":     m.get("total_trades",     0),
+                    "wins":             m.get("wins",             0),
+                    "losses":           m.get("losses",           0),
+                    "winrate":          m.get("winrate",          0),
+                    "profit_factor":    m.get("profit_factor",    0),
+                    "expectancy":       m.get("expectancy",       0),
+                    "max_drawdown_pct": m.get("max_drawdown_pct", 0),
+                    "sharpe_ratio":     m.get("sharpe_ratio",     0),
+                    "initial_balance":  m.get("initial_balance",  balance),
+                    "current_balance":  m.get("current_balance",  balance),
+                    "total_pnl":        m.get("total_pnl",        0),
+                },
+                "equity_curve": ec,
+                "trades":        result.trades[-50:],
+            })
+
         except Exception as e:
-            return jsonify({"ok": False, "error": f"Erro no backtest: {e}"}), 500
-
-        m  = result.metrics
-        ec = result.equity_curve
-
-        # Reconstrói equity curve a partir dos trades se não vier no metrics
-        if not ec and result.trades:
-            bal = balance
-            ec  = [{"i": 0, "balance": round(bal, 2)}]
-            for i, t in enumerate(result.trades, 1):
-                bal += t.get("pnl", 0)
-                ec.append({"i": i, "balance": round(bal, 2)})
-
-        return jsonify({
-            "ok":            True,
-            "symbol":        symbol,
-            "period":        period,
-            "bars":          len(bars),
-            "start":         bars[0].timestamp.strftime("%d/%m/%Y"),
-            "end":           bars[-1].timestamp.strftime("%d/%m/%Y"),
-            "balance":       balance,
-            "min_confluence": min_confluence,
-            "metrics": {
-                "total_trades":     m.get("total_trades",     0),
-                "wins":             m.get("wins",             0),
-                "losses":           m.get("losses",           0),
-                "winrate":          m.get("winrate",          0),
-                "profit_factor":    m.get("profit_factor",    0),
-                "expectancy":       m.get("expectancy",       0),
-                "max_drawdown_pct": m.get("max_drawdown_pct", 0),
-                "sharpe_ratio":     m.get("sharpe_ratio",     0),
-                "initial_balance":  m.get("initial_balance",  balance),
-                "current_balance":  m.get("current_balance",  balance),
-                "total_pnl":        m.get("total_pnl",        0),
-            },
-            "equity_curve": ec,
-            "trades":        result.trades[-50:],  # últimos 50 trades para exibição
-        })
+            import traceback
+            tb = traceback.format_exc()
+            log(f"[BACKTEST] Erro inesperado: {e}\n{tb}")
+            return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
 
     return app
