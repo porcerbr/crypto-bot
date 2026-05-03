@@ -513,6 +513,97 @@ def create_api(bot):
             "signal_only": Config.BOT_IS_SIGNAL_ONLY,
         })
 
+    @app.route("/api/backtest/upload", methods=["POST"])
+    @require_auth
+    def backtest_upload():
+        """
+        Aceita CSV do Investing.com (formato PT-BR) e roda backtest.
+        Multipart: arquivo 'csv' + campo 'symbol' (opcional — autodetecta).
+        """
+        try:
+            from csv_parser import parse_investing_csv, detect_symbol
+            from backtester import run_backtest, bars_from_dicts, detect_timeframe
+
+            # Lê arquivo
+            if "csv" not in request.files:
+                return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
+
+            file    = request.files["csv"]
+            content = file.read()
+            if not content:
+                return jsonify({"ok": False, "error": "Arquivo vazio"}), 400
+
+            # Parse do formato Investing.com
+            raw_bars = parse_investing_csv(content)
+            if len(raw_bars) < 30:
+                return jsonify({
+                    "ok":    False,
+                    "error": f"Apenas {len(raw_bars)} barras válidas. Verifique se o arquivo é do Investing.com."
+                }), 400
+
+            # Símbolo: do form ou autodetectado
+            symbol = (request.form.get("symbol") or "").upper().strip()
+            if not symbol:
+                symbol = detect_symbol(raw_bars) or "EURUSD"
+
+            from analysis import TD_SYMBOLS
+            if symbol not in TD_SYMBOLS and symbol not in ["USDCHF"]:
+                symbol = detect_symbol(raw_bars) or "EURUSD"
+
+            balance        = float(request.form.get("balance",       Config.INITIAL_BALANCE))
+            min_confluence = int(request.form.get("min_confluence",  5))
+
+            bars = bars_from_dicts(raw_bars)
+            tf   = detect_timeframe(bars)
+
+            result = run_backtest(
+                bars,
+                symbol=symbol,
+                initial_balance=balance,
+                min_confluence=min_confluence,
+            )
+
+            m  = result.metrics
+            ec = result.equity_curve
+
+            if not ec and result.trades:
+                bal = balance
+                ec  = [{"i": 0, "balance": round(bal, 2)}]
+                for i_t, t in enumerate(result.trades, 1):
+                    bal += t.get("pnl", 0)
+                    ec.append({"i": i_t, "balance": round(bal, 2)})
+
+            return jsonify({
+                "ok":             True,
+                "symbol":         symbol,
+                "timeframe":      tf,
+                "bars":           len(bars),
+                "start":          bars[0].timestamp.strftime("%d/%m/%Y"),
+                "end":            bars[-1].timestamp.strftime("%d/%m/%Y"),
+                "balance":        balance,
+                "min_confluence": min_confluence,
+                "metrics": {
+                    "total_trades":     m.get("total_trades",     0),
+                    "wins":             m.get("wins",             0),
+                    "losses":           m.get("losses",           0),
+                    "winrate":          m.get("winrate",          0),
+                    "profit_factor":    m.get("profit_factor",    0),
+                    "expectancy":       m.get("expectancy",       0),
+                    "max_drawdown_pct": m.get("max_drawdown_pct", 0),
+                    "sharpe_ratio":     m.get("sharpe_ratio",     0),
+                    "initial_balance":  m.get("initial_balance",  balance),
+                    "current_balance":  m.get("current_balance",  balance),
+                    "total_pnl":        m.get("total_pnl",        0),
+                },
+                "equity_curve": ec,
+                "trades":        result.trades[-100:],
+            })
+
+        except Exception as e:
+            import traceback
+            log(f"[BACKTEST-UPLOAD] Erro: {e}\n{traceback.format_exc()}")
+            return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
+
     @app.route("/api/backtest/test")
     @require_auth
     def backtest_test():

@@ -234,6 +234,135 @@
         <h2>📊 Backtest histórico</h2>
         <span class="tag" id="bt-status-tag" style="display:none">—</span>
       </div>
+
+      <!-- Abas: Twelve Data vs CSV Upload -->
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button id="bt-tab-live" onclick="btTab('live')"
+          style="flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff">
+          Twelve Data (7 meses)
+        </button>
+        <button id="bt-tab-csv" onclick="btTab('csv')"
+          style="flex:1;padding:9px;border-radius:10px;border:1px solid var(--line);font-size:13px;font-weight:600;cursor:pointer;background:var(--panel2);color:var(--muted)">
+          Upload CSV (5 anos)
+        </button>
+      </div>
+
+      <!-- Painel: Twelve Data -->
+      <div id="bt-panel-live">
+        <div class="tiny" style="margin-bottom:14px;color:var(--muted)">
+          Busca dados históricos H1 via Twelve Data (já configurado no bot).
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Par</div>
+            <select id="bt-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+              <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
+              <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
+              <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
+              <option>GBPJPY</option><option selected>XAUUSD</option>
+            </select>
+          </div>
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Barras H1</div>
+            <select id="bt-period" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+              <option value="1000">~6 sem (1000)</option>
+              <option value="2000" selected>~3 meses (2000)</option>
+              <option value="5000">~7 meses (5000)</option>
+            </select>
+          </div>
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Saldo ($)</div>
+            <input id="bt-balance" type="number" value="150"
+              style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Confluência</div>
+            <select id="bt-confluence" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+              <option value="4">4</option><option value="5" selected>5</option>
+              <option value="6">6</option><option value="7">7</option>
+            </select>
+          </div>
+        </div>
+        <button id="btn-run-backtest" onclick="runBacktestLive()"
+          style="background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%">
+          ▶ Rodar Backtest
+        </button>
+      </div>
+
+      <!-- Painel: Upload CSV -->
+      <div id="bt-panel-csv" style="display:none">
+        <div class="tiny" style="margin-bottom:14px;color:var(--muted)">
+          Faça upload do CSV do Investing.com (formato PT-BR, barras semanais). O símbolo é autodetectado.
+        </div>
+
+        <!-- Drop zone -->
+        <div id="bt-dropzone"
+          style="border:2px dashed var(--line);border-radius:14px;padding:28px;text-align:center;cursor:pointer;margin-bottom:14px;transition:border-color .2s"
+          onclick="$('bt-file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='#6366f1'"
+          ondragleave="this.style.borderColor='var(--line)'"
+          ondrop="btFileDrop(event)">
+          <div style="font-size:28px;margin-bottom:8px">📂</div>
+          <div style="font-size:13px;font-weight:600">Toque para selecionar o CSV</div>
+          <div id="bt-file-name" class="tiny" style="margin-top:6px;color:var(--muted)">Investing.com → Dados Históricos → Baixar</div>
+        </div>
+        <input type="file" id="bt-file-input" accept=".csv,.txt" style="display:none" onchange="btFileSelect(this)">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Símbolo (ou auto)</div>
+            <select id="bt-csv-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
+              <option value="">Autodetectar</option>
+              <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
+              <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
+              <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
+              <option>GBPJPY</option><option>XAUUSD</option>
+            </select>
+          </div>
+          <div>
+            <div class="tiny" style="margin-bottom:4px">Saldo ($)</div>
+            <input id="bt-csv-balance" type="number" value="150"
+              style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <button id="btn-run-csv" onclick="runBacktestCsv()"
+          style="background:linear-gradient(135deg,#10b981,#34d399);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%">
+          ▶ Rodar Backtest com CSV
+        </button>
+      </div>
+
+      <!-- Loader -->
+      <div id="bt-loading" style="display:none;text-align:center;padding:28px;color:var(--muted)">
+        <div style="font-size:32px;margin-bottom:8px">⏳</div>
+        <div id="bt-loading-msg" class="tiny">Processando...</div>
+      </div>
+
+      <!-- Erro -->
+      <div id="bt-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:14px;color:#f87171;font-size:13px;margin-top:14px"></div>
+
+      <!-- Resultados -->
+      <div id="bt-results" style="display:none;margin-top:18px">
+        <div id="bt-meta" class="tiny" style="margin-bottom:14px;color:var(--muted);text-align:center"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px" id="bt-metrics-grid"></div>
+        <div id="bt-verdict" style="border-radius:14px;padding:14px 16px;margin-bottom:18px;font-size:13px;font-weight:600;text-align:center"></div>
+        <div style="margin-bottom:6px;font-size:13px;font-weight:700">Curva de equity</div>
+        <canvas id="bt-chart" height="180" style="width:100%;border-radius:12px;background:var(--panel2);display:block"></canvas>
+        <div style="margin:16px 0 8px;font-size:13px;font-weight:700">Trades</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Par</th><th>Dir</th><th>Res</th><th>Entrada</th><th>Saída</th><th>P&L</th><th>Data</th></tr></thead>
+            <tbody id="bt-trades-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">Atualização automática a cada 15 segundos.</div>
+  </div>
+      <div class="toolbar" style="justify-content:space-between">
+        <h2>📊 Backtest histórico</h2>
+        <span class="tag" id="bt-status-tag" style="display:none">—</span>
+      </div>
       <div class="tiny" style="margin-bottom:16px;color:var(--muted)">
         Usa o Twelve Data (já configurado no bot) para baixar dados H1 reais e validar a estratégia no passado.
       </div>
@@ -687,6 +816,188 @@ $('btn-save-trade-limit').addEventListener('click', saveTradeSettings);
 // ══════════════════════════════════════════════════════════
 // BACKTEST
 // ══════════════════════════════════════════════════════════
+
+let _btCsvFile = null;
+
+function btTab(tab) {
+  $('bt-panel-live').style.display = tab === 'live' ? '' : 'none';
+  $('bt-panel-csv').style.display  = tab === 'csv'  ? '' : 'none';
+  const active   = 'background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none';
+  const inactive = 'background:var(--panel2);color:var(--muted);border:1px solid var(--line)';
+  $('bt-tab-live').style.cssText += tab === 'live' ? active : inactive;
+  $('bt-tab-csv').style.cssText  += tab === 'csv'  ? active : inactive;
+  btHideResults();
+}
+
+function btHideResults() {
+  ['bt-loading','bt-results','bt-error'].forEach(id => btShow(id, false));
+}
+
+function btShow(el, show) { $(el).style.display = show ? '' : 'none'; }
+
+function btFileSelect(input) {
+  if (input.files && input.files[0]) {
+    _btCsvFile = input.files[0];
+    $('bt-file-name').textContent = `✅ ${_btCsvFile.name} (${(_btCsvFile.size/1024).toFixed(1)} KB)`;
+    $('bt-dropzone').style.borderColor = '#10b981';
+  }
+}
+
+function btFileDrop(e) {
+  e.preventDefault();
+  $('bt-dropzone').style.borderColor = 'var(--line)';
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    _btCsvFile = file;
+    $('bt-file-name').textContent = `✅ ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+    $('bt-dropzone').style.borderColor = '#10b981';
+  }
+}
+
+function btMetricCard(label, value, color) {
+  return `<div style="background:var(--panel2);border-radius:12px;padding:12px;text-align:center">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div>
+    <div style="font-size:18px;font-weight:800;color:${color||'var(--text)'}">${value}</div>
+  </div>`;
+}
+
+function btVerdict(m) {
+  const pf  = parseFloat(m.profit_factor);
+  const wr  = parseFloat(m.winrate);
+  const dd  = parseFloat(m.max_drawdown_pct);
+  const tot = parseInt(m.total_trades);
+  if (tot < 10) return { bg:'rgba(99,102,241,.15)', border:'rgba(99,102,241,.3)', color:'#a5b4fc', icon:'🔬',
+    text:'Trades insuficientes — tente reduzir a confluência mínima ou usar mais dados.' };
+  if (pf >= 1.4 && wr >= 45 && dd <= 30) return { bg:'rgba(34,197,94,.1)', border:'rgba(34,197,94,.3)', color:'#4ade80', icon:'✅',
+    text:`Estratégia válida — PF ${pf.toFixed(2)} · WR ${wr}% · DD ${dd}%` };
+  if (pf >= 1.1 && wr >= 40) return { bg:'rgba(251,191,36,.1)', border:'rgba(251,191,36,.3)', color:'#fbbf24', icon:'⚠️',
+    text:`Resultado marginal — ajuste parâmetros e rode de novo.` };
+  return { bg:'rgba(239,68,68,.1)', border:'rgba(239,68,68,.3)', color:'#f87171', icon:'❌',
+    text:`Resultado negativo neste período — não operar com esses parâmetros.` };
+}
+
+function btDrawChart(ec) {
+  const canvas = $('bt-chart');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = canvas.offsetWidth || 600;
+  canvas.height = 180;
+  if (!ec || ec.length < 2) return;
+  const vals = ec.map(p => p.balance);
+  const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1;
+  const W = canvas.width, H = canvas.height, pad = 12;
+  const x = i => pad + (i / (ec.length-1)) * (W - pad*2);
+  const y = v => H - pad - ((v - min) / range) * (H - pad*2);
+  const isPos = vals[vals.length-1] >= vals[0];
+  const grad  = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, isPos ? 'rgba(74,222,128,.25)' : 'rgba(248,113,113,.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(vals[0]));
+  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
+  ctx.lineTo(x(ec.length-1), H); ctx.lineTo(x(0), H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(vals[0]));
+  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
+  ctx.strokeStyle = isPos ? '#4ade80' : '#f87171';
+  ctx.lineWidth = 2; ctx.stroke();
+}
+
+function btShowResults(data) {
+  const m = data.metrics;
+  const tf = data.timeframe || 'H1';
+  $('bt-meta').textContent = `${data.symbol} · ${tf} · ${data.start} → ${data.end} · ${data.bars} barras`;
+  const pnlColor = parseFloat(m.total_pnl) >= 0 ? '#4ade80' : '#f87171';
+  $('bt-metrics-grid').innerHTML = [
+    btMetricCard('Trades',        m.total_trades, 'var(--text)'),
+    btMetricCard('Win Rate',      m.winrate+'%', parseFloat(m.winrate)>=45?'#4ade80':'#f87171'),
+    btMetricCard('Profit Factor', parseFloat(m.profit_factor).toFixed(2), parseFloat(m.profit_factor)>=1.4?'#4ade80':parseFloat(m.profit_factor)>=1?'#fbbf24':'#f87171'),
+    btMetricCard('Max Drawdown',  m.max_drawdown_pct+'%', parseFloat(m.max_drawdown_pct)<=25?'#4ade80':'#f87171'),
+    btMetricCard('Sharpe',        parseFloat(m.sharpe_ratio||0).toFixed(2), 'var(--text)'),
+    btMetricCard('P&L Total',     (parseFloat(m.total_pnl)>=0?'+':'')+parseFloat(m.total_pnl).toFixed(2)+'$', pnlColor),
+    btMetricCard('Saldo final',   '$'+parseFloat(m.current_balance).toFixed(2), pnlColor),
+    btMetricCard('Expectancy',    '$'+parseFloat(m.expectancy).toFixed(2), parseFloat(m.expectancy)>=0?'#4ade80':'#f87171'),
+  ].join('');
+  const v = btVerdict(m);
+  $('bt-verdict').innerHTML = `${v.icon} ${v.text}`;
+  Object.assign($('bt-verdict').style, {background:v.bg, border:'1px solid '+v.border, color:v.color});
+  btDrawChart(data.equity_curve);
+  const tbody = $('bt-trades-body');
+  tbody.innerHTML = '';
+  (data.trades||[]).slice().reverse().forEach(t => {
+    const win = t.result === 'WIN';
+    tbody.innerHTML += `<tr>
+      <td>${esc(t.symbol)}</td>
+      <td><span class="tag ${t.dir==='BUY'?'green':'red'}">${esc(t.dir)}</span></td>
+      <td><span class="tag ${win?'green':'red'}">${esc(t.result)}</span></td>
+      <td>${parseFloat(t.entry).toFixed(5)}</td>
+      <td>${parseFloat(t.exit).toFixed(5)}</td>
+      <td style="color:${win?'#4ade80':'#f87171'}">${(parseFloat(t.pnl)>=0?'+':'')+parseFloat(t.pnl).toFixed(2)}</td>
+      <td class="tiny">${(t.closed_at||'').slice(0,10)}</td>
+    </tr>`;
+  });
+  if (!data.trades||!data.trades.length)
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum trade gerado</td></tr>';
+  btShow('bt-results', true);
+  $('bt-status-tag').textContent = 'Concluído';
+  $('bt-status-tag').className   = 'tag green';
+}
+
+function btStartLoading(msg) {
+  btHideResults();
+  $('bt-loading-msg').textContent = msg;
+  btShow('bt-loading', true);
+  btShow('bt-status-tag', true);
+  $('bt-status-tag').textContent = 'Rodando...';
+  $('bt-status-tag').className   = 'tag amber';
+}
+
+function btHandleError(msg) {
+  btShow('bt-loading', false);
+  $('bt-error').textContent = '❌ ' + msg;
+  btShow('bt-error', true);
+  $('bt-status-tag').textContent = 'Erro';
+  $('bt-status-tag').className   = 'tag red';
+}
+
+async function runBacktestLive() {
+  const symbol  = $('bt-symbol').value;
+  const osz     = parseInt($('bt-period').value) || 2000;
+  const balance = parseFloat($('bt-balance').value) || 150;
+  const conf    = parseInt($('bt-confluence').value) || 5;
+  btStartLoading(`Buscando ${osz} barras H1 de ${symbol} via Twelve Data...`);
+  try {
+    const resp = await fetch('/api/backtest', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ symbol, outputsize: osz, balance, min_confluence: conf }),
+    });
+    const data = await resp.json().catch(() => ({ ok:false, error:`HTTP ${resp.status}` }));
+    btShow('bt-loading', false);
+    if (!data.ok) { btHandleError(data.error || 'Erro desconhecido'); return; }
+    btShowResults(data);
+  } catch(e) { btHandleError(e.message); }
+}
+
+async function runBacktestCsv() {
+  if (!_btCsvFile) { btHandleError('Selecione um arquivo CSV primeiro'); return; }
+  const symbol  = $('bt-csv-symbol').value;
+  const balance = parseFloat($('bt-csv-balance').value) || 150;
+  btStartLoading(`Processando ${_btCsvFile.name}...`);
+  try {
+    const fd = new FormData();
+    fd.append('csv', _btCsvFile);
+    if (symbol) fd.append('symbol', symbol);
+    fd.append('balance', balance);
+    const resp = await fetch('/api/backtest/upload', { method: 'POST', body: fd });
+    const data = await resp.json().catch(() => ({ ok:false, error:`HTTP ${resp.status}` }));
+    btShow('bt-loading', false);
+    if (!data.ok) { btHandleError(data.error || 'Erro desconhecido'); return; }
+    btShowResults(data);
+  } catch(e) { btHandleError(e.message); }
+}
+
+refreshAll();
+setInterval(refreshAll, 15000);
 
 function btShow(el, show){ $(el).style.display = show ? '' : 'none'; }
 
