@@ -551,23 +551,77 @@ def create_api(bot):
             if not yf_sym:
                 return jsonify({"ok": False, "error": f"Símbolo {symbol} não suportado"}), 400
 
+            # Yahoo Finance limita H1 a ~730 dias; acima disso usa D1
+            if period in ("3y", "5y"):
+                interval    = "1d"
+                warmup_bars = 30
+            else:
+                interval    = "1h"
+                warmup_bars = 60
+
             # ── Download ─────────────────────────────────────────────────────
             try:
-                df = yf.download(yf_sym, period=period, interval="1h",
-                                 progress=False, auto_adjust=True)
+                df = yf.download(yf_sym, period=period, interval=interval,
+                                 progress=False, auto_adjust=True,
+                                 multi_level_index=False)   # yfinance ≥0.2.38: força colunas simples
+            except TypeError:
+                # versão antiga não aceita multi_level_index
+                try:
+                    df = yf.download(yf_sym, period=period, interval=interval,
+                                     progress=False, auto_adjust=True)
+                except Exception as e:
+                    return jsonify({"ok": False, "error": f"Falha ao baixar dados: {e}"}), 500
             except Exception as e:
-                return jsonify({"ok": False, "error": f"Falha ao baixar dados do Yahoo Finance: {e}"}), 500
+                return jsonify({"ok": False, "error": f"Falha ao baixar dados: {e}"}), 500
 
-            if df is None or len(df) < 100:
+            if df is None or len(df) == 0:
                 return jsonify({"ok": False,
-                                "error": f"Dados insuficientes ({len(df) if df is not None else 0} barras) — tente um período maior"}), 400
+                                "error": "Yahoo Finance retornou DataFrame vazio. "
+                                         "Tente novamente em alguns minutos ou escolha outro período."}), 400
 
-            # Normaliza colunas (yfinance às vezes retorna MultiIndex)
-            if hasattr(df.columns, 'levels'):
-                df.columns = df.columns.get_level_values(0)
+            # ── Normalização robusta de colunas (qualquer versão yfinance) ───
+            # yfinance pode retornar: MultiIndex, tuplas, strings, etc.
+            import pandas as pd
+            try:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                else:
+                    df.columns = [
+                        col[0] if isinstance(col, tuple) else col
+                        for col in df.columns
+                    ]
+                df.columns = [str(c).strip() for c in df.columns]
+            except Exception as e:
+                log(f"[BACKTEST] Aviso ao normalizar colunas: {e} — colunas: {list(df.columns)}")
+
+            # Verifica se as colunas essenciais existem
+            needed = {"Open", "High", "Low", "Close"}
+            available = set(df.columns)
+            if not needed.issubset(available):
+                # Tenta correspondência case-insensitive
+                col_remap = {}
+                for col in df.columns:
+                    col_remap[col.lower()] = col
+                rename = {}
+                for n in needed:
+                    if n.lower() in col_remap:
+                        rename[col_remap[n.lower()]] = n
+                if rename:
+                    df = df.rename(columns=rename)
+                else:
+                    return jsonify({
+                        "ok":    False,
+                        "error": f"Colunas OHLC não encontradas. Colunas recebidas: {list(df.columns)}"
+                    }), 500
+
+            if len(df) < 50:
+                return jsonify({"ok": False,
+                                "error": f"Dados insuficientes ({len(df)} barras). "
+                                         f"Yahoo Finance pode estar indisponível — tente novamente."}), 400
 
             # ── Converte para lista de Bar ────────────────────────────────────
             bars = []
+            first_error = None
             for ts, row in df.iterrows():
                 try:
                     bars.append(Bar(
@@ -577,11 +631,15 @@ def create_api(bot):
                         low=  float(row["Low"]),
                         close=float(row["Close"]),
                     ))
-                except Exception:
+                except Exception as e:
+                    if first_error is None:
+                        first_error = str(e)
                     continue
 
-            if len(bars) < 100:
-                return jsonify({"ok": False, "error": f"Apenas {len(bars)} barras válidas após limpeza — dados insuficientes"}), 400
+            if len(bars) < 50:
+                detail = f" (erro na conversão: {first_error})" if first_error else ""
+                return jsonify({"ok": False,
+                                "error": f"Apenas {len(bars)} barras válidas após conversão{detail}"}), 400
 
             # ── Roda backtest ─────────────────────────────────────────────────
             result = run_backtest(
@@ -589,6 +647,7 @@ def create_api(bot):
                 symbol=symbol,
                 initial_balance=balance,
                 min_confluence=min_confluence,
+                warmup_bars=warmup_bars,
             )
 
             m  = result.metrics
@@ -605,6 +664,7 @@ def create_api(bot):
                 "ok":             True,
                 "symbol":         symbol,
                 "period":         period,
+                "interval":       interval,
                 "bars":           len(bars),
                 "start":          bars[0].timestamp.strftime("%d/%m/%Y"),
                 "end":            bars[-1].timestamp.strftime("%d/%m/%Y"),
