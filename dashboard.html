@@ -2,274 +2,285 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>SniperBot Desk Mobile</title>
+<title>SniperBot Mobile</title>
 <style>
 :root{
-  --bg:#08101f;
-  --bg2:#0b162c;
-  --line:rgba(148, 163, 184, .16);
-  --text:#e5eefc;
-  --muted:#8fa3c7;
+  --bg:#07111f;
+  --panel:#101a2b;
+  --panel-2:#0d1625;
+  --line:rgba(255,255,255,.08);
+  --text:#e7eefb;
+  --muted:#8ea0bf;
   --accent:#4f8cff;
   --accent2:#22c55e;
   --danger:#ef4444;
-  --shadow:0 12px 30px rgba(0,0,0,.28);
-  --radius:22px;
+  --radius:18px;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
   margin:0;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
   color:var(--text);
-  background:
-    radial-gradient(circle at top left, rgba(79,140,255,.22), transparent 28%),
-    radial-gradient(circle at top right, rgba(34,197,94,.14), transparent 24%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-}
-body::before{
-  content:"";
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 18%, transparent 82%, rgba(255,255,255,.02));
+  background: linear-gradient(180deg, #07111f 0%, #0a1324 100%);
 }
 .app{
   max-width:480px;
   margin:0 auto;
   min-height:100vh;
-  padding:12px 12px 92px;
+  padding:12px 12px 88px;
 }
 .topbar{
   position:sticky;
   top:0;
   z-index:10;
-  margin-bottom:12px;
-  padding:14px 14px 12px;
+  background:rgba(7,17,31,.92);
+  backdrop-filter:blur(16px);
   border:1px solid var(--line);
-  border-radius:24px;
-  background:rgba(7, 13, 25, .78);
-  backdrop-filter: blur(18px);
-  box-shadow:var(--shadow);
+  border-radius:20px;
+  padding:14px;
+  margin-bottom:12px;
 }
 .brand-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{
-  width:42px;height:42px;border-radius:14px;
-  background:linear-gradient(135deg, rgba(79,140,255,.95), rgba(34,197,94,.85));
-  box-shadow:0 8px 18px rgba(79,140,255,.25);
-  display:grid;place-items:center;font-weight:800;
+  width:40px;height:40px;border-radius:14px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;font-weight:800;flex:0 0 auto;
 }
-.brand h1{font-size:15px;line-height:1;margin:0;letter-spacing:.2px}
-.brand p{font-size:12px;color:var(--muted);margin:4px 0 0}
+.brand h1{margin:0;font-size:15px;line-height:1.1}
+.brand p{margin:4px 0 0;font-size:12px;color:var(--muted)}
 .pill{
-  padding:8px 10px;border-radius:999px;
-  background:rgba(34,197,94,.14);
-  border:1px solid rgba(34,197,94,.28);
-  color:#bff4cc;font-size:12px;font-weight:700;white-space:nowrap;
+  padding:7px 10px;border-radius:999px;font-size:11px;font-weight:800;
+  background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.24);color:#c7f6d4;white-space:nowrap;
 }
 .status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
-.kpi{border:1px solid var(--line);background:rgba(15, 23, 42, .62);border-radius:18px;padding:10px 10px 9px}
+.kpi{
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:10px;
+}
 .kpi .label{font-size:11px;color:var(--muted);margin-bottom:6px}
-.kpi .value{font-size:16px;font-weight:800;letter-spacing:.1px}
+.kpi .value{font-size:16px;font-weight:800;line-height:1.1}
 .kpi .sub{font-size:11px;color:var(--muted);margin-top:4px}
 .tab{display:none}
-.tab.active{display:block;animation:fade .18s ease-out}
-@keyframes fade{from{opacity:.5;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.tab.active{display:block}
 .card{
+  background:var(--panel);
   border:1px solid var(--line);
-  background:linear-gradient(180deg, rgba(20, 30, 54, .92), rgba(12, 19, 37, .92));
   border-radius:var(--radius);
-  box-shadow:var(--shadow);
   padding:14px;
   margin-bottom:12px;
 }
-.card-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
-.card h2{margin:0;font-size:14px;letter-spacing:.2px}
-.card .hint{font-size:12px;color:var(--muted)}
+.card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
+.card h2{margin:0;font-size:14px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.metric{padding:12px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
+.metric{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:12px}
 .metric .m-label{font-size:11px;color:var(--muted);margin-bottom:6px}
 .metric .m-value{font-size:18px;font-weight:800}
 .metric .m-foot{font-size:11px;color:var(--muted);margin-top:4px}
-.chart-wrap{border-radius:18px;background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.06);padding:12px}
+.badge{display:inline-flex;align-items:center;justify-content:center;padding:6px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
+.badge.green{background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.22);color:#c7f6d4}
+.badge.blue{background:rgba(79,140,255,.14);border:1px solid rgba(79,140,255,.22);color:#d6e5ff}
+.badge.red{background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.22);color:#ffd0d0}
+.badge.gold{background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.22);color:#ffe4b8}
+.chart-wrap{
+  border-radius:16px;
+  padding:10px;
+  background:rgba(255,255,255,.02);
+  border:1px solid rgba(255,255,255,.05);
+}
 svg{width:100%;height:auto;display:block}
-.axis-label{fill:#8fa3c7;font-size:11px}
-.line{fill:none;stroke:#4f8cff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
-.dot{fill:#22c55e}
-.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.legend span{font-size:11px;color:#d8e4fb;padding:6px 8px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05)}
-.item{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
+.axis-label{fill:#8ea0bf;font-size:11px}
+.line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.dot{fill:var(--accent2)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.legend span{font-size:11px;color:#dce6fa;padding:6px 8px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05)}
+.item{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px;border-radius:16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
 .item strong{display:block;font-size:13px}
-.item small{display:block;color:var(--muted);margin-top:4px;line-height:1.4}
-.badge{font-size:11px;font-weight:700;padding:6px 8px;border-radius:999px;white-space:nowrap}
-.badge.green{background:rgba(34,197,94,.15);color:#bef7cd;border:1px solid rgba(34,197,94,.25)}
-.badge.blue{background:rgba(79,140,255,.15);color:#d5e4ff;border:1px solid rgba(79,140,255,.25)}
-.badge.red{background:rgba(239,68,68,.15);color:#ffd0d0;border:1px solid rgba(239,68,68,.25)}
-.badge.gold{background:rgba(245,158,11,.15);color:#ffe3b0;border:1px solid rgba(245,158,11,.25)}
-label{display:block;font-size:12px;color:#d7e3f8;margin-top:10px}
-input, select, textarea{
+.item small{display:block;color:var(--muted);margin-top:4px;line-height:1.35}
+label{display:block;font-size:12px;color:#d8e4f7;margin-top:10px}
+input,textarea{
   width:100%;
-  padding:12px 12px;
   margin-top:8px;
+  padding:12px;
   border-radius:14px;
   border:1px solid rgba(255,255,255,.08);
-  background:rgba(4, 9, 18, .8);
+  background:#07111f;
   color:var(--text);
   outline:none;
 }
-input::placeholder, textarea::placeholder{color:#6f7f9c}
-textarea{min-height:122px;resize:none}
+textarea{min-height:130px;resize:none}
+input::placeholder,textarea::placeholder{color:#6f7f9a}
 button{
   width:100%;
+  margin-top:10px;
   padding:13px 14px;
   border:none;
   border-radius:16px;
-  color:white;
   font-weight:800;
-  margin-top:10px;
-  background:linear-gradient(135deg, var(--accent), #2f6cff 54%, var(--accent2));
-  box-shadow:0 10px 22px rgba(79,140,255,.22);
+  color:white;
+  background:linear-gradient(135deg,var(--accent),#2f6cff 55%,var(--accent2));
 }
-button.secondary{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);box-shadow:none}
+button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
 .split-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .progress{height:10px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid rgba(255,255,255,.06)}
-.progress>div{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));width:61%}
+.progress > div{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
 .footer-note{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
-.bottom-nav{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;z-index:20;padding:10px 10px 14px;pointer-events:none}
-.nav-shell{width:min(480px, calc(100vw - 20px));background:rgba(5, 10, 20, .88);border:1px solid rgba(255,255,255,.08);box-shadow:0 18px 40px rgba(0,0,0,.38);backdrop-filter:blur(18px);border-radius:22px;display:grid;grid-template-columns:repeat(4,1fr);padding:8px;pointer-events:auto}
-.nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);border-radius:16px;padding:10px 6px;cursor:pointer;transition:.18s ease;user-select:none}
-.nav-item .ico{font-size:18px;line-height:1}
-.nav-item .txt{font-size:11px;font-weight:700}
-.nav-item.active{color:white;background:linear-gradient(180deg, rgba(79,140,255,.18), rgba(34,197,94,.10));border:1px solid rgba(79,140,255,.18)}
-.alert{margin-top:10px;padding:10px 12px;border-radius:14px;font-size:12px;display:none}
+.alert{display:none;margin-top:10px;padding:10px 12px;border-radius:14px;font-size:12px}
 .alert.show{display:block}
+.alert.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#c7f6d4}
 .alert.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd0d0}
-.alert.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#bef7cd}
-@media (min-width:600px){.app{max-width:520px}}
+.bottom-nav{
+  position:fixed;
+  left:0;right:0;bottom:0;
+  padding:10px 10px 14px;
+  display:flex;justify-content:center;
+  pointer-events:none;
+}
+.nav-shell{
+  width:min(480px, calc(100vw - 20px));
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:6px;
+  padding:8px;
+  border-radius:22px;
+  background:rgba(7,17,31,.94);
+  border:1px solid rgba(255,255,255,.08);
+  backdrop-filter:blur(16px);
+  pointer-events:auto;
+}
+.nav-item{
+  cursor:pointer;
+  user-select:none;
+  border-radius:16px;
+  color:var(--muted);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:10px 6px;
+  gap:4px;
+}
+.nav-item .ico{font-size:18px;line-height:1}
+.nav-item .txt{font-size:11px;font-weight:800}
+.nav-item.active{color:#fff;background:rgba(79,140,255,.16);border:1px solid rgba(79,140,255,.18)}
+@media (max-width:380px){
+  .status-grid,.grid-3{grid-template-columns:1fr}
+  .grid-2{grid-template-columns:1fr}
+  .brand-row{align-items:flex-start;flex-direction:column}
+  .pill{align-self:flex-start}
+}
 </style>
 </head>
 <body>
-  <div class="app">
-    <div class="topbar">
-      <div class="brand-row">
-        <div class="brand">
-          <div class="logo">SB</div>
-          <div>
-            <h1>SniperBot Desk</h1>
-            <p>Mobile Institutional Control Room</p>
-          </div>
+<div class="app">
+  <div class="topbar">
+    <div class="brand-row">
+      <div class="brand">
+        <div class="logo">SB</div>
+        <div>
+          <h1>SniperBot</h1>
+          <p>Dashboard mobile</p>
         </div>
-        <div class="pill" id="connectionPill">LIVE • ONLINE</div>
-      </div><div class="status-grid">
-    <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
-    <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
-    <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
-  </div>
-</div>
-
-<div id="tab-home" class="tab active">
-  <div class="card">
-    <div class="card-header"><div><h2>Visão geral</h2><div class="hint">Controle resumido da operação</div></div><span class="badge blue">Desk</span></div>
-    <div class="grid-2">
-      <div class="metric"><div class="m-label">P&L total</div><div class="m-value" id="pnl">+0.00</div><div class="m-foot">Acumulado do backtest</div></div>
-      <div class="metric"><div class="m-label">Trades</div><div class="m-value" id="trades">0</div><div class="m-foot">Executados na amostra</div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><div><h2>Equity curve</h2><div class="hint">Linha de performance do sistema</div></div><span class="badge green">AUX</span></div>
-    <div class="chart-wrap">
-      <svg viewBox="0 0 400 180" preserveAspectRatio="none" aria-label="Equity curve">
-        <defs><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(79,140,255,.30)"/><stop offset="100%" stop-color="rgba(79,140,255,0)"/></linearGradient></defs>
-        <rect x="0" y="0" width="400" height="180" rx="16" fill="rgba(255,255,255,.01)" />
-        <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62 L400,180 L0,180 Z" fill="url(#fade)" />
-        <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62" class="line" />
-        <circle cx="0" cy="150" r="3.5" class="dot" /><circle cx="80" cy="138" r="3.5" class="dot" /><circle cx="160" cy="128" r="3.5" class="dot" /><circle cx="240" cy="120" r="3.5" class="dot" /><circle cx="320" cy="84" r="3.5" class="dot" /><circle cx="400" cy="62" r="3.5" class="dot" />
-        <text x="8" y="20" class="axis-label">+ tendência positiva</text><text x="320" y="170" class="axis-label">tempo →</text>
-      </svg>
-      <div class="legend"><span>Drawdown controlado</span><span>Execução por confluência</span><span>Risco por trade ajustável</span></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><div><h2>Risk desk</h2><div class="hint">Gestão operacional em tempo real</div></div><span class="badge gold">RISK</span></div>
-    <div class="grid-3">
-      <div class="metric"><div class="m-label">Risk %</div><div class="m-value" id="riskPct">2.0%</div><div class="m-foot">por operação</div></div>
-      <div class="metric"><div class="m-label">ADX min</div><div class="m-value" id="adxMin">18</div><div class="m-foot">força de tendência</div></div>
-      <div class="metric"><div class="m-label">Confluência</div><div class="m-value" id="conf">5</div><div class="m-foot">filtros mínimos</div></div>
-    </div>
-  </div>
-</div>
-
-<div id="tab-strategy" class="tab">
-  <div class="card">
-    <div class="card-header"><div><h2>Strategy control</h2><div class="hint">Parâmetros do motor</div></div><span class="badge blue">CONFIG</span></div>
-    <label>Min confluence<input id="min_confluence" type="number" placeholder="5" /></label>
-    <label>ADX minimum<input id="adx_min" type="number" step="0.1" placeholder="18" /></label>
-    <label>ATR SL multiplier<input id="atr_sl_mult" type="number" step="0.1" placeholder="1.5" /></label>
-    <label>ATR TP multiplier<input id="atr_tp_mult" type="number" step="0.1" placeholder="3.5" /></label>
-    <label>Risk %<input id="risk_pct" type="number" step="0.1" placeholder="2.0" /></label>
-    <label>Pull range
-      <div class="grid-2">
-        <input id="pull_min" type="number" step="0.1" placeholder="-1.0" />
-        <input id="pull_max" type="number" step="0.1" placeholder="2.0" />
       </div>
-    </label>
-    <div class="split-actions">
+      <div class="pill" id="connectionPill">LIVE • ONLINE</div>
+    </div><div class="status-grid">
+  <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
+  <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
+  <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
+</div>
+
+  </div>  <div id="tab-home" class="tab active">
+    <div class="card">
+      <div class="card-header"><div><h2>Visão geral</h2><div class="hint">Resumo operacional</div></div><span class="badge blue">Desk</span></div>
+      <div class="grid-2">
+        <div class="metric"><div class="m-label">P&L total</div><div class="m-value" id="pnl">+0.00</div><div class="m-foot">Acumulado do backtest</div></div>
+        <div class="metric"><div class="m-label">Trades</div><div class="m-value" id="trades">0</div><div class="m-foot">Executados na amostra</div></div>
+      </div>
+    </div><div class="card">
+  <div class="card-header"><div><h2>Equity curve</h2><div class="hint">Performance visual</div></div><span class="badge green">AUX</span></div>
+  <div class="chart-wrap">
+    <svg viewBox="0 0 400 180" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="rgba(79,140,255,.28)"/>
+          <stop offset="100%" stop-color="rgba(79,140,255,0)"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="400" height="180" rx="16" fill="rgba(255,255,255,.01)" />
+      <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62 L400,180 L0,180 Z" fill="url(#fade)" />
+      <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62" class="line" />
+      <circle cx="0" cy="150" r="3.5" class="dot" /><circle cx="80" cy="138" r="3.5" class="dot" /><circle cx="160" cy="128" r="3.5" class="dot" /><circle cx="240" cy="120" r="3.5" class="dot" /><circle cx="320" cy="84" r="3.5" class="dot" /><circle cx="400" cy="62" r="3.5" class="dot" />
+      <text x="8" y="20" class="axis-label">+ tendência positiva</text>
+      <text x="320" y="170" class="axis-label">tempo →</text>
+    </svg>
+    <div class="legend"><span>Drawdown controlado</span><span>Confluência</span><span>Risco ajustável</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><div><h2>Risk desk</h2><div class="hint">Parâmetros atuais</div></div><span class="badge gold">RISK</span></div>
+  <div class="grid-3">
+    <div class="metric"><div class="m-label">Risk %</div><div class="m-value" id="riskPct">2.0%</div><div class="m-foot">por operação</div></div>
+    <div class="metric"><div class="m-label">ADX min</div><div class="m-value" id="adxMin">18</div><div class="m-foot">força de tendência</div></div>
+    <div class="metric"><div class="m-label">Confluência</div><div class="m-value" id="conf">5</div><div class="m-foot">filtros mínimos</div></div>
+  </div>
+</div>
+
+  </div>  <div id="tab-strategy" class="tab">
+    <div class="card">
+      <div class="card-header"><div><h2>Strategy control</h2><div class="hint">Ajuste dos parâmetros</div></div><span class="badge blue">CONFIG</span></div>
+      <label>Min confluence<input id="min_confluence" type="number" placeholder="5" /></label>
+      <label>ADX minimum<input id="adx_min" type="number" step="0.1" placeholder="18" /></label>
+      <label>ATR SL multiplier<input id="atr_sl_mult" type="number" step="0.1" placeholder="1.5" /></label>
+      <label>ATR TP multiplier<input id="atr_tp_mult" type="number" step="0.1" placeholder="3.5" /></label>
+      <label>Risk %<input id="risk_pct" type="number" step="0.1" placeholder="2.0" /></label>
+      <label>Pull range
+        <div class="grid-2">
+          <input id="pull_min" type="number" step="0.1" placeholder="-1.0" />
+          <input id="pull_max" type="number" step="0.1" placeholder="2.0" />
+        </div>
+      </label>
       <button onclick="saveConfig()">Salvar parâmetros</button>
       <button class="secondary" onclick="loadConfig()">Carregar atual</button>
     </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><div><h2>Preset institucional</h2><div class="hint">Baseado na melhor configuração encontrada</div></div><span class="badge green">READY</span></div>
-    <div class="item"><div><strong>Entrada</strong><small>Filtro por confluência e força</small></div><span class="badge blue">5 filtros</span></div>
-    <div style="height:10px"></div>
-    <div class="item"><div><strong>Stop</strong><small>ATR adaptativo para oscilações maiores</small></div><span class="badge red">1.5x ATR</span></div>
-    <div style="height:10px"></div>
-    <div class="item"><div><strong>Take</strong><small>Relação risco/retorno ampliada</small></div><span class="badge green">3.5x ATR</span></div>
-  </div>
+  </div>  <div id="tab-backtest" class="tab">
+    <div class="card">
+      <div class="card-header"><div><h2>Backtest engine</h2><div class="hint">Executar análise</div></div><span class="badge green">ENGINE</span></div>
+      <div class="split-actions">
+        <button onclick="runBacktest()">Rodar backtest</button>
+        <button class="secondary" onclick="runOptimize()">Otimizar</button>
+      </div>
+      <div style="margin-top:12px" class="progress"><div id="progressBar"></div></div>
+      <div class="footer-note">Barra visual de operação</div>
+      <div id="alertBox" class="alert"></div>
+    </div><div class="card">
+  <div class="card-header"><div><h2>Resultado</h2><div class="hint">JSON resumido</div></div><span class="badge gold">LOG</span></div>
+  <textarea id="result" readonly placeholder="Os resultados aparecerão aqui..."></textarea>
 </div>
 
-<div id="tab-backtest" class="tab">
-  <div class="card">
-    <div class="card-header"><div><h2>Backtest engine</h2><div class="hint">Rodar e revisar resultados</div></div><span class="badge green">ENGINE</span></div>
-    <div class="split-actions">
-      <button onclick="runBacktest()">Rodar backtest</button>
-      <button class="secondary" onclick="runOptimize()">Otimizar</button>
+  </div>  <div id="tab-exec" class="tab">
+    <div class="card">
+      <div class="card-header"><div><h2>Execution monitor</h2><div class="hint">Estado do sistema</div></div><span class="badge blue">SYNC</span></div>
+      <div class="item"><div><strong>Status do motor</strong><small>API conectada e pronta</small></div><span class="badge green" id="engineState">ONLINE</span></div>
+      <div style="height:10px"></div>
+      <div class="item"><div><strong>Último update</strong><small id="lastUpdate">Sem execução ainda</small></div><span class="badge blue">TIME</span></div>
+      <div style="height:10px"></div>
+      <div class="item"><div><strong>Modo</strong><small>Backtest / análise / otimização</small></div><span class="badge gold">MIXED</span></div>
     </div>
-    <div style="margin-top:12px" class="progress"><div id="progressBar"></div></div>
-    <div class="footer-note">Barra visual de operação</div>
-    <div id="alertBox" class="alert"></div>
   </div>
-
-  <div class="card">
-    <div class="card-header"><div><h2>Resultado</h2><div class="hint">JSON resumido da última execução</div></div><span class="badge gold">LOG</span></div>
-    <textarea id="result" readonly placeholder="Os resultados aparecerão aqui..."></textarea>
+</div><div class="bottom-nav">
+  <div class="nav-shell">
+    <div class="nav-item active" data-tab="home" onclick="switchTab('home', this)"><div class="ico">⌂</div><div class="txt">Home</div></div>
+    <div class="nav-item" data-tab="strategy" onclick="switchTab('strategy', this)"><div class="ico">⚙</div><div class="txt">Estratégia</div></div>
+    <div class="nav-item" data-tab="backtest" onclick="switchTab('backtest', this)"><div class="ico">↻</div><div class="txt">Backtest</div></div>
+    <div class="nav-item" data-tab="exec" onclick="switchTab('exec', this)"><div class="ico">▣</div><div class="txt">Execução</div></div>
   </div>
-</div>
-
-<div id="tab-exec" class="tab">
-  <div class="card">
-    <div class="card-header"><div><h2>Execution monitor</h2><div class="hint">Situação operacional</div></div><span class="badge blue">SYNC</span></div>
-    <div class="item"><div><strong>Status do motor</strong><small>API conectada e pronta</small></div><span class="badge green" id="engineState">ONLINE</span></div>
-    <div style="height:10px"></div>
-    <div class="item"><div><strong>Último update</strong><small id="lastUpdate">Sem execução ainda</small></div><span class="badge blue">TIME</span></div>
-    <div style="height:10px"></div>
-    <div class="item"><div><strong>Modo</strong><small>Backtest / análise / otimização</small></div><span class="badge gold">MIXED</span></div>
-  </div>
-</div>
-
-  </div>  <div class="bottom-nav">
-    <div class="nav-shell">
-      <div class="nav-item active" data-tab="home" onclick="switchTab('home', this)"><div class="ico">⌂</div><div class="txt">Home</div></div>
-      <div class="nav-item" data-tab="strategy" onclick="switchTab('strategy', this)"><div class="ico">⚙</div><div class="txt">Estratégia</div></div>
-      <div class="nav-item" data-tab="backtest" onclick="switchTab('backtest', this)"><div class="ico">↻</div><div class="txt">Backtest</div></div>
-      <div class="nav-item" data-tab="exec" onclick="switchTab('exec', this)"><div class="ico">▣</div><div class="txt">Execução</div></div>
-    </div>
-  </div><script>
+</div><script>
 const DEFAULT_CONFIG = {
   min_confluence: 5,
   adx_min: 18,
@@ -279,26 +290,25 @@ const DEFAULT_CONFIG = {
   risk_pct: 2.0
 };
 
-function showAlert(message, type='ok') {
+function switchTab(tab, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function showAlert(message, type = 'ok') {
   const box = document.getElementById('alertBox');
   if (!box) return;
   box.className = 'alert show ' + (type === 'error' ? 'error' : 'ok');
   box.textContent = message;
 }
 
-function setConnection(ok, text) {
+function setConnection(ok) {
   const pill = document.getElementById('connectionPill');
   const engine = document.getElementById('engineState');
   if (pill) pill.textContent = ok ? 'LIVE • ONLINE' : 'OFFLINE';
   if (engine) engine.textContent = ok ? 'ONLINE' : 'OFFLINE';
-}
-
-function switchTab(tab, el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const target = document.getElementById('tab-' + tab);
-  if (target) target.classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  if (el) el.classList.add('active');
 }
 
 function parseResult(data) {
@@ -323,22 +333,14 @@ function updateUIFromResult(data) {
   document.getElementById('result').value = JSON.stringify(r.raw, null, 2);
   document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
   document.getElementById('progressBar').style.width = Math.max(10, Math.min(100, (r.pf || 0) * 20)) + '%';
-  document.getElementById('riskPct').innerText = (document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct) + '%';
-  document.getElementById('adxMin').innerText = document.getElementById('adx_min').value || DEFAULT_CONFIG.adx_min;
-  document.getElementById('conf').innerText = document.getElementById('min_confluence').value || DEFAULT_CONFIG.min_confluence;
 }
 
 async function apiJson(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options
-  });
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
   const text = await res.text();
-  let data = null;
+  let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_text: text }; }
-  if (!res.ok) {
-    throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
   return data;
 }
 
@@ -357,17 +359,10 @@ async function loadConfig() {
     document.getElementById('adxMin').innerText = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
     document.getElementById('conf').innerText = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
     setConnection(true);
-    showAlert('Configuração carregada com sucesso.', 'ok');
+    showAlert('Configuração carregada.', 'ok');
   } catch (e) {
     setConnection(false);
     showAlert('Falha ao carregar config: ' + e.message, 'error');
-    document.getElementById('min_confluence').value = DEFAULT_CONFIG.min_confluence;
-    document.getElementById('adx_min').value = DEFAULT_CONFIG.adx_min;
-    document.getElementById('atr_sl_mult').value = DEFAULT_CONFIG.atr_sl_mult;
-    document.getElementById('atr_tp_mult').value = DEFAULT_CONFIG.atr_tp_mult;
-    document.getElementById('risk_pct').value = DEFAULT_CONFIG.risk_pct;
-    document.getElementById('pull_min').value = DEFAULT_CONFIG.pull_range[0];
-    document.getElementById('pull_max').value = DEFAULT_CONFIG.pull_range[1];
   }
 }
 
@@ -383,9 +378,11 @@ async function saveConfig() {
     ],
     risk_pct: Number(document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct)
   };
-
   try {
     const data = await apiJson('/config', { method: 'POST', body: JSON.stringify(config) });
+    document.getElementById('riskPct').innerText = config.risk_pct.toFixed(1) + '%';
+    document.getElementById('adxMin').innerText = config.adx_min;
+    document.getElementById('conf').innerText = config.min_confluence;
     updateUIFromResult(data.result || { raw: data });
     showAlert('Configuração salva.', 'ok');
     setConnection(true);
@@ -400,11 +397,8 @@ async function runBacktest() {
   showAlert('Rodando backtest...', 'ok');
   try {
     let data;
-    try {
-      data = await apiJson('/run_backtest', { method: 'POST' });
-    } catch (e1) {
-      data = await apiJson('/api/backtest', { method: 'POST' });
-    }
+    try { data = await apiJson('/run_backtest', { method: 'POST' }); }
+    catch (e1) { data = await apiJson('/api/backtest', { method: 'POST' }); }
     updateUIFromResult(data);
     document.getElementById('progressBar').style.width = '100%';
     showAlert('Backtest finalizado.', 'ok');
