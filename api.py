@@ -89,6 +89,8 @@ def create_api(bot):
                 if candidate.exists() and candidate.is_file():
                     html = candidate.read_text(encoding="utf-8")
                     if html.strip():
+                        token = Config.DASHBOARD_API_TOKEN or ""
+                        html = html.replace("__DASHBOARD_API_TOKEN__", token)
                         return html
             except Exception:
                 continue
@@ -526,11 +528,14 @@ def create_api(bot):
             from csv_parser import parse_investing_csv, detect_symbol
             from backtester import run_backtest, bars_from_dicts, detect_timeframe
 
-            # Lê arquivo
-            if "csv" not in request.files:
-                return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
-
-            file    = request.files["csv"]
+            # Lê arquivo (aceita múltiplos nomes para compatibilidade com diferentes frontends)
+            file = None
+            for key in ("csv", "file", "upload", "csv_file"):
+                if key in request.files and request.files[key]:
+                    file = request.files[key]
+                    break
+            if file is None:
+                return jsonify({"ok": False, "error": "Nenhum arquivo CSV enviado (campos aceitos: csv, file, upload, csv_file)"}), 400
             content = file.read()
             if not content:
                 return jsonify({"ok": False, "error": "Arquivo vazio"}), 400
@@ -648,10 +653,13 @@ def create_api(bot):
         except Exception as e:
             return jsonify({"ok": False, "error": f"Erro ao carregar dependências: {e}"}), 500
 
-        if "csv" not in request.files:
-            return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
-
-        file = request.files["csv"]
+        file = None
+        for key in ("csv", "file", "upload", "csv_file"):
+            if key in request.files and request.files[key]:
+                file = request.files[key]
+                break
+        if file is None:
+            return jsonify({"ok": False, "error": "Nenhum arquivo CSV enviado (campos aceitos: csv, file, upload, csv_file)"}), 400
         content = file.read()
         if not content:
             return jsonify({"ok": False, "error": "Arquivo vazio"}), 400

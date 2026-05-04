@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="pt-br">
+<!DOCTYPE html>
+<html lang="pt-br">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -22,57 +23,24 @@ body{
   margin:0;
   font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
   color:var(--text);
-  background: linear-gradient(180deg, #07111f 0%, #0a1324 100%);
+  background:linear-gradient(180deg,#07111f 0%,#0a1324 100%);
 }
-.app{
-  max-width:480px;
-  margin:0 auto;
-  min-height:100vh;
-  padding:12px 12px 88px;
-}
-.topbar{
-  position:sticky;
-  top:0;
-  z-index:10;
-  background:rgba(7,17,31,.92);
-  backdrop-filter:blur(16px);
-  border:1px solid var(--line);
-  border-radius:20px;
-  padding:14px;
-  margin-bottom:12px;
-}
+.app{max-width:480px;margin:0 auto;min-height:100vh;padding:12px 12px 88px}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(7,17,31,.92);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:20px;padding:14px;margin-bottom:12px}
 .brand-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
-.logo{
-  width:40px;height:40px;border-radius:14px;
-  background:linear-gradient(135deg,var(--accent),var(--accent2));
-  display:grid;place-items:center;font-weight:800;flex:0 0 auto;
-}
+.logo{width:40px;height:40px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-weight:800;flex:0 0 auto}
 .brand h1{margin:0;font-size:15px;line-height:1.1}
 .brand p{margin:4px 0 0;font-size:12px;color:var(--muted)}
-.pill{
-  padding:7px 10px;border-radius:999px;font-size:11px;font-weight:800;
-  background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.24);color:#c7f6d4;white-space:nowrap;
-}
+.pill{padding:7px 10px;border-radius:999px;font-size:11px;font-weight:800;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.24);color:#c7f6d4;white-space:nowrap}
 .status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
-.kpi{
-  background:var(--panel-2);
-  border:1px solid var(--line);
-  border-radius:16px;
-  padding:10px;
-}
+.kpi{background:var(--panel-2);border:1px solid var(--line);border-radius:16px;padding:10px}
 .kpi .label{font-size:11px;color:var(--muted);margin-bottom:6px}
 .kpi .value{font-size:16px;font-weight:800;line-height:1.1}
 .kpi .sub{font-size:11px;color:var(--muted);margin-top:4px}
 .tab{display:none}
 .tab.active{display:block}
-.card{
-  background:var(--panel);
-  border:1px solid var(--line);
-  border-radius:var(--radius);
-  padding:14px;
-  margin-bottom:12px;
-}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
 .card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
 .card h2{margin:0;font-size:14px}
 .hint{font-size:12px;color:var(--muted);margin-top:4px}
@@ -87,12 +55,7 @@ body{
 .badge.blue{background:rgba(79,140,255,.14);border:1px solid rgba(79,140,255,.22);color:#d6e5ff}
 .badge.red{background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.22);color:#ffd0d0}
 .badge.gold{background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.22);color:#ffe4b8}
-.chart-wrap{
-  border-radius:16px;
-  padding:10px;
-  background:rgba(255,255,255,.02);
-  border:1px solid rgba(255,255,255,.05);
-}
+.chart-wrap{border-radius:16px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05)}
 svg{width:100%;height:auto;display:block}
 .axis-label{fill:#8ea0bf;font-size:11px}
 .line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
@@ -103,74 +66,27 @@ svg{width:100%;height:auto;display:block}
 .item strong{display:block;font-size:13px}
 .item small{display:block;color:var(--muted);margin-top:4px;line-height:1.35}
 label{display:block;font-size:12px;color:#d8e4f7;margin-top:10px}
-input,textarea{
-  width:100%;
-  margin-top:8px;
-  padding:12px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.08);
-  background:#07111f;
-  color:var(--text);
-  outline:none;
-}
+input,textarea{width:100%;margin-top:8px;padding:12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:#07111f;color:var(--text);outline:none}
 textarea{min-height:130px;resize:none}
 input::placeholder,textarea::placeholder{color:#6f7f9a}
-button{
-  width:100%;
-  margin-top:10px;
-  padding:13px 14px;
-  border:none;
-  border-radius:16px;
-  font-weight:800;
-  color:white;
-  background:linear-gradient(135deg,var(--accent),#2f6cff 55%,var(--accent2));
-}
+button{width:100%;margin-top:10px;padding:13px 14px;border:none;border-radius:16px;font-weight:800;color:white;background:linear-gradient(135deg,var(--accent),#2f6cff 55%,var(--accent2))}
 button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
 .split-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .progress{height:10px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid rgba(255,255,255,.06)}
-.progress > div{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.progress>div{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
 .footer-note{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
 .alert{display:none;margin-top:10px;padding:10px 12px;border-radius:14px;font-size:12px}
 .alert.show{display:block}
 .alert.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#c7f6d4}
 .alert.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd0d0}
-.bottom-nav{
-  position:fixed;
-  left:0;right:0;bottom:0;
-  padding:10px 10px 14px;
-  display:flex;justify-content:center;
-  pointer-events:none;
-}
-.nav-shell{
-  width:min(480px, calc(100vw - 20px));
-  display:grid;
-  grid-template-columns:repeat(4,1fr);
-  gap:6px;
-  padding:8px;
-  border-radius:22px;
-  background:rgba(7,17,31,.94);
-  border:1px solid rgba(255,255,255,.08);
-  backdrop-filter:blur(16px);
-  pointer-events:auto;
-}
-.nav-item{
-  cursor:pointer;
-  user-select:none;
-  border-radius:16px;
-  color:var(--muted);
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  padding:10px 6px;
-  gap:4px;
-}
+.bottom-nav{position:fixed;left:0;right:0;bottom:0;padding:10px 10px 14px;display:flex;justify-content:center;pointer-events:none}
+.nav-shell{width:min(480px, calc(100vw - 20px));display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px;border-radius:22px;background:rgba(7,17,31,.94);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(16px);pointer-events:auto}
+.nav-item{cursor:pointer;user-select:none;border-radius:16px;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 6px;gap:4px}
 .nav-item .ico{font-size:18px;line-height:1}
 .nav-item .txt{font-size:11px;font-weight:800}
 .nav-item.active{color:#fff;background:rgba(79,140,255,.16);border:1px solid rgba(79,140,255,.18)}
 @media (max-width:380px){
-  .status-grid,.grid-3{grid-template-columns:1fr}
-  .grid-2{grid-template-columns:1fr}
+  .status-grid,.grid-3,.grid-2{grid-template-columns:1fr}
   .brand-row{align-items:flex-start;flex-direction:column}
   .pill{align-self:flex-start}
 }
@@ -187,51 +103,56 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
           <p>Dashboard mobile</p>
         </div>
       </div>
-      <div class="pill" id="connectionPill">LIVE • ONLINE</div>
-    </div><div class="status-grid">
-  <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
-  <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
-  <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
-</div>
+      <div class="pill" id="connectionPill">CONNECTING…</div>
+    </div>
+    <div class="status-grid">
+      <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
+      <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
+      <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
+    </div>
+  </div>
 
-  </div>  <div id="tab-home" class="tab active">
+  <div id="tab-home" class="tab active">
     <div class="card">
       <div class="card-header"><div><h2>Visão geral</h2><div class="hint">Resumo operacional</div></div><span class="badge blue">Desk</span></div>
       <div class="grid-2">
         <div class="metric"><div class="m-label">P&L total</div><div class="m-value" id="pnl">+0.00</div><div class="m-foot">Acumulado do backtest</div></div>
         <div class="metric"><div class="m-label">Trades</div><div class="m-value" id="trades">0</div><div class="m-foot">Executados na amostra</div></div>
       </div>
-    </div><div class="card">
-  <div class="card-header"><div><h2>Equity curve</h2><div class="hint">Performance visual</div></div><span class="badge green">AUX</span></div>
-  <div class="chart-wrap">
-    <svg viewBox="0 0 400 180" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="rgba(79,140,255,.28)"/>
-          <stop offset="100%" stop-color="rgba(79,140,255,0)"/>
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="400" height="180" rx="16" fill="rgba(255,255,255,.01)" />
-      <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62 L400,180 L0,180 Z" fill="url(#fade)" />
-      <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62" class="line" />
-      <circle cx="0" cy="150" r="3.5" class="dot" /><circle cx="80" cy="138" r="3.5" class="dot" /><circle cx="160" cy="128" r="3.5" class="dot" /><circle cx="240" cy="120" r="3.5" class="dot" /><circle cx="320" cy="84" r="3.5" class="dot" /><circle cx="400" cy="62" r="3.5" class="dot" />
-      <text x="8" y="20" class="axis-label">+ tendência positiva</text>
-      <text x="320" y="170" class="axis-label">tempo →</text>
-    </svg>
-    <div class="legend"><span>Drawdown controlado</span><span>Confluência</span><span>Risco ajustável</span></div>
-  </div>
-</div>
+    </div>
 
-<div class="card">
-  <div class="card-header"><div><h2>Risk desk</h2><div class="hint">Parâmetros atuais</div></div><span class="badge gold">RISK</span></div>
-  <div class="grid-3">
-    <div class="metric"><div class="m-label">Risk %</div><div class="m-value" id="riskPct">2.0%</div><div class="m-foot">por operação</div></div>
-    <div class="metric"><div class="m-label">ADX min</div><div class="m-value" id="adxMin">18</div><div class="m-foot">força de tendência</div></div>
-    <div class="metric"><div class="m-label">Confluência</div><div class="m-value" id="conf">5</div><div class="m-foot">filtros mínimos</div></div>
-  </div>
-</div>
+    <div class="card">
+      <div class="card-header"><div><h2>Equity curve</h2><div class="hint">Performance visual</div></div><span class="badge green">AUX</span></div>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 400 180" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(79,140,255,.28)"/>
+              <stop offset="100%" stop-color="rgba(79,140,255,0)"/>
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="400" height="180" rx="16" fill="rgba(255,255,255,.01)" />
+          <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62 L400,180 L0,180 Z" fill="url(#fade)" />
+          <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62" class="line" />
+          <circle cx="0" cy="150" r="3.5" class="dot" /><circle cx="80" cy="138" r="3.5" class="dot" /><circle cx="160" cy="128" r="3.5" class="dot" /><circle cx="240" cy="120" r="3.5" class="dot" /><circle cx="320" cy="84" r="3.5" class="dot" /><circle cx="400" cy="62" r="3.5" class="dot" />
+          <text x="8" y="20" class="axis-label">+ tendência positiva</text>
+          <text x="320" y="170" class="axis-label">tempo →</text>
+        </svg>
+        <div class="legend"><span>Drawdown controlado</span><span>Confluência</span><span>Risco ajustável</span></div>
+      </div>
+    </div>
 
-  </div>  <div id="tab-strategy" class="tab">
+    <div class="card">
+      <div class="card-header"><div><h2>Risk desk</h2><div class="hint">Parâmetros atuais</div></div><span class="badge gold">RISK</span></div>
+      <div class="grid-3">
+        <div class="metric"><div class="m-label">Risk %</div><div class="m-value" id="riskPct">2.0%</div><div class="m-foot">por operação</div></div>
+        <div class="metric"><div class="m-label">ADX min</div><div class="m-value" id="adxMin">18</div><div class="m-foot">força de tendência</div></div>
+        <div class="metric"><div class="m-label">Confluência</div><div class="m-value" id="conf">5</div><div class="m-foot">filtros mínimos</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-strategy" class="tab">
     <div class="card">
       <div class="card-header"><div><h2>Strategy control</h2><div class="hint">Ajuste dos parâmetros</div></div><span class="badge blue">CONFIG</span></div>
       <label>Min confluence<input id="min_confluence" type="number" placeholder="5" /></label>
@@ -248,22 +169,34 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
       <button onclick="saveConfig()">Salvar parâmetros</button>
       <button class="secondary" onclick="loadConfig()">Carregar atual</button>
     </div>
-  </div>  <div id="tab-backtest" class="tab">
+  </div>
+
+  <div id="tab-backtest" class="tab">
     <div class="card">
       <div class="card-header"><div><h2>Backtest engine</h2><div class="hint">Executar análise</div></div><span class="badge green">ENGINE</span></div>
+
+      <label>Arquivo CSV / planilha<input id="csvFile" type="file" accept=".csv,.xlsx,.xls" /></label>
+      <label>Símbolo (opcional)<input id="symbolInput" type="text" placeholder="EURUSD" /></label>
       <div class="split-actions">
-        <button onclick="runBacktest()">Rodar backtest</button>
+        <button onclick="uploadBacktest()">Enviar arquivo</button>
         <button class="secondary" onclick="runOptimize()">Otimizar</button>
+      </div>
+      <div class="split-actions">
+        <button class="secondary" onclick="runBacktest()">Backtest API</button>
+        <button class="secondary" onclick="refreshStatus()">Atualizar status</button>
       </div>
       <div style="margin-top:12px" class="progress"><div id="progressBar"></div></div>
       <div class="footer-note">Barra visual de operação</div>
       <div id="alertBox" class="alert"></div>
-    </div><div class="card">
-  <div class="card-header"><div><h2>Resultado</h2><div class="hint">JSON resumido</div></div><span class="badge gold">LOG</span></div>
-  <textarea id="result" readonly placeholder="Os resultados aparecerão aqui..."></textarea>
-</div>
+    </div>
 
-  </div>  <div id="tab-exec" class="tab">
+    <div class="card">
+      <div class="card-header"><div><h2>Resultado</h2><div class="hint">JSON resumido</div></div><span class="badge gold">LOG</span></div>
+      <textarea id="result" readonly placeholder="Os resultados aparecerão aqui..."></textarea>
+    </div>
+  </div>
+
+  <div id="tab-exec" class="tab">
     <div class="card">
       <div class="card-header"><div><h2>Execution monitor</h2><div class="hint">Estado do sistema</div></div><span class="badge blue">SYNC</span></div>
       <div class="item"><div><strong>Status do motor</strong><small>API conectada e pronta</small></div><span class="badge green" id="engineState">ONLINE</span></div>
@@ -273,14 +206,19 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
       <div class="item"><div><strong>Modo</strong><small>Backtest / análise / otimização</small></div><span class="badge gold">MIXED</span></div>
     </div>
   </div>
-</div><div class="bottom-nav">
+</div>
+
+<div class="bottom-nav">
   <div class="nav-shell">
     <div class="nav-item active" data-tab="home" onclick="switchTab('home', this)"><div class="ico">⌂</div><div class="txt">Home</div></div>
     <div class="nav-item" data-tab="strategy" onclick="switchTab('strategy', this)"><div class="ico">⚙</div><div class="txt">Estratégia</div></div>
     <div class="nav-item" data-tab="backtest" onclick="switchTab('backtest', this)"><div class="ico">↻</div><div class="txt">Backtest</div></div>
     <div class="nav-item" data-tab="exec" onclick="switchTab('exec', this)"><div class="ico">▣</div><div class="txt">Execução</div></div>
   </div>
-</div><script>
+</div>
+
+<script>
+const DASHBOARD_API_TOKEN = "{{DASHBOARD_API_TOKEN}}";
 const DEFAULT_CONFIG = {
   min_confluence: 5,
   adx_min: 18,
@@ -290,11 +228,18 @@ const DEFAULT_CONFIG = {
   risk_pct: 2.0
 };
 
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (DASHBOARD_API_TOKEN) headers.Authorization = `Bearer ${DASHBOARD_API_TOKEN}`;
+  return headers;
+}
+
 function switchTab(tab, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
+  const target = document.getElementById('tab-' + tab);
+  if (target) target.classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  el.classList.add('active');
+  if (el) el.classList.add('active');
 }
 
 function showAlert(message, type = 'ok') {
@@ -312,13 +257,13 @@ function setConnection(ok) {
 }
 
 function parseResult(data) {
-  const r = data?.result ?? data?.best_result ?? data ?? {};
+  const r = data?.result ?? data?.best_result ?? data?.metrics ?? data ?? {};
   return {
-    pnl: Number(r.pnl ?? r.total_pnl ?? r.profit ?? 0),
+    pnl: Number(r.pnl ?? r.total_pnl ?? r.profit ?? r.total_pnl ?? 0),
     winrate: Number(r.winrate ?? r.win_rate ?? r.winRate ?? 0),
     pf: Number(r.profit_factor ?? r.pf ?? r.profitFactor ?? 0),
     trades: Number(r.trades ?? r.total_trades ?? r.totalTrades ?? 0),
-    balance: Number(r.balance ?? r.equity ?? r.initial_balance ?? 0),
+    balance: Number(r.balance ?? r.equity ?? r.initial_balance ?? r.current_balance ?? 0),
     raw: r
   };
 }
@@ -329,39 +274,52 @@ function updateUIFromResult(data) {
   document.getElementById('winrateTop').innerText = r.winrate.toFixed(1) + '%';
   document.getElementById('pfTop').innerText = r.pf.toFixed(2);
   document.getElementById('trades').innerText = String(r.trades);
-  document.getElementById('saldoTop').innerText = 'R$ ' + r.balance.toFixed(2);
+  if (r.balance) document.getElementById('saldoTop').innerText = 'R$ ' + r.balance.toFixed(2);
   document.getElementById('result').value = JSON.stringify(r.raw, null, 2);
   document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
   document.getElementById('progressBar').style.width = Math.max(10, Math.min(100, (r.pf || 0) * 20)) + '%';
 }
 
-async function apiJson(url, options = {}) {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
+async function apiFetch(url, options = {}) {
+  const headers = authHeaders(options.headers || {});
+  const res = await fetch(url, { ...options, headers });
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw_text: text }; }
-  if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data?.detail || data?.message || data?.error || `HTTP ${res.status}`);
   return data;
+}
+
+async function refreshStatus() {
+  try {
+    const data = await apiFetch('/api/status', { method: 'GET' });
+    setConnection(true);
+    document.getElementById('saldoTop').innerText = 'R$ ' + Number(data.balance || 0).toFixed(2);
+    document.getElementById('winrateTop').innerText = Number(data.winrate || 0).toFixed(1) + '%';
+    document.getElementById('riskPct').innerText = document.getElementById('risk_pct').value ? Number(document.getElementById('risk_pct').value).toFixed(1) + '%' : '2.0%';
+    document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
+  } catch (e) {
+    setConnection(false);
+    showAlert('Falha ao conectar com o bot: ' + e.message, 'error');
+  }
 }
 
 async function loadConfig() {
   try {
-    const cfg = await apiJson('/config', { method: 'GET' });
-    document.getElementById('min_confluence').value = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
-    document.getElementById('adx_min').value = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
-    document.getElementById('atr_sl_mult').value = cfg.atr_sl_mult ?? DEFAULT_CONFIG.atr_sl_mult;
-    document.getElementById('atr_tp_mult').value = cfg.atr_tp_mult ?? DEFAULT_CONFIG.atr_tp_mult;
-    document.getElementById('risk_pct').value = cfg.risk_pct ?? DEFAULT_CONFIG.risk_pct;
-    const pr = cfg.pull_range ?? DEFAULT_CONFIG.pull_range;
-    document.getElementById('pull_min').value = pr[0];
-    document.getElementById('pull_max').value = pr[1];
-    document.getElementById('riskPct').innerText = (cfg.risk_pct ?? DEFAULT_CONFIG.risk_pct).toFixed(1) + '%';
-    document.getElementById('adxMin').innerText = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
-    document.getElementById('conf').innerText = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
+    const cfg = await apiFetch('/api/strategy-config', { method: 'GET' });
+    const s = cfg.settings || cfg;
+    document.getElementById('min_confluence').value = s.min_confluence ?? DEFAULT_CONFIG.min_confluence;
+    document.getElementById('adx_min').value = s.adx_min ?? DEFAULT_CONFIG.adx_min;
+    document.getElementById('atr_sl_mult').value = s.atr_sl_mult ?? DEFAULT_CONFIG.atr_sl_mult;
+    document.getElementById('atr_tp_mult').value = s.atr_tp_mult ?? DEFAULT_CONFIG.atr_tp_mult;
+    document.getElementById('risk_pct').value = s.risk_pct ?? DEFAULT_CONFIG.risk_pct;
+    document.getElementById('pull_min').value = s.pull_min ?? s.pull_range?.[0] ?? DEFAULT_CONFIG.pull_range[0];
+    document.getElementById('pull_max').value = s.pull_max ?? s.pull_range?.[1] ?? DEFAULT_CONFIG.pull_range[1];
+    document.getElementById('riskPct').innerText = (s.risk_pct ?? DEFAULT_CONFIG.risk_pct).toFixed(1) + '%';
+    document.getElementById('adxMin').innerText = s.adx_min ?? DEFAULT_CONFIG.adx_min;
+    document.getElementById('conf').innerText = s.min_confluence ?? DEFAULT_CONFIG.min_confluence;
     setConnection(true);
-    showAlert('Configuração carregada.', 'ok');
   } catch (e) {
-    setConnection(false);
     showAlert('Falha ao carregar config: ' + e.message, 'error');
   }
 }
@@ -372,33 +330,85 @@ async function saveConfig() {
     adx_min: Number(document.getElementById('adx_min').value || DEFAULT_CONFIG.adx_min),
     atr_sl_mult: Number(document.getElementById('atr_sl_mult').value || DEFAULT_CONFIG.atr_sl_mult),
     atr_tp_mult: Number(document.getElementById('atr_tp_mult').value || DEFAULT_CONFIG.atr_tp_mult),
-    pull_range: [
-      Number(document.getElementById('pull_min').value || DEFAULT_CONFIG.pull_range[0]),
-      Number(document.getElementById('pull_max').value || DEFAULT_CONFIG.pull_range[1])
-    ],
+    pull_min: Number(document.getElementById('pull_min').value || DEFAULT_CONFIG.pull_range[0]),
+    pull_max: Number(document.getElementById('pull_max').value || DEFAULT_CONFIG.pull_range[1]),
     risk_pct: Number(document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct)
   };
   try {
-    const data = await apiJson('/config', { method: 'POST', body: JSON.stringify(config) });
+    const data = await apiFetch('/api/strategy-config', { method: 'POST', body: JSON.stringify(config) });
     document.getElementById('riskPct').innerText = config.risk_pct.toFixed(1) + '%';
     document.getElementById('adxMin').innerText = config.adx_min;
     document.getElementById('conf').innerText = config.min_confluence;
-    updateUIFromResult(data.result || { raw: data });
     showAlert('Configuração salva.', 'ok');
     setConnection(true);
+    if (data.settings) updateUIFromResult({ metrics: data.settings });
   } catch (e) {
     showAlert('Falha ao salvar config: ' + e.message, 'error');
     setConnection(false);
   }
 }
 
+function buildFormDataForUpload() {
+  const fileInput = document.getElementById('csvFile');
+  const file = fileInput?.files?.[0];
+  if (!file) throw new Error('Selecione um arquivo CSV ou XLSX.');
+  const fd = new FormData();
+  fd.append('csv', file);
+  const symbol = (document.getElementById('symbolInput').value || '').trim();
+  if (symbol) fd.append('symbol', symbol);
+  fd.append('balance', '10000');
+  fd.append('min_confluence', document.getElementById('min_confluence').value || DEFAULT_CONFIG.min_confluence);
+  fd.append('adx_min', document.getElementById('adx_min').value || DEFAULT_CONFIG.adx_min);
+  fd.append('atr_sl_mult', document.getElementById('atr_sl_mult').value || DEFAULT_CONFIG.atr_sl_mult);
+  fd.append('atr_tp_mult', document.getElementById('atr_tp_mult').value || DEFAULT_CONFIG.atr_tp_mult);
+  fd.append('pull_min', document.getElementById('pull_min').value || DEFAULT_CONFIG.pull_range[0]);
+  fd.append('pull_max', document.getElementById('pull_max').value || DEFAULT_CONFIG.pull_range[1]);
+  fd.append('risk_pct', document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct);
+  return fd;
+}
+
+async function uploadBacktest() {
+  document.getElementById('progressBar').style.width = '15%';
+  showAlert('Enviando arquivo...', 'ok');
+  try {
+    const fd = buildFormDataForUpload();
+    const res = await fetch('/api/backtest/upload', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: fd
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Falha no upload');
+    updateUIFromResult(data);
+    document.getElementById('progressBar').style.width = '100%';
+    showAlert('Upload concluído e backtest executado.', 'ok');
+    setConnection(true);
+  } catch (e) {
+    document.getElementById('progressBar').style.width = '0%';
+    showAlert('Erro no upload: ' + e.message, 'error');
+    setConnection(false);
+  }
+}
+
 async function runBacktest() {
   document.getElementById('progressBar').style.width = '18%';
-  showAlert('Rodando backtest...', 'ok');
+  showAlert('Rodando backtest via API...', 'ok');
   try {
+    const body = {
+      symbol: (document.getElementById('symbolInput').value || 'EURUSD').trim() || 'EURUSD',
+      min_confluence: Number(document.getElementById('min_confluence').value || DEFAULT_CONFIG.min_confluence),
+      adx_min: Number(document.getElementById('adx_min').value || DEFAULT_CONFIG.adx_min),
+      atr_sl_mult: Number(document.getElementById('atr_sl_mult').value || DEFAULT_CONFIG.atr_sl_mult),
+      atr_tp_mult: Number(document.getElementById('atr_tp_mult').value || DEFAULT_CONFIG.atr_tp_mult),
+      pull_min: Number(document.getElementById('pull_min').value || DEFAULT_CONFIG.pull_range[0]),
+      pull_max: Number(document.getElementById('pull_max').value || DEFAULT_CONFIG.pull_range[1]),
+      risk_pct: Number(document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct),
+      outputsize: 5000,
+      balance: 10000
+    };
     let data;
-    try { data = await apiJson('/run_backtest', { method: 'POST' }); }
-    catch (e1) { data = await apiJson('/api/backtest', { method: 'POST' }); }
+    try { data = await apiFetch('/api/backtest', { method: 'POST', body: JSON.stringify(body) }); }
+    catch (e1) { data = await apiFetch('/run_backtest', { method: 'POST', body: JSON.stringify(body) }); }
     updateUIFromResult(data);
     document.getElementById('progressBar').style.width = '100%';
     showAlert('Backtest finalizado.', 'ok');
@@ -414,8 +424,18 @@ async function runOptimize() {
   document.getElementById('progressBar').style.width = '12%';
   showAlert('Rodando otimização...', 'ok');
   try {
-    const data = await apiJson('/api/backtest/optimize', { method: 'POST' });
-    updateUIFromResult(data.best_result || data);
+    const fileInput = document.getElementById('csvFile');
+    const file = fileInput?.files?.[0];
+    if (!file) throw new Error('Selecione um arquivo para otimizar.');
+    const fd = buildFormDataForUpload();
+    const res = await fetch('/api/backtest/optimize', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: fd
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Falha na otimização');
+    updateUIFromResult(data.best || data.best_result || data);
     document.getElementById('progressBar').style.width = '100%';
     showAlert('Otimização concluída.', 'ok');
     setConnection(true);
@@ -427,5 +447,7 @@ async function runOptimize() {
 }
 
 loadConfig();
-</script></body>
+refreshStatus();
+</script>
+</body>
 </html>
