@@ -40,7 +40,8 @@ HEARTBEAT_INTERVAL  = 3600          # 1 h
 DAILY_REPORT_HOUR   = 21            # 21:00 UTC
 WEEK_SECS           = 7  * 24 * 3600
 MONTH_SECS          = 30 * 24 * 3600
-SCAN_INTERVAL       = 60            # Padrão do Config
+SCAN_INTERVAL       = 15           # scan contínuo (em cache)
+TELEGRAM_POLL_INTERVAL = 1.0        # resposta rápida aos comandos
 STARTUP_NOTIFICATION = True
 
 # Agendador de tarefas assíncronas
@@ -334,26 +335,68 @@ def _schedule_monthly_analysis(bot):
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def telegram_loop(bot):
+    """Loop dedicado aos comandos do Telegram para resposta rápida."""
+    last_poll = 0.0
+    while True:
+        try:
+            now = time.time()
+            if now - last_poll >= TELEGRAM_POLL_INTERVAL:
+                if getattr(bot, 'telegram_desk', None):
+                    bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
+                else:
+                    url = (
+                        f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
+                        f"/getUpdates?offset={bot.last_id + 1}&timeout=1"
+                    )
+                    resp = requests.get(url, timeout=3).json()
+                    if resp.get("result"):
+                        for u in resp["result"]:
+                            if "message" in u and "text" in u["message"]:
+                                txt = u["message"]["text"].strip().lower()
+                                if txt in ("/confluencia", "/confluência"):
+                                    _send_confluence_report(bot)
+                                elif txt == "/status":
+                                    send_heartbeat(bot)
+                            bot.last_id = u.get("update_id", bot.last_id)
+                last_poll = now
+        except Exception as e:
+            log(f"[TELEGRAM] Erro ao buscar updates: {e}")
+        time.sleep(0.5)
+
+
+def market_scan_loop(bot):
+    """Loop dedicado ao scan de mercado com dados em cache."""
+    last_scan = 0.0
+    while True:
+        try:
+            now = time.time()
+            if now - last_scan >= SCAN_INTERVAL:
+                scan(bot)
+                last_scan = now
+        except Exception as e:
+            log(f"[SCAN] Erro no loop de análise: {e}")
+        time.sleep(1)
+
+
 def bot_loop(bot):
-    """Loop principal otimizado sem bloqueios de API (agora em scheduler)."""
+    """Loop leve: heartbeat e relatórios, sem bloquear análise nem Telegram."""
     last_heartbeat = 0.0
     last_daily_report = None
 
     while True:
         now = datetime.now(timezone.utc)
 
-        # ── HEARTBEAT ──
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
                 from ai_validator import check_live_regime, load_ai_params
                 regime_info = check_live_regime(bot)
-                ai_p        = load_ai_params()
+                ai_p = load_ai_params()
                 send_heartbeat(bot, regime_info, ai_p)
                 last_heartbeat = time.time()
             except Exception as e:
                 log(f"[HEARTBEAT] Erro: {e}")
 
-        # ── RELATÓRIO DIÁRIO ──
         if now.hour == DAILY_REPORT_HOUR and last_daily_report != now.date():
             try:
                 send_daily_report(bot)
@@ -361,47 +404,7 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
 
-        # ── COMANDOS TELEGRAM (rápido, antes da varredura) ──
-        try:
-            if getattr(bot, 'telegram_desk', None):
-                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
-        except Exception as e:
-            log(f"[TELEGRAM] Erro ao buscar updates (pré-scan): {e}")
-
-        # ── SCAN / MONITOR (BLOCKING) ──
-        # ── COMANDOS TELEGRAM (pós-scan, pega respostas rápidas) ──
-        try:
-            if getattr(bot, 'telegram_desk', None):
-                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
-            else:
-                url  = (
-                    f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
-                    f"/getUpdates?offset={bot.last_id + 1}&timeout=1"
-                )
-                resp = requests.get(url, timeout=3).json()
-                if "result" in resp:
-                    for u in resp["result"]:
-                        if "message" in u and "text" in u["message"]:
-                            txt = u["message"]["text"].strip()
-
-                            if txt in ("/confluencia", "/confluência"):
-                                _send_confluence_report(bot)
-
-                            elif txt == "/status":
-                                send_heartbeat(bot)
-
-                        bot.last_id = u["update_id"]
-        except Exception as e:
-            log(f"[TELEGRAM] Erro ao buscar updates: {e}")
-
-        # segunda checagem rápida do Telegram após monitorar sinais
-        try:
-            if getattr(bot, 'telegram_desk', None):
-                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
-        except Exception as e:
-            log(f"[TELEGRAM] Erro ao buscar updates (pós-scan): {e}")
-
-        time.sleep(Config.SCAN_INTERVAL)
+        time.sleep(1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -454,8 +457,10 @@ def main():
     scheduler_thread.start()
     log("[SCHEDULER] Thread agendadora iniciada")
 
-    # 5. Inicia loop principal em thread separada
-    log("[BOT] Iniciando loop principal")
+    # 5. Inicia loops separados: scan, Telegram e monitoramento
+    log("[BOT] Iniciando loops de análise e Telegram")
+    threading.Thread(target=market_scan_loop, args=(bot,), daemon=True, name="market-scan").start()
+    threading.Thread(target=telegram_loop, args=(bot,), daemon=True, name="telegram-loop").start()
     threading.Thread(target=bot_loop, args=(bot,), daemon=True, name="bot-loop").start()
 
     # 6. Sobe API Flask

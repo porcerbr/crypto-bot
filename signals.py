@@ -540,6 +540,12 @@ def get_confluence_snapshot() -> list[dict]:
     """
     global _snapshot_cache, _snapshot_ts
 
+    # Proteção extra contra reload parcial / estado incompleto do módulo
+    if "_snapshot_cache" not in globals():
+        _snapshot_cache = []
+    if "_snapshot_ts" not in globals():
+        _snapshot_ts = 0.0
+
     if time.time() - _snapshot_ts < _SNAPSHOT_TTL and _snapshot_cache:
         return _snapshot_cache
 
@@ -576,6 +582,7 @@ def get_confluence_snapshot() -> list[dict]:
             })
         except Exception as e:
             log(f"[SNAPSHOT] Erro em {sym}: {e}")
+            continue
 
     results.sort(key=lambda x: x["best_score"], reverse=True)
     _snapshot_cache = results
