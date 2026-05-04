@@ -1,0 +1,22 @@
+{
+  "min_confluence": 5,
+  "blocked_pairs": [],
+  "session_strictness": "normal",
+  "min_adx": 16,
+  "min_rr": 1.4,
+  "last_suggestion": null,
+  "market_regime": "neutral",
+  "regime_pairs": {},
+  "favored_sessions": [
+    "London Open",
+    "NY Open"
+  ],
+  "avoid_hours_utc": [],
+  "strategy_bias": "aggressive",
+  "opus_summary": null,
+  "opus_updated_at": null,
+  "live_regime": "neutral",
+  "live_adx_avg": 0,
+  "live_confluence": 5,
+  "updated_at": "2026-05-04T00:00:00Z"
+}

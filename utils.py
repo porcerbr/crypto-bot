@@ -149,21 +149,22 @@ def get_trade_limit_override():
 
 STRATEGY_SETTINGS_FILE = "strategy_settings.json"
 DEFAULT_STRATEGY_SETTINGS = {
-    "profile": "hedge_fund",
-    "min_confluence": 5,
-    "adx_min": 18.0,
-    "atr_sl_mult": 1.5,
-    "atr_tp_mult": 3.5,
-    "pull_min": -1.0,
-    "pull_max": 2.0,
-    "risk_pct": 1.5,
-    "weekly_trade_target": 3.0,
-    "min_rr": 1.8,
-    "trend_adx": 25.0,
-    "range_adx": 18.0,
-    "warmup_bars": 80,
-    "max_bars_in_trade": 60,
-    "optimization_mode": "robust",
+    "mode": "aggressive",
+    "min_confluence": 4,
+    "adx_min": 16.0,
+    "atr_sl_mult": 1.4,
+    "atr_tp_mult": 2.8,
+    "pull_min": -1.5,
+    "pull_max": 2.5,
+    "risk_pct": 1.0,
+    "min_rr": 1.4,
+    "min_trades_per_week": 3,
+    "max_trades_per_day": 2,
+    "require_regime_filter": True,
+    "use_multi_asset": True,
+    "use_multi_timeframe": True,
+    "assets": list(Config.FXGOLD_ASSETS.keys()),
+    "timeframes": ["1h", "4h", "1D"],
 }
 
 def _normalize_strategy_settings(data: dict | None) -> dict:
@@ -183,7 +184,6 @@ def _normalize_strategy_settings(data: dict | None) -> dict:
         except (TypeError, ValueError):
             return default
 
-    base["profile"] = str(data.get("profile", base["profile"])) or base["profile"]
     base["min_confluence"] = max(1, min(20, _int("min_confluence", base["min_confluence"])))
     base["adx_min"] = max(0.0, _float("adx_min", base["adx_min"]))
     base["atr_sl_mult"] = max(0.1, _float("atr_sl_mult", base["atr_sl_mult"]))
@@ -193,13 +193,25 @@ def _normalize_strategy_settings(data: dict | None) -> dict:
     if base["pull_min"] > base["pull_max"]:
         base["pull_min"], base["pull_max"] = base["pull_max"], base["pull_min"]
     base["risk_pct"] = max(0.1, min(10.0, _float("risk_pct", base["risk_pct"])))
-    base["weekly_trade_target"] = max(0.5, min(20.0, _float("weekly_trade_target", base["weekly_trade_target"])))
-    base["min_rr"] = max(0.5, min(10.0, _float("min_rr", base["min_rr"])))
-    base["trend_adx"] = max(5.0, _float("trend_adx", base["trend_adx"]))
-    base["range_adx"] = max(5.0, _float("range_adx", base["range_adx"]))
-    base["warmup_bars"] = max(20, min(500, _int("warmup_bars", base["warmup_bars"])))
-    base["max_bars_in_trade"] = max(5, min(500, _int("max_bars_in_trade", base["max_bars_in_trade"])))
-    base["optimization_mode"] = str(data.get("optimization_mode", base["optimization_mode"])) or base["optimization_mode"]
+    base["min_rr"] = max(1.0, min(5.0, _float("min_rr", base.get("min_rr", 1.4))))
+    base["min_trades_per_week"] = max(0, min(50, _int("min_trades_per_week", base.get("min_trades_per_week", 3))))
+    base["max_trades_per_day"] = max(1, min(20, _int("max_trades_per_day", base.get("max_trades_per_day", 2))))
+    base["require_regime_filter"] = bool(data.get("require_regime_filter", base.get("require_regime_filter", True)))
+    base["use_multi_asset"] = bool(data.get("use_multi_asset", base.get("use_multi_asset", True)))
+    base["use_multi_timeframe"] = bool(data.get("use_multi_timeframe", base.get("use_multi_timeframe", True)))
+    assets = data.get("assets", base.get("assets", []))
+    if isinstance(assets, list) and assets:
+        base["assets"] = [s for s in assets if s in Config.FXGOLD_ASSETS]
+        if not base["assets"]:
+            base["assets"] = list(Config.FXGOLD_ASSETS.keys())
+    timeframes = data.get("timeframes", base.get("timeframes", ["1h", "4h", "1D"]))
+    if isinstance(timeframes, list) and timeframes:
+        cleaned = []
+        for tf in timeframes:
+            tf = str(tf).strip()
+            if tf:
+                cleaned.append(tf)
+        base["timeframes"] = cleaned or ["1h", "4h", "1D"]
     return base
 
 def load_strategy_settings() -> dict:

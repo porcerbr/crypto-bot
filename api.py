@@ -89,8 +89,6 @@ def create_api(bot):
                 if candidate.exists() and candidate.is_file():
                     html = candidate.read_text(encoding="utf-8")
                     if html.strip():
-                        token = Config.DASHBOARD_API_TOKEN or ""
-                        html = html.replace("__DASHBOARD_API_TOKEN__", token)
                         return html
             except Exception:
                 continue
@@ -528,14 +526,11 @@ def create_api(bot):
             from csv_parser import parse_investing_csv, detect_symbol
             from backtester import run_backtest, bars_from_dicts, detect_timeframe
 
-            # Lê arquivo (aceita múltiplos nomes para compatibilidade com diferentes frontends)
-            file = None
-            for key in ("csv", "file", "upload", "csv_file"):
-                if key in request.files and request.files[key]:
-                    file = request.files[key]
-                    break
-            if file is None:
-                return jsonify({"ok": False, "error": "Nenhum arquivo CSV enviado (campos aceitos: csv, file, upload, csv_file)"}), 400
+            # Lê arquivo
+            if "csv" not in request.files:
+                return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
+
+            file    = request.files["csv"]
             content = file.read()
             if not content:
                 return jsonify({"ok": False, "error": "Arquivo vazio"}), 400
@@ -566,6 +561,7 @@ def create_api(bot):
             pull_min       = float(request.form.get("pull_min",       strategy["pull_min"]))
             pull_max       = float(request.form.get("pull_max",       strategy["pull_max"]))
             risk_pct       = float(request.form.get("risk_pct",       strategy["risk_pct"]))
+            min_rr         = float(request.form.get("min_rr",         strategy.get("min_rr", 1.4)))
 
             bars = bars_from_dicts(raw_bars)
             tf   = detect_timeframe(bars)
@@ -580,6 +576,7 @@ def create_api(bot):
                 atr_tp_mult=atr_tp_mult,
                 pull_range=(pull_min, pull_max),
                 risk_pct=risk_pct,
+                min_rr=min_rr,
             )
 
             m  = result.metrics
@@ -613,8 +610,6 @@ def create_api(bot):
                     "initial_balance":  m.get("initial_balance",  balance),
                     "current_balance":  m.get("current_balance",  balance),
                     "total_pnl":        m.get("total_pnl",        0),
-                    "trade_frequency_per_week": m.get("trade_frequency_per_week", 0),
-                    "avg_bars_per_trade":       m.get("avg_bars_per_trade", 0),
                 },
                 "equity_curve": ec,
                 "trades":        result.trades[-100:],
@@ -653,13 +648,10 @@ def create_api(bot):
         except Exception as e:
             return jsonify({"ok": False, "error": f"Erro ao carregar dependências: {e}"}), 500
 
-        file = None
-        for key in ("csv", "file", "upload", "csv_file"):
-            if key in request.files and request.files[key]:
-                file = request.files[key]
-                break
-        if file is None:
-            return jsonify({"ok": False, "error": "Nenhum arquivo CSV enviado (campos aceitos: csv, file, upload, csv_file)"}), 400
+        if "csv" not in request.files:
+            return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
+
+        file = request.files["csv"]
         content = file.read()
         if not content:
             return jsonify({"ok": False, "error": "Arquivo vazio"}), 400
@@ -685,12 +677,13 @@ def create_api(bot):
             (strategy["pull_min"] - 1.0, strategy["pull_max"] + 1.0),
         ]
         risk_pcts = [max(0.5, strategy["risk_pct"] - 0.5), strategy["risk_pct"], min(5.0, strategy["risk_pct"] + 0.5)]
+        min_rrs = [max(1.0, strategy.get("min_rr", 1.4) - 0.2), strategy.get("min_rr", 1.4), min(3.5, strategy.get("min_rr", 1.4) + 0.2)]
 
         best = None
         leaderboard = []
         evaluated_total = 0
-        combos = itertools.product(min_confluences, adx_mins, atr_sls, atr_tps, pull_sets, risk_pcts)
-        for i, (mc, adx, slm, tpm, pr, rp) in enumerate(combos, 1):
+        combos = itertools.product(min_confluences, adx_mins, atr_sls, atr_tps, pull_sets, risk_pcts, min_rrs)
+        for i, (mc, adx, slm, tpm, pr, rp, rr) in enumerate(combos, 1):
             evaluated_total += 1
             try:
                 result = run_backtest(
@@ -703,12 +696,10 @@ def create_api(bot):
                     atr_tp_mult=float(tpm),
                     pull_range=pr,
                     risk_pct=float(rp),
+                    min_rr=float(rr),
                 )
                 m = result.metrics
-                target_week = float(strategy.get("weekly_trade_target", 3.0))
-                freq = float(m.get("trade_frequency_per_week", 0) or 0)
-                freq_score = max(0.0, 1.0 - abs(freq - target_week) / max(1.0, target_week))
-                score = (m.get("total_pnl", 0) * 0.9) + (float(m.get("profit_factor", 0) or 0) * 120) + (float(m.get("winrate", 0) or 0) * 8) + (float(m.get("expectancy", 0) or 0) * 2) + (freq_score * 150) - (float(m.get("max_drawdown_pct", 0) or 0) * 10)
+                score = (m.get("total_pnl", 0) * 1.0) + (m.get("profit_factor", 0) * 150) + (m.get("winrate", 0) * 10) - (m.get("max_drawdown_pct", 0) * 12) + (m.get("total_trades", 0) * 2)
                 item = {
                     "min_confluence": int(mc),
                     "adx_min": float(adx),
@@ -716,6 +707,7 @@ def create_api(bot):
                     "atr_tp_mult": float(tpm),
                     "pull_range": [float(pr[0]), float(pr[1])],
                     "risk_pct": float(rp),
+                    "min_rr": float(rr),
                     "score": round(score, 2),
                     "metrics": m,
                 }
@@ -832,6 +824,7 @@ def create_api(bot):
             pull_min       = float(body.get("pull_min",     strategy["pull_min"]))
             pull_max       = float(body.get("pull_max",     strategy["pull_max"]))
             risk_pct       = float(body.get("risk_pct",     strategy["risk_pct"]))
+            min_rr         = float(body.get("min_rr",       strategy.get("min_rr", 1.4)))
 
             # Limites de segurança
             outputsize = max(200, min(outputsize, 5000))
@@ -883,6 +876,7 @@ def create_api(bot):
                 atr_tp_mult=atr_tp_mult,
                 pull_range=(pull_min, pull_max),
                 risk_pct=risk_pct,
+                min_rr=min_rr,
                 warmup_bars=60,
             )
 
@@ -921,8 +915,6 @@ def create_api(bot):
                     "initial_balance":  m.get("initial_balance",  balance),
                     "current_balance":  m.get("current_balance",  balance),
                     "total_pnl":        m.get("total_pnl",        0),
-                    "trade_frequency_per_week": m.get("trade_frequency_per_week", 0),
-                    "avg_bars_per_trade":       m.get("avg_bars_per_trade", 0),
                 },
                 "equity_curve": ec,
                 "trades":        result.trades[-50:],

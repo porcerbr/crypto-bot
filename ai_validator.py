@@ -75,22 +75,22 @@ def _fallback_ai_response(h1: dict, direction: str) -> tuple[int, str]:
 
 def load_ai_params() -> dict:
     defaults = {
-        "min_confluence":     7,
+        "min_confluence":     5,
         "blocked_pairs":      [],
         "session_strictness": "normal",
-        "min_adx":            20,
-        "min_rr":             1.5,
+        "min_adx":            16,
+        "min_rr":             1.4,
         "last_suggestion":    None,
         "market_regime":      "neutral",
         "regime_pairs":       {},
-        "favored_sessions":   [],
+        "favored_sessions":   ["London Open", "NY Open"],
         "avoid_hours_utc":    [],
-        "strategy_bias":      "balanced",
+        "strategy_bias":      "aggressive",
         "opus_summary":       None,
         "opus_updated_at":    None,
         "live_regime":        "neutral",
         "live_adx_avg":       0,
-        "live_confluence":    7,
+        "live_confluence":    5,
         "updated_at":         None,
     }
     if not os.path.exists(AI_PARAMS_FILE):
@@ -559,7 +559,7 @@ Análise estratégica vigente: {params.get('opus_summary') or 'ainda não dispon
     if result is None:
         return None
 
-    params["min_confluence"]     = max(6, min(9, int(result.get("min_confluence", params["min_confluence"]))))
+    params["min_confluence"]     = max(4, min(8, int(result.get("min_confluence", params["min_confluence"]))))
     params["blocked_pairs"]      = list(result.get("blocked_pairs", []))
     params["session_strictness"] = result.get("session_strictness", "normal")
     params["min_adx"]            = max(15, min(30, int(result.get("min_adx", params["min_adx"]))))
@@ -748,7 +748,7 @@ def check_live_regime(bot) -> dict:
             continue
 
     params    = load_ai_params()
-    base_conf = params.get("min_confluence", 7)
+    base_conf = params.get("min_confluence", 5)
 
     if len(adx_values) < 3:
         log(f"[REGIME] Dados insuficientes ({len(adx_values)}/3 pares) — mantendo regime anterior")
