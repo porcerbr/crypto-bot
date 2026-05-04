@@ -29,6 +29,8 @@ from utils import (
     save_trade_settings,
     get_trade_limit_override,
     get_dynamic_max_trades,
+    load_strategy_settings,
+    save_strategy_settings,
 )
 
 
@@ -550,8 +552,15 @@ def create_api(bot):
             if symbol not in TD_SYMBOLS and symbol not in ["USDCHF"]:
                 symbol = detect_symbol(raw_bars, filename=file.filename or "") or "EURUSD"
 
+            strategy = load_strategy_settings()
             balance        = float(request.form.get("balance",       Config.INITIAL_BALANCE))
-            min_confluence = int(request.form.get("min_confluence",  5))
+            min_confluence = int(request.form.get("min_confluence",  strategy["min_confluence"]))
+            adx_min        = float(request.form.get("adx_min",        strategy["adx_min"]))
+            atr_sl_mult    = float(request.form.get("atr_sl_mult",    strategy["atr_sl_mult"]))
+            atr_tp_mult    = float(request.form.get("atr_tp_mult",    strategy["atr_tp_mult"]))
+            pull_min       = float(request.form.get("pull_min",       strategy["pull_min"]))
+            pull_max       = float(request.form.get("pull_max",       strategy["pull_max"]))
+            risk_pct       = float(request.form.get("risk_pct",       strategy["risk_pct"]))
 
             bars = bars_from_dicts(raw_bars)
             tf   = detect_timeframe(bars)
@@ -561,6 +570,11 @@ def create_api(bot):
                 symbol=symbol,
                 initial_balance=balance,
                 min_confluence=min_confluence,
+                adx_min=adx_min,
+                atr_sl_mult=atr_sl_mult,
+                atr_tp_mult=atr_tp_mult,
+                pull_range=(pull_min, pull_max),
+                risk_pct=risk_pct,
             )
 
             m  = result.metrics
@@ -608,6 +622,107 @@ def create_api(bot):
             except Exception:
                 print(f"[BACKTEST-UPLOAD] Erro: {e}\n{_tb}")
             return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
+
+    @app.route("/api/strategy-config", methods=["GET", "POST"])
+    @require_auth
+    def strategy_config():
+        if request.method == "GET":
+            data = load_strategy_settings()
+            return jsonify({"ok": True, "settings": data})
+
+        payload = request.get_json(force=True, silent=True) or {}
+        saved = save_strategy_settings(payload)
+        return jsonify({"ok": True, "message": "Configuração estratégica salva", "settings": saved})
+
+    @app.route("/api/backtest/optimize", methods=["POST"])
+    @require_auth
+    def optimize_backtest():
+        """Grid search leve para achar configuração melhor no CSV enviado."""
+        try:
+            from csv_parser import parse_investing_csv, detect_symbol
+            from backtester import run_backtest, bars_from_dicts, detect_timeframe
+            from datetime import datetime, timezone
+            import itertools
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Erro ao carregar dependências: {e}"}), 500
+
+        if "csv" not in request.files:
+            return jsonify({"ok": False, "error": "Nenhum arquivo 'csv' enviado"}), 400
+
+        file = request.files["csv"]
+        content = file.read()
+        if not content:
+            return jsonify({"ok": False, "error": "Arquivo vazio"}), 400
+
+        raw_bars = parse_investing_csv(content)
+        if len(raw_bars) < 100:
+            return jsonify({"ok": False, "error": f"Apenas {len(raw_bars)} barras válidas"}), 400
+
+        symbol = (request.form.get("symbol") or "").upper().strip() or detect_symbol(raw_bars, filename=file.filename or "") or "EURUSD"
+        bars = bars_from_dicts(raw_bars)
+        tf = detect_timeframe(bars)
+        balance = float(request.form.get("balance", Config.INITIAL_BALANCE))
+
+        strategy = load_strategy_settings()
+        # Grid compacta e rápida
+        min_confluences = [max(1, strategy["min_confluence"] - 1), strategy["min_confluence"], min(6, strategy["min_confluence"] + 1)]
+        adx_mins = [max(10.0, strategy["adx_min"] - 3), strategy["adx_min"], strategy["adx_min"] + 3]
+        atr_sls = [round(max(0.8, strategy["atr_sl_mult"] - 0.3), 2), strategy["atr_sl_mult"], round(strategy["atr_sl_mult"] + 0.3, 2)]
+        atr_tps = [round(max(1.0, strategy["atr_tp_mult"] - 0.5), 2), strategy["atr_tp_mult"], round(strategy["atr_tp_mult"] + 0.5, 2)]
+        pull_sets = [
+            (strategy["pull_min"], strategy["pull_max"]),
+            (strategy["pull_min"] - 0.5, strategy["pull_max"] + 0.5),
+            (strategy["pull_min"] - 1.0, strategy["pull_max"] + 1.0),
+        ]
+        risk_pcts = [max(0.5, strategy["risk_pct"] - 0.5), strategy["risk_pct"], min(5.0, strategy["risk_pct"] + 0.5)]
+
+        best = None
+        leaderboard = []
+        evaluated_total = 0
+        combos = itertools.product(min_confluences, adx_mins, atr_sls, atr_tps, pull_sets, risk_pcts)
+        for i, (mc, adx, slm, tpm, pr, rp) in enumerate(combos, 1):
+            evaluated_total += 1
+            try:
+                result = run_backtest(
+                    bars,
+                    symbol=symbol,
+                    initial_balance=balance,
+                    min_confluence=int(mc),
+                    adx_min=float(adx),
+                    atr_sl_mult=float(slm),
+                    atr_tp_mult=float(tpm),
+                    pull_range=pr,
+                    risk_pct=float(rp),
+                )
+                m = result.metrics
+                score = (m.get("total_pnl", 0) * 1.0) + (m.get("profit_factor", 0) * 150) + (m.get("winrate", 0) * 10) - (m.get("max_drawdown_pct", 0) * 12)
+                item = {
+                    "min_confluence": int(mc),
+                    "adx_min": float(adx),
+                    "atr_sl_mult": float(slm),
+                    "atr_tp_mult": float(tpm),
+                    "pull_range": [float(pr[0]), float(pr[1])],
+                    "risk_pct": float(rp),
+                    "score": round(score, 2),
+                    "metrics": m,
+                }
+                leaderboard.append(item)
+                if best is None or score > best["score"]:
+                    best = item
+            except Exception:
+                continue
+
+        leaderboard = sorted(leaderboard, key=lambda x: x["score"], reverse=True)[:10]
+        if best:
+            save_strategy_settings(best)
+        return jsonify({
+            "ok": True,
+            "symbol": symbol,
+            "timeframe": tf,
+            "evaluated": evaluated_total,
+            "best": best,
+            "top": leaderboard,
+        })
 
     @app.route("/api/backtest/test")
     @require_auth
@@ -693,10 +808,17 @@ def create_api(bot):
 
         try:
             body           = request.get_json(force=True, silent=True) or {}
+            strategy       = load_strategy_settings()
             symbol         = str(body.get("symbol",         "EURUSD")).upper().strip()
             outputsize     = int(body.get("outputsize",     5000))
             balance        = float(body.get("balance",      Config.INITIAL_BALANCE))
-            min_confluence = int(body.get("min_confluence", 6))
+            min_confluence = int(body.get("min_confluence", strategy["min_confluence"]))
+            adx_min        = float(body.get("adx_min",      strategy["adx_min"]))
+            atr_sl_mult    = float(body.get("atr_sl_mult",  strategy["atr_sl_mult"]))
+            atr_tp_mult    = float(body.get("atr_tp_mult",  strategy["atr_tp_mult"]))
+            pull_min       = float(body.get("pull_min",     strategy["pull_min"]))
+            pull_max       = float(body.get("pull_max",     strategy["pull_max"]))
+            risk_pct       = float(body.get("risk_pct",     strategy["risk_pct"]))
 
             # Limites de segurança
             outputsize = max(200, min(outputsize, 5000))
@@ -743,6 +865,11 @@ def create_api(bot):
                 symbol=symbol,
                 initial_balance=balance,
                 min_confluence=min_confluence,
+                adx_min=adx_min,
+                atr_sl_mult=atr_sl_mult,
+                atr_tp_mult=atr_tp_mult,
+                pull_range=(pull_min, pull_max),
+                risk_pct=risk_pct,
                 warmup_bars=60,
             )
 

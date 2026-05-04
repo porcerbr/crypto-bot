@@ -1,99 +1,91 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sniper Bot — Dashboard</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sniper Bot · Institutional Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root{
-      --bg:#0b1020; --panel:#11182b; --panel2:#0f1627; --line:#23304d; --text:#e9eef8; --muted:#91a0b7;
-      --green:#31c48d; --red:#f87171; --amber:#fbbf24; --blue:#60a5fa; --purple:#a78bfa;
-      --shadow:0 20px 60px rgba(0,0,0,.35); --r:20px;
+      --bg:#070b11; --bg2:#0c121a; --panel:rgba(15,23,36,.78); --panel2:#111a27; --line:rgba(148,163,184,.14);
+      --text:#e5eefb; --muted:#90a4bd; --green:#4ade80; --red:#fb7185; --amber:#fbbf24; --blue:#60a5fa; --cyan:#22d3ee; --violet:#a78bfa;
+      --shadow:0 20px 70px rgba(0,0,0,.35);
+      --radius:24px;
     }
     *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-      background:radial-gradient(circle at top,#14203a 0,#0b1020 55%);color:var(--text)
-    }
-    .wrap{max-width:1500px;margin:0 auto;padding:20px}
-    .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
-    .brand h1{margin:0;font-size:30px;letter-spacing:-.03em}
-    .brand p{margin:6px 0 0;color:var(--muted)}
-    .pill{
-      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);
-      border-radius:999px;background:rgba(255,255,255,.03);font-size:12px;color:var(--muted)
-    }
-    .pill strong{color:var(--text)}
-    .status{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .dot{width:10px;height:10px;border-radius:50%}
-    .ok{background:var(--green)} .warn{background:var(--amber)} .bad{background:var(--red)}
+    html,body{margin:0;min-height:100%;background:
+      radial-gradient(circle at top left, rgba(96,165,250,.16), transparent 28%),
+      radial-gradient(circle at top right, rgba(167,139,250,.14), transparent 22%),
+      linear-gradient(180deg,var(--bg),var(--bg2));
+      color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    body{padding:20px}
+    .wrap{max-width:1500px;margin:0 auto}
+    .topbar{display:flex;gap:14px;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap}
+    .brand{display:flex;flex-direction:column;gap:8px}
+    .brand h1{margin:0;font-size:30px;letter-spacing:.2px}
+    .brand p{margin:0;color:var(--muted);max-width:760px;line-height:1.45}
+    .status-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:flex-end}
+    .pill,.btn,.chip,.tag,.input,.select,textarea{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text)}
+    .pill{padding:10px 14px;border-radius:999px;display:flex;align-items:center;gap:8px;box-shadow:var(--shadow);backdrop-filter:blur(16px)}
+    .dot{width:10px;height:10px;border-radius:999px;background:#64748b;box-shadow:0 0 0 4px rgba(255,255,255,.04)}
+    .dot.ok{background:var(--green)} .dot.warn{background:var(--amber)} .dot.bad{background:var(--red)}
+    .btn{padding:11px 14px;border-radius:14px;cursor:pointer;font-weight:700;transition:.18s ease;box-shadow:var(--shadow)}
+    .btn:hover{transform:translateY(-1px);filter:brightness(1.05)}
+    .btn.primary{background:linear-gradient(135deg,#2563eb,#7c3aed);border-color:transparent}
+    .btn.good{background:linear-gradient(135deg,#0f9d58,#22c55e);border-color:transparent}
+    .btn.ghost{background:rgba(255,255,255,.03)}
     .grid{display:grid;gap:14px}
     .cards{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px}
-    .card{
-      background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
-      border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:18px
-    }
-    .stat .label{color:var(--muted);font-size:12px;margin-bottom:8px}
-    .stat .value{font-size:28px;font-weight:800;letter-spacing:-.03em}
-    .stat .sub{color:var(--muted);font-size:12px;margin-top:6px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
+    .metric{padding:18px 18px 16px}
+    .metric .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+    .metric .value{font-size:28px;font-weight:800;line-height:1.05}
+    .metric .sub{color:var(--muted);font-size:12px;margin-top:8px}
     .layout{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;align-items:start}
     .section{display:grid;gap:14px}
-    .section h2{margin:0 0 10px;font-size:16px;letter-spacing:-.02em}
-    .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-    button{
-      border:0;border-radius:14px;padding:10px 14px;font-weight:700;cursor:pointer;
-      background:#22314f;color:var(--text);transition:.2s ease
-    }
-    button:hover{transform:translateY(-1px)}
-    button:disabled{opacity:.45;cursor:not-allowed;transform:none}
-    .primary{background:linear-gradient(180deg,#2f6bff,#2959e5)}
-    .success{background:linear-gradient(180deg,#1fa971,#15845a)}
-    .danger{background:linear-gradient(180deg,#e25b5b,#b83c3c)}
-    .ghost{background:rgba(255,255,255,.04);border:1px solid var(--line)}
-    .control{width:100%;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font:inherit;outline:none}
-    .control:focus{border-color:rgba(47,107,255,.7);box-shadow:0 0 0 3px rgba(47,107,255,.14)}
-    input[type="checkbox"]{transform:scale(1.15)}
-    .muted{color:var(--muted)}
-    .list{display:grid;gap:10px}
-    .row{
-      display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;
-      border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.02)
-    }
-    .row .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .tag{
-      padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700;
-      background:rgba(255,255,255,.06);border:1px solid var(--line)
-    }
-    .tag.green{color:var(--green)} .tag.red{color:var(--red)} .tag.amber{color:var(--amber)}
-    .tag.blue{color:var(--blue)} .tag.purple{color:var(--purple)}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
-    th{color:#c8d4e3;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
-    .table-wrap{overflow:auto;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.02)}
-    .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .panel{padding:18px}
+    .panel h2{margin:0;font-size:18px}
+    .panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+    .subtle{color:var(--muted);font-size:12px}
+    .hr{height:1px;background:var(--line);margin:14px 0}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .field{display:flex;flex-direction:column;gap:7px}
+    .field label{font-size:12px;color:#bfd0e6;text-transform:uppercase;letter-spacing:.08em}
+    .input,.select,textarea{width:100%;padding:11px 12px;border-radius:14px;outline:none}
+    .input:focus,.select:focus,textarea:focus{border-color:rgba(96,165,250,.7);box-shadow:0 0 0 4px rgba(96,165,250,.08)}
+    .range-row{display:grid;grid-template-columns:120px 1fr 80px;gap:10px;align-items:center}
+    .range-row input[type=range]{width:100%}
+    .mini{font-size:12px;color:var(--muted)}
     .chips{display:flex;gap:8px;flex-wrap:wrap}
-    .footer{margin:18px 0 6px;color:var(--muted);font-size:12px;text-align:center}
-    .error{
-      display:none;margin-bottom:14px;padding:12px 14px;border:1px solid rgba(248,113,113,.35);
-      background:rgba(248,113,113,.09);color:#fecaca;border-radius:16px;white-space:pre-wrap
-    }
-    .tiny{font-size:12px;color:var(--muted)}
-    .assets-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-    .asset{
-      display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;
-      border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02)
-    }
-    .asset small{display:block;color:var(--muted);font-size:11px}
-    @media (max-width:1200px){
+    .chip{padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700}
+    .chip.green{color:var(--green)} .chip.red{color:var(--red)} .chip.amber{color:var(--amber)} .chip.blue{color:var(--blue)} .chip.violet{color:var(--violet)}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px}
+    table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.02)}
+    th,td{padding:10px 10px;border-bottom:1px solid rgba(148,163,184,.12);font-size:13px;text-align:left;white-space:nowrap}
+    th{font-size:11px;color:#c3d0e2;text-transform:uppercase;letter-spacing:.08em;background:rgba(255,255,255,.03)}
+    .list{display:grid;gap:10px}
+    .row-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
+    .row-item .title{font-weight:700}
+    .row-item .meta{color:var(--muted);font-size:12px;margin-top:4px}
+    .asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .asset{padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
+    .asset .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .asset small{display:block;color:var(--muted);margin-top:6px}
+    .canvas-card{padding:14px;height:420px}
+    #equityChart{width:100%;height:100%}
+    .error{display:none;padding:12px 14px;border-radius:16px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#fecaca;white-space:pre-wrap;margin-bottom:14px}
+    .ok{color:var(--green)} .bad{color:var(--red)} .muted{color:var(--muted)}
+    @media (max-width: 1240px){
       .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
       .layout{grid-template-columns:1fr}
-      .assets-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
     }
-    @media (max-width:720px){
+    @media (max-width: 760px){
+      body{padding:14px}
       .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .assets-grid{grid-template-columns:1fr}
-      .split{grid-template-columns:1fr}
+      .form-grid,.two-col,.asset-grid{grid-template-columns:1fr}
+      .range-row{grid-template-columns:1fr}
+      .canvas-card{height:340px}
     }
   </style>
 </head>
@@ -101,88 +93,137 @@
   <div class="wrap">
     <div class="topbar">
       <div class="brand">
-        <h1>Sniper Bot</h1>
-        <p>Dashboard operacional com seleção de ativos, sinais, histórico e IA.</p>
+        <h1>Sniper Bot · Institutional Dashboard</h1>
+        <p>Controle de estratégia, backtest histórico, otimização e execução em tempo real em uma única tela.</p>
       </div>
-      <div class="status">
-        <span class="pill"><span class="dot ok" id="dot-api"></span><strong id="api-state">API</strong> <span id="api-health">carregando</span></span>
-        <span class="pill"><strong id="mode">—</strong> <span id="timeframe">—</span></span>
+      <div class="status-row">
+        <span class="pill"><span class="dot" id="api-dot"></span><strong id="api-label">API</strong> <span id="api-state">carregando</span></span>
         <span class="pill"><strong id="updated-at">—</strong></span>
+        <span class="pill"><strong id="mode-label">—</strong> <span id="timeframe-label">—</span></span>
+        <button class="btn ghost" id="btn-token">Token</button>
+        <button class="btn primary" id="btn-refresh">Atualizar tudo</button>
       </div>
     </div>
 
     <div id="error-banner" class="error"></div>
 
     <div class="grid cards">
-      <div class="card stat"><div class="label">Saldo</div><div class="value" id="balance">—</div><div class="sub" id="balance-sub">Inicial: —</div></div>
-      <div class="card stat"><div class="label">Win Rate</div><div class="value" id="winrate">—</div><div class="sub" id="wr-sub">—</div></div>
-      <div class="card stat"><div class="label">Trades ativos</div><div class="value" id="active-count">—</div><div class="sub">P&L em tempo real</div></div>
-      <div class="card stat"><div class="label">Pendentes</div><div class="value" id="pending-count">—</div><div class="sub">Sinais aguardando execução</div></div>
-      <div class="card stat"><div class="label">Max trades</div><div class="value" id="max-trades">—</div><div class="sub">Limite dinâmico</div></div>
-      <div class="card stat"><div class="label">Confluência</div><div class="value" id="live-conf">—</div><div class="sub" id="ai-bias">—</div></div>
+      <div class="card metric"><div class="label">Saldo</div><div class="value" id="balance">—</div><div class="sub" id="balance-sub">Inicial: —</div></div>
+      <div class="card metric"><div class="label">Win Rate</div><div class="value" id="winrate">—</div><div class="sub" id="wr-sub">—</div></div>
+      <div class="card metric"><div class="label">Profit Factor</div><div class="value" id="pf">—</div><div class="sub" id="pf-sub">Expectancy: —</div></div>
+      <div class="card metric"><div class="label">Drawdown</div><div class="value" id="dd">—</div><div class="sub" id="dd-sub">Máx. drawdown</div></div>
+      <div class="card metric"><div class="label">Trades ativos</div><div class="value" id="active-count">—</div><div class="sub">P&amp;L em tempo real</div></div>
+      <div class="card metric"><div class="label">Pendentes</div><div class="value" id="pending-count">—</div><div class="sub">Fila de sinais</div></div>
     </div>
 
     <div class="layout">
       <div class="section">
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Seleção de ativos</h2>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Strategy Lab</h2>
+              <div class="subtle">Ajuste do motor de decisão que o backtest e a dashboard usam.</div>
+            </div>
             <div class="chips">
-              <button class="ghost" id="btn-refresh">Atualizar</button>
-              <button class="primary" id="btn-save-assets">Salvar ativos</button>
+              <span class="chip blue" id="strategy-chip">Carregando…</span>
+              <button class="btn good" id="btn-save-strategy">Salvar estratégia</button>
             </div>
           </div>
-          <div id="assets-meta" class="tiny" style="margin-bottom:10px">Carregando ativos…</div>
-          <div id="assets-grid" class="assets-grid"></div>
+          <div class="form-grid" style="margin-bottom:14px">
+            <div class="field">
+              <label>Min confluence</label>
+              <div class="range-row"><input id="min_confluence" class="input" type="number" min="1" max="20" step="1"><input id="min_confluence_range" type="range" min="1" max="20" step="1"><input id="min_confluence_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>ADX mínimo</label>
+              <div class="range-row"><input id="adx_min" class="input" type="number" min="0" max="60" step="0.5"><input id="adx_min_range" type="range" min="0" max="60" step="0.5"><input id="adx_min_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>ATR SL múltiplo</label>
+              <div class="range-row"><input id="atr_sl_mult" class="input" type="number" min="0.5" max="6" step="0.1"><input id="atr_sl_mult_range" type="range" min="0.5" max="6" step="0.1"><input id="atr_sl_mult_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>ATR TP múltiplo</label>
+              <div class="range-row"><input id="atr_tp_mult" class="input" type="number" min="0.5" max="10" step="0.1"><input id="atr_tp_mult_range" type="range" min="0.5" max="10" step="0.1"><input id="atr_tp_mult_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>Pullback mínimo</label>
+              <div class="range-row"><input id="pull_min" class="input" type="number" min="-10" max="10" step="0.1"><input id="pull_min_range" type="range" min="-10" max="10" step="0.1"><input id="pull_min_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>Pullback máximo</label>
+              <div class="range-row"><input id="pull_max" class="input" type="number" min="-10" max="10" step="0.1"><input id="pull_max_range" type="range" min="-10" max="10" step="0.1"><input id="pull_max_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>Risco por trade (%)</label>
+              <div class="range-row"><input id="risk_pct" class="input" type="number" min="0.1" max="10" step="0.1"><input id="risk_pct_range" type="range" min="0.1" max="10" step="0.1"><input id="risk_pct_val" class="input" type="text" readonly></div>
+            </div>
+            <div class="field">
+              <label>Saldo para backtest</label>
+              <input id="bt_balance" class="input" type="number" min="10" step="10" placeholder="1000">
+            </div>
+          </div>
+          <div class="two-col">
+            <div>
+              <div class="mini" style="margin-bottom:8px">Arquivo CSV de 5 anos</div>
+              <input id="csv_file" class="input" type="file" accept=".csv,.xls,.xlsx" />
+              <div class="mini" style="margin-top:8px">Você pode otimizar a configuração no histórico local enviado para a dashboard.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;align-items:stretch;justify-content:flex-end">
+              <button class="btn primary" id="btn-run-live">Rodar backtest no Twelve Data</button>
+              <button class="btn" id="btn-run-csv">Rodar backtest no CSV</button>
+              <button class="btn good" id="btn-optimize">Otimizar no CSV</button>
+            </div>
+          </div>
         </div>
 
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Limite de trades ativos</h2>
-            <span class="tag blue" id="trade-limit-mode">Auto</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Curva de capital</h2>
+              <div class="subtle">Equity curve do histórico recente.</div>
+            </div>
+            <span class="chip violet" id="equity-tag">—</span>
           </div>
-          <div class="tiny" style="margin-bottom:10px">Controle quantos trades podem ficar abertos ao mesmo tempo. O modo Auto usa o limite dinâmico por banca.</div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <select id="trade-limit-select" class="control" style="max-width:260px">
-              <option value="auto">Auto (dinâmico)</option>
-              <option value="1">1 trade ativo</option>
-              <option value="2">2 trades ativos</option>
-              <option value="3">3 trades ativos</option>
-              <option value="4">4 trades ativos</option>
-              <option value="5">5 trades ativos</option>
-              <option value="6">6 trades ativos</option>
-              <option value="7">7 trades ativos</option>
-              <option value="8">8 trades ativos</option>
-              <option value="9">9 trades ativos</option>
-              <option value="10">10 trades ativos</option>
-            </select>
-            <button class="primary" id="btn-save-trade-limit">Salvar limite</button>
-          </div>
-          <div class="tiny" style="margin-top:10px">
-            Atual: <strong id="trade-limit-current">—</strong> • Limite padrão: <strong id="trade-limit-default">—</strong>
-          </div>
+          <div class="canvas-card"><canvas id="equityChart"></canvas></div>
         </div>
 
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Trades ativos</h2>
-            <span class="tag blue" id="allowed-symbols">—</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Ativos</h2>
+              <div class="subtle">Selecione os símbolos liberados para a operação.</div>
+            </div>
+            <div class="chips">
+              <span class="chip blue" id="allowed-label">—</span>
+              <button class="btn" id="btn-save-assets">Salvar ativos</button>
+            </div>
+          </div>
+          <div id="asset-grid" class="asset-grid"></div>
+        </div>
+
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Trades ativos</h2>
+              <div class="subtle">Preço atual, distância até SL/TP e P&amp;L estimado.</div>
+            </div>
+            <span class="chip blue" id="trade-limit-mode">—</span>
           </div>
           <div id="active-trades" class="list"></div>
         </div>
 
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Histórico</h2>
-            <div class="chips">
-              <span class="tag green" id="wins-tag">0W</span>
-              <span class="tag red" id="losses-tag">0L</span>
-              <span class="tag amber" id="dd-tag">DD 0%</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Histórico</h2>
+              <div class="subtle">Últimos fechamentos.</div>
             </div>
+            <div class="chips"><span class="chip green" id="wins-tag">0W</span><span class="chip red" id="losses-tag">0L</span><span class="chip amber" id="dd-tag">DD 0%</span></div>
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Fechado</th><th>Ativo</th><th>Dir.</th><th>Resultado</th><th>P&L</th><th>Conf.</th></tr></thead>
+              <thead><tr><th>Fechado</th><th>Ativo</th><th>Dir.</th><th>Resultado</th><th>P&amp;L</th><th>Conf.</th></tr></thead>
               <tbody id="history-body"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
             </table>
           </div>
@@ -190,999 +231,504 @@
       </div>
 
       <div class="section">
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>IA e regime</h2>
-            <span class="tag purple" id="regime-badge">—</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Gestão operacional</h2>
+              <div class="subtle">Limite de simultâneos e atualização rápida.</div>
+            </div>
+            <span class="chip blue" id="trade-limit-current">—</span>
           </div>
-          <div class="split">
-            <div class="card" style="padding:14px;background:rgba(255,255,255,.02)"><div class="tiny">ADX médio</div><div style="font-size:24px;font-weight:800" id="adx-avg">—</div></div>
-            <div class="card" style="padding:14px;background:rgba(255,255,255,.02)"><div class="tiny">RR mínimo</div><div style="font-size:24px;font-weight:800" id="min-rr">—</div></div>
+          <div class="two-col">
+            <div class="field">
+              <label>Limite de trades ativos</label>
+              <select id="trade-limit-select" class="select">
+                <option value="auto">Auto (dinâmico)</option>
+                <option value="1">1 trade ativo</option>
+                <option value="2">2 trades ativos</option>
+                <option value="3">3 trades ativos</option>
+                <option value="4">4 trades ativos</option>
+                <option value="5">5 trades ativos</option>
+                <option value="6">6 trades ativos</option>
+                <option value="7">7 trades ativos</option>
+                <option value="8">8 trades ativos</option>
+                <option value="9">9 trades ativos</option>
+                <option value="10">10 trades ativos</option>
+              </select>
+            </div>
+            <div style="display:flex;align-items:flex-end"><button class="btn primary" id="btn-save-trade-limit">Salvar limite</button></div>
           </div>
-          <div style="margin-top:12px" class="tiny" id="ai-summary">Nenhuma informação de IA ainda.</div>
-          <div style="margin-top:10px" class="tiny" id="regime-summary"></div>
+          <div class="hr"></div>
+          <div class="two-col">
+            <div class="field"><label>Token da dashboard</label><input id="token_input" class="input" placeholder="Bearer token opcional"></div>
+            <div class="field"><label>Confluência ao vivo</label><input id="live_conf" class="input" readonly></div>
+          </div>
         </div>
 
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Confluência atual</h2>
-            <span class="tag green" id="conf-refresh">—</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Confluência e IA</h2>
+              <div class="subtle">Leitura do regime e do filtro inteligente.</div>
+            </div>
+            <span class="chip violet" id="regime-badge">—</span>
+          </div>
+          <div class="two-col">
+            <div class="card" style="padding:14px;background:rgba(255,255,255,.03)"><div class="mini">ADX médio</div><div style="font-size:26px;font-weight:800" id="adx-avg">—</div></div>
+            <div class="card" style="padding:14px;background:rgba(255,255,255,.03)"><div class="mini">RR mínimo</div><div style="font-size:26px;font-weight:800" id="min-rr">—</div></div>
+          </div>
+          <div style="margin-top:12px" id="ai-summary" class="subtle">Nenhuma leitura de IA ainda.</div>
+          <div style="margin-top:8px" id="regime-summary" class="subtle"></div>
+        </div>
+
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Confluência atual</h2>
+              <div class="subtle">Pressão de compra/venda e ativos bloqueados.</div>
+            </div>
+            <span class="chip green" id="conf-count">—</span>
           </div>
           <div id="confluence-list" class="list"></div>
         </div>
 
-        <div class="card">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>Sinais pendentes</h2>
-            <span class="tag amber" id="pending-meta">—</span>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Sinais pendentes</h2>
+              <div class="subtle">Ordens aguardando execução.</div>
+            </div>
+            <span class="chip amber" id="pending-meta">—</span>
           </div>
           <div id="pending-list" class="list"></div>
         </div>
-      </div>
-    </div>
 
-    <div class="card" style="margin-top:14px">
-      <div class="toolbar" style="justify-content:space-between">
-        <h2>Logs recentes</h2>
-        <span class="tag" id="log-count">—</span>
-      </div>
-      <div id="logs-list" class="list"></div>
-    </div>
-
-    <div class="card" style="margin-top:14px" id="backtest-card">
-      <div class="toolbar" style="justify-content:space-between">
-        <h2>📊 Backtest histórico</h2>
-        <span class="tag" id="bt-status-tag" style="display:none">—</span>
-      </div>
-
-      <!-- Abas: Twelve Data vs CSV Upload -->
-      <div style="display:flex;gap:8px;margin-bottom:16px">
-        <button id="bt-tab-live" onclick="btTab('live')"
-          style="flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff">
-          Twelve Data (7 meses)
-        </button>
-        <button id="bt-tab-csv" onclick="btTab('csv')"
-          style="flex:1;padding:9px;border-radius:10px;border:1px solid var(--line);font-size:13px;font-weight:600;cursor:pointer;background:var(--panel2);color:var(--muted)">
-          Upload CSV (5 anos)
-        </button>
-      </div>
-
-      <!-- Painel: Twelve Data -->
-      <div id="bt-panel-live">
-        <div class="tiny" style="margin-bottom:14px;color:var(--muted)">
-          Busca dados históricos H1 via Twelve Data (já configurado no bot).
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Par</div>
-            <select id="bt-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-              <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
-              <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
-              <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
-              <option>GBPJPY</option><option selected>XAUUSD</option>
-            </select>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Logs recentes</h2>
+              <div class="subtle">Eventos importantes do motor.</div>
+            </div>
+            <span class="chip blue" id="log-count">—</span>
           </div>
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Barras H1</div>
-            <select id="bt-period" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-              <option value="1000">~6 sem (1000)</option>
-              <option value="2000" selected>~3 meses (2000)</option>
-              <option value="5000">~7 meses (5000)</option>
-            </select>
-          </div>
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Saldo ($)</div>
-            <input id="bt-balance" type="number" value="150"
-              style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
-          </div>
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Confluência</div>
-            <select id="bt-confluence" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-              <option value="4">4</option><option value="5" selected>5</option>
-              <option value="6">6</option><option value="7">7</option>
-            </select>
-          </div>
-        </div>
-        <button id="btn-run-backtest" onclick="runBacktestLive()"
-          style="background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%">
-          ▶ Rodar Backtest
-        </button>
-      </div>
-
-      <!-- Painel: Upload CSV -->
-      <div id="bt-panel-csv" style="display:none">
-        <div class="tiny" style="margin-bottom:14px;color:var(--muted)">
-          Faça upload do CSV do Investing.com (formato PT-BR, barras semanais). O símbolo é autodetectado.
+          <div id="logs-list" class="list"></div>
         </div>
 
-        <!-- Drop zone -->
-        <div id="bt-dropzone"
-          style="border:2px dashed var(--line);border-radius:14px;padding:28px;text-align:center;cursor:pointer;margin-bottom:14px;transition:border-color .2s"
-          onclick="$('bt-file-input').click()"
-          ondragover="event.preventDefault();this.style.borderColor='#6366f1'"
-          ondragleave="this.style.borderColor='var(--line)'"
-          ondrop="btFileDrop(event)">
-          <div style="font-size:28px;margin-bottom:8px">📂</div>
-          <div style="font-size:13px;font-weight:600">Toque para selecionar o CSV</div>
-          <div id="bt-file-name" class="tiny" style="margin-top:6px;color:var(--muted)">Investing.com → Dados Históricos → Baixar</div>
-        </div>
-        <input type="file" id="bt-file-input" accept=".csv,.txt" style="display:none" onchange="btFileSelect(this)">
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Símbolo (ou auto)</div>
-            <select id="bt-csv-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-              <option value="">Autodetectar</option>
-              <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
-              <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
-              <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
-              <option>GBPJPY</option><option>XAUUSD</option>
-            </select>
+        <div class="card panel">
+          <div class="panel-head">
+            <div>
+              <h2>Resultado do backtest</h2>
+              <div class="subtle">Resumo do teste atual e melhores parâmetros encontrados.</div>
+            </div>
+            <span class="chip blue" id="bt-status-tag">—</span>
           </div>
-          <div>
-            <div class="tiny" style="margin-bottom:4px">Saldo ($)</div>
-            <input id="bt-csv-balance" type="number" value="150"
-              style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
+          <div id="bt-summary" class="subtle">Nenhum teste rodado ainda.</div>
+          <div class="hr"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Score</th><th>Confluência</th><th>ADX</th><th>ATR SL</th><th>ATR TP</th><th>Pullback</th><th>Risco</th></tr></thead>
+              <tbody id="best-table"><tr><td colspan="7" class="muted">Aguardando otimização…</td></tr></tbody>
+            </table>
           </div>
-        </div>
-        <button id="btn-run-csv" onclick="runBacktestCsv()"
-          style="background:linear-gradient(135deg,#10b981,#34d399);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%">
-          ▶ Rodar Backtest com CSV
-        </button>
-      </div>
-
-      <!-- Loader -->
-      <div id="bt-loading" style="display:none;text-align:center;padding:28px;color:var(--muted)">
-        <div style="font-size:32px;margin-bottom:8px">⏳</div>
-        <div id="bt-loading-msg" class="tiny">Processando...</div>
-      </div>
-
-      <!-- Erro -->
-      <div id="bt-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:14px;color:#f87171;font-size:13px;margin-top:14px"></div>
-
-      <!-- Resultados -->
-      <div id="bt-results" style="display:none;margin-top:18px">
-        <div id="bt-meta" class="tiny" style="margin-bottom:14px;color:var(--muted);text-align:center"></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px" id="bt-metrics-grid"></div>
-        <div id="bt-verdict" style="border-radius:14px;padding:14px 16px;margin-bottom:18px;font-size:13px;font-weight:600;text-align:center"></div>
-        <div style="margin-bottom:6px;font-size:13px;font-weight:700">Curva de equity</div>
-        <canvas id="bt-chart" height="180" style="width:100%;border-radius:12px;background:var(--panel2);display:block"></canvas>
-        <div style="margin:16px 0 8px;font-size:13px;font-weight:700">Trades</div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Par</th><th>Dir</th><th>Res</th><th>Entrada</th><th>Saída</th><th>P&L</th><th>Data</th></tr></thead>
-            <tbody id="bt-trades-body"></tbody>
-          </table>
         </div>
       </div>
     </div>
-
-    <div class="footer">Atualização automática a cada 15 segundos.</div>
-  </div>
-      <div class="toolbar" style="justify-content:space-between">
-        <h2>📊 Backtest histórico</h2>
-        <span class="tag" id="bt-status-tag" style="display:none">—</span>
-      </div>
-      <div class="tiny" style="margin-bottom:16px;color:var(--muted)">
-        Usa o Twelve Data (já configurado no bot) para baixar dados H1 reais e validar a estratégia no passado.
-      </div>
-
-      <!-- Controles -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px">
-        <div>
-          <div class="tiny" style="margin-bottom:4px">Par</div>
-          <select id="bt-symbol" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-            <option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option>
-            <option>AUDUSD</option><option>USDCAD</option><option>USDCHF</option>
-            <option>NZDUSD</option><option>EURGBP</option><option>EURJPY</option>
-            <option>GBPJPY</option><option selected>XAUUSD</option>
-          </select>
-        </div>
-        <div>
-          <div class="tiny" style="margin-bottom:4px">Histórico (barras H1)</div>
-          <select id="bt-period" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-            <option value="500">~3 semanas (500)</option>
-            <option value="1000">~6 semanas (1000)</option>
-            <option value="2000" selected>~3 meses (2000)</option>
-            <option value="3500">~5 meses (3500)</option>
-            <option value="5000">~7 meses (5000)</option>
-          </select>
-        </div>
-        <div>
-          <div class="tiny" style="margin-bottom:4px">Saldo inicial ($)</div>
-          <input id="bt-balance" type="number" min="100" max="100000" value="500"
-            style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;box-sizing:border-box">
-        </div>
-        <div>
-          <div class="tiny" style="margin-bottom:4px">Confluência mínima</div>
-          <select id="bt-confluence" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px">
-            <option value="4">4</option><option value="5">5</option>
-            <option value="6" selected>6</option><option value="7">7</option>
-            <option value="8">8</option>
-          </select>
-        </div>
-      </div>
-
-      <button id="btn-run-backtest" style="background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%;margin-bottom:18px">
-        ▶ Rodar Backtest
-      </button>
-
-      <!-- Loader -->
-      <div id="bt-loading" style="display:none;text-align:center;padding:24px;color:var(--muted)">
-        <div style="font-size:28px;margin-bottom:8px">⏳</div>
-        <div id="bt-loading-msg" class="tiny">Buscando dados históricos via Twelve Data...</div>
-      </div>
-
-      <!-- Erro -->
-      <div id="bt-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:14px;color:#f87171;font-size:13px;margin-bottom:16px"></div>
-
-      <!-- Resultados -->
-      <div id="bt-results" style="display:none">
-
-        <!-- Período analisado -->
-        <div id="bt-meta" class="tiny" style="margin-bottom:14px;color:var(--muted);text-align:center"></div>
-
-        <!-- Cards de métricas -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px" id="bt-metrics-grid"></div>
-
-        <!-- Avaliação geral -->
-        <div id="bt-verdict" style="border-radius:14px;padding:14px 16px;margin-bottom:18px;font-size:13px;font-weight:600;text-align:center"></div>
-
-        <!-- Curva de equity -->
-        <div style="margin-bottom:6px;font-size:13px;font-weight:700">Curva de equity</div>
-        <canvas id="bt-chart" height="180" style="width:100%;border-radius:12px;background:var(--panel2);display:block"></canvas>
-
-        <!-- Últimos trades -->
-        <div style="margin:16px 0 8px;font-size:13px;font-weight:700">Últimos trades simulados</div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr>
-              <th>Par</th><th>Dir</th><th>Resultado</th>
-              <th>Entrada</th><th>Saída</th><th>P&L</th><th>Data</th>
-            </tr></thead>
-            <tbody id="bt-trades-body"></tbody>
-          </table>
-        </div>
-
-      </div>
-    </div>
-
-    <div class="footer">Atualização automática a cada 15 segundos.</div>
   </div>
 
 <script>
-const API = '/api';
-const state = { assets: [], selected: [], allowed: [], ai: {}, status: {}, confluence: [], logs: [], tradeSettings: {} };
-
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? '')
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#39;');
+let equityChart = null;
+let currentSettings = null;
+let assetMap = [];
 
-function fmtMoney(v){
-  const n = Number(v || 0);
-  return (n >= 0 ? '$' : '-$') + Math.abs(n).toFixed(2);
-}
-function badgeColor(dir){ return String(dir || '').toUpperCase() === 'BUY' ? 'green' : 'red'; }
-function setError(msg){
+function showError(msg) {
   const el = $('error-banner');
-  if (!el) return;
-  if (!msg){ el.style.display = 'none'; el.textContent = ''; return; }
   el.style.display = 'block';
   el.textContent = msg;
 }
-
-async function requestJSON(url, opts = {}){
-  try{
-    const r = await fetch(url, {
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      ...opts
-    });
-    const raw = await r.text();
-    let data = null;
-    if (raw && raw.trim()){
-      try { data = JSON.parse(raw); }
-      catch { data = { raw }; }
-    } else {
-      data = null;
-    }
-    return { ok: r.ok, status: r.status, data };
-  }catch(err){
-    return { ok: false, status: 0, data: null, error: err?.message || String(err) };
+function clearError() {
+  const el = $('error-banner');
+  el.style.display = 'none';
+  el.textContent = '';
+}
+function fmtMoney(v) {
+  const n = Number(v || 0);
+  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
+}
+function fmtNum(v, d=2) {
+  const n = Number(v || 0);
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function tokenFromUrl() {
+  try {
+    const u = new URL(window.location.href);
+    return u.searchParams.get('token') || '';
+  } catch { return ''; }
+}
+function getToken() {
+  return $('token_input').value.trim() || localStorage.getItem('dashboard_token') || tokenFromUrl();
+}
+function setToken(v) {
+  $('token_input').value = v || '';
+  if (v) localStorage.setItem('dashboard_token', v); else localStorage.removeItem('dashboard_token');
+}
+function authHeaders(extra={}) {
+  const h = { ...extra };
+  const t = getToken();
+  if (t) h['Authorization'] = `Bearer ${t}`;
+  return h;
+}
+async function apiFetch(url, opts={}) {
+  const init = { ...opts };
+  init.headers = authHeaders(init.headers || {});
+  const resp = await fetch(url, init);
+  if (!resp.ok) {
+    let txt = '';
+    try { txt = await resp.text(); } catch {}
+    throw new Error(`HTTP ${resp.status} ${resp.statusText}${txt ? ` — ${txt}` : ''}`);
   }
+  return resp.json();
 }
-
-function setOffline(msg){
-  $('dot-api').className = 'dot bad';
-  $('api-health').textContent = 'offline';
-  setError(msg || 'Falha ao conectar na API.');
+function bindRange(name) {
+  const n = $(name);
+  const r = $(`${name}_range`);
+  const v = $(`${name}_val`);
+  const sync = (val) => { n.value = val; r.value = val; v.value = String(val); };
+  n.addEventListener('input', () => sync(n.value));
+  r.addEventListener('input', () => sync(r.value));
+  return sync;
 }
+const syncMinConfluence = bindRange('min_confluence');
+const syncAdx = bindRange('adx_min');
+const syncAtrSl = bindRange('atr_sl_mult');
+const syncAtrTp = bindRange('atr_tp_mult');
+const syncPullMin = bindRange('pull_min');
+const syncPullMax = bindRange('pull_max');
+const syncRisk = bindRange('risk_pct');
 
-async function loadHealth(){
-  const res = await requestJSON(API + '/health');
-  if (!res.ok || !res.data){
-    setOffline('Falha ao conectar na API.');
+function setStrategyValues(s) {
+  currentSettings = s;
+  syncMinConfluence(s.min_confluence);
+  syncAdx(s.adx_min);
+  syncAtrSl(s.atr_sl_mult);
+  syncAtrTp(s.atr_tp_mult);
+  syncPullMin(s.pull_min);
+  syncPullMax(s.pull_max);
+  syncRisk(s.risk_pct);
+  $('strategy-chip').textContent = `min ${s.min_confluence} · ADX ${fmtNum(s.adx_min,1)} · risco ${fmtNum(s.risk_pct,1)}%`;
+}
+function readStrategyValues() {
+  return {
+    min_confluence: Number($('min_confluence').value),
+    adx_min: Number($('adx_min').value),
+    atr_sl_mult: Number($('atr_sl_mult').value),
+    atr_tp_mult: Number($('atr_tp_mult').value),
+    pull_min: Number($('pull_min').value),
+    pull_max: Number($('pull_max').value),
+    risk_pct: Number($('risk_pct').value),
+  };
+}
+function renderMetric(id, val) { $(id).textContent = val; }
+function renderPill(id, val) { $(id).textContent = val; }
+function badgeClassForOutcome(text) {
+  const t = String(text || '').toUpperCase();
+  if (t.includes('WIN') || t.includes('BUY') || t.includes('ALTA') || t.includes('OK')) return 'ok';
+  if (t.includes('LOSS') || t.includes('SELL') || t.includes('BAIXA') || t.includes('ERROR')) return 'bad';
+  return 'warn';
+}
+function makeChart(curve) {
+  const ctx = $('equityChart');
+  const labels = (curve || []).map(x => x.t || x.i || '');
+  const data = (curve || []).map(x => Number(x.balance ?? x.y ?? 0));
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Equity',
+        data,
+        tension: 0.25,
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#9fb1c9', maxTicksLimit: 8 }, grid: { color: 'rgba(148,163,184,.08)' } },
+        y: { ticks: { color: '#9fb1c9' }, grid: { color: 'rgba(148,163,184,.08)' } },
+      }
+    }
+  });
+  $('equity-tag').textContent = `${data.length} pontos`;
+}
+function renderAssets(payload) {
+  assetMap = payload.assets || [];
+  $('allowed-label').textContent = `Liberados: ${(payload.allowed_symbols || []).length}`;
+  const selected = new Set(payload.selected_symbols || []);
+  $('asset-grid').innerHTML = assetMap.map(a => `
+    <label class="asset">
+      <div class="top">
+        <div>
+          <div style="font-weight:800">${a.symbol}</div>
+          <small>${a.name}</small>
+        </div>
+        <input type="checkbox" ${selected.has(a.symbol) ? 'checked' : ''} data-symbol="${a.symbol}" ${a.allowed ? '' : 'disabled'} />
+      </div>
+      <small>${a.allowed ? 'Permitido pela banca' : 'Bloqueado pela banca'}</small>
+    </label>`).join('');
+}
+function renderActiveTrades(items) {
+  $('active-count').textContent = String(items.length);
+  if (!items.length) {
+    $('active-trades').innerHTML = '<div class="subtle">Nenhum trade ativo.</div>';
     return;
   }
-  $('dot-api').className = 'dot ok';
-  $('api-state').textContent = 'API';
-  $('api-health').textContent = 'online';
-  $('mode').textContent = res.data.signal_only ? 'Signal only' : 'Live';
-  $('timeframe').textContent = res.data.signal_only ? 'Modo sinalizador' : '';
+  $('active-trades').innerHTML = items.map(t => `
+    <div class="row-item">
+      <div>
+        <div class="title">${t.symbol} · ${t.dir}</div>
+        <div class="meta">Entry ${fmtNum(t.entry, t.symbol === 'USDJPY' ? 3 : 5)} · SL ${fmtNum(t.sl, t.symbol === 'USDJPY' ? 3 : 5)} · TP ${fmtNum(t.tp, t.symbol === 'USDJPY' ? 3 : 5)}</div>
+        <div class="meta">${fmtNum(t.tp_progress, 1)}% até o TP · ${fmtNum(t.sl_dist_pips, 1)} pips do SL · ${fmtNum(t.tp_dist_pips, 1)} pips do TP</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:18px;font-weight:800;color:${Number(t.pnl) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(t.pnl)}</div>
+        <div class="meta">${fmtNum(t.pnl_pips, 1)} pips · ${fmtNum(t.pnl_pct, 1)}%</div>
+      </div>
+    </div>`).join('');
 }
-
-function renderStatus(status){
+function renderHistory(rows) {
+  $('history-body').innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td>${r.closed_at || ''}</td>
+      <td>${r.symbol || ''}</td>
+      <td>${r.dir || ''}</td>
+      <td><span class="chip ${badgeClassForOutcome(r.result)}">${r.result || ''}</span></td>
+      <td style="color:${Number(r.pnl) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(r.pnl)}</td>
+      <td>${fmtNum(r.score || r.ai_confidence || 0, 1)}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="muted">Sem histórico.</td></tr>';
+  const wins = Number(window.__metrics?.wins || 0);
+  const losses = Number(window.__metrics?.losses || 0);
+  $('wins-tag').textContent = `${wins}W`;
+  $('losses-tag').textContent = `${losses}L`;
+}
+function renderLogs(logs) {
+  $('log-count').textContent = `${logs.length}`;
+  $('logs-list').innerHTML = logs.length ? logs.map(l => `
+    <div class="row-item">
+      <div>
+        <div class="title">${l.type || 'log'}</div>
+        <div class="meta">${l.message || l.msg || JSON.stringify(l).slice(0, 160)}</div>
+      </div>
+      <div class="meta">${l.created_at || l.ts || ''}</div>
+    </div>`).join('') : '<div class="subtle">Sem logs recentes.</div>';
+}
+function renderPending(rows) {
+  $('pending-count').textContent = String(rows.length);
+  $('pending-meta').textContent = `${rows.length} pendentes`;
+  $('pending-list').innerHTML = rows.length ? rows.map(p => `
+    <div class="row-item">
+      <div>
+        <div class="title">${p.symbol || ''} · ${p.dir || p.direction || ''}</div>
+        <div class="meta">Conf. ${fmtNum(p.score || 0, 1)} / ${fmtNum(p.score_total || 0, 1)} · RR ${fmtNum(p.rr || 0, 2)}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ghost" onclick="rejectPending('${p.id || p.pending_id || ''}')">Rejeitar</button>
+        <button class="btn primary" onclick="executePending('${p.id || p.pending_id || ''}')">Executar</button>
+      </div>
+    </div>`).join('') : '<div class="subtle">Nenhum sinal pendente.</div>';
+}
+function renderConfluence(rows) {
+  $('conf-count').textContent = `${rows.length}`;
+  $('confluence-list').innerHTML = rows.length ? rows.map(r => `
+    <div class="row-item">
+      <div>
+        <div class="title">${r.symbol || ''} · ${r.direction || ''}</div>
+        <div class="meta">Score ${r.score || 0}/${r.max_score || 0} · ${r.regime || '—'} · ${r.setup_type || '—'}</div>
+      </div>
+      <div class="chips">
+        <span class="chip ${r.locked ? 'red' : 'green'}">${r.locked ? 'bloqueado' : 'liberado'}</span>
+        <span class="chip blue">${r.pass ? 'passou' : 'aguardando'}</span>
+      </div>
+    </div>`).join('') : '<div class="subtle">Sem leitura de confluência.</div>';
+}
+function renderAI(ai) {
+  $('regime-badge').textContent = ai.live_regime || 'neutral';
+  $('live_conf').value = ai.live_confluence ?? '';
+  $('strategy-chip').textContent = `min ${$('min_confluence').value} · ADX ${fmtNum($('adx_min').value,1)} · risco ${fmtNum($('risk_pct').value,1)}%`;
+  $('adx-avg').textContent = fmtNum(ai.live_adx_avg || 0, 1);
+  $('min-rr').textContent = fmtNum(ai.min_rr || 0, 2);
+  $('ai-summary').textContent = ai.opus_summary || '—';
+  $('regime-summary').textContent = ai.last_suggestion || '';
+}
+function fillTradeSettings(s) {
+  $('trade-limit-select').value = s.max_active_trades === null ? 'auto' : String(s.max_active_trades);
+  $('trade-limit-mode').textContent = s.max_active_trades === null ? 'Auto' : 'Manual';
+  $('trade-limit-current').textContent = s.max_active_trades === null ? 'Auto' : String(s.max_active_trades);
+}
+function fillStatus(status) {
   $('balance').textContent = fmtMoney(status.balance);
   $('balance-sub').textContent = `Inicial: ${fmtMoney(status.initial_balance)}`;
-  $('winrate').textContent = `${Number(status.winrate || 0).toFixed(1)}%`;
+  $('winrate').textContent = `${fmtNum(status.winrate, 1)}%`;
   $('wr-sub').textContent = `${status.wins || 0}W / ${status.losses || 0}L`;
-  $('active-count').textContent = (status.active_trades || []).length;
-  $('pending-count').textContent = status.pending_count ?? 0;
-  $('max-trades').textContent = status.max_trades_allowed ?? '—';
-  $('mode').textContent = status.signal_only ? 'Signal only' : 'Live';
-  $('trade-limit-current').textContent = (status.max_trades_override === null || status.max_trades_override === undefined)
-    ? 'Auto'
-    : String(status.max_trades_override);
-  $('trade-limit-default').textContent = String(status.max_trades_default ?? '—');
-  $('trade-limit-mode').textContent = status.max_trades_source === 'manual' ? 'Manual' : 'Auto';
-  $('timeframe').textContent = status.timeframe || '—';
-  $('allowed-symbols').textContent = `${(status.allowed_symbols || []).length} liberados`;
-  $('wins-tag').textContent = `${status.wins || 0}W`;
-  $('losses-tag').textContent = `${status.losses || 0}L`;
-  $('dd-tag').textContent = `DD ${Number(status.max_drawdown_pct || 0).toFixed(1)}%`;
-  $('updated-at').textContent = new Date().toLocaleTimeString('pt-BR');
-  renderActiveTrades(status.active_trades || []);
+  $('active-count').textContent = String((status.active_trades || []).length);
+  $('pending-count').textContent = String(status.pending_count || 0);
+  $('dd').textContent = `${fmtNum(status.drawdown_pct || 0, 1)}%`;
+  $('dd-sub').textContent = `Máx. ${fmtNum(status.max_drawdown_pct || 0, 1)}%`;
+  $('mode-label').textContent = status.signal_only ? 'Signal only' : 'Live';
+  $('timeframe-label').textContent = `${status.leverage || '—'}x`;
+  $('updated-at').textContent = new Date().toLocaleString('pt-BR');
+  $('trade-limit-current').textContent = status.max_trades_source === 'auto' ? 'Auto' : String(status.max_trades_override || '—');
+  $('trade-limit-mode').textContent = status.max_trades_source === 'auto' ? 'Auto' : 'Manual';
+  $('allowed-label').textContent = `Liberados: ${(status.allowed_symbols || []).length}`;
+  $('api-dot').className = 'dot ok';
+  $('api-state').textContent = 'online';
+  $('api-label').textContent = 'API';
+  $('api-state').className = 'ok';
+  window.__status = status;
 }
-
-async function loadStatus(){
-  const res = await requestJSON(API + '/status');
-  if (!res.ok || !res.data){
-    $('balance').textContent = '—';
-    $('winrate').textContent = '—';
-    $('active-count').textContent = '—';
-    $('pending-count').textContent = '—';
-    return;
+function fillMetrics(metrics) {
+  window.__metrics = metrics.current || metrics;
+  $('pf').textContent = fmtNum(metrics.current?.profit_factor ?? metrics.profit_factor ?? 0, 2);
+  $('pf-sub').textContent = `Expectancy: ${fmtMoney(metrics.current?.expectancy ?? metrics.expectancy ?? 0)}`;
+}
+async function refreshAll() {
+  clearError();
+  try {
+    const [status, assets, tradeSettings, strategy, history, logs, confluence, ai, metrics, curve, pending] = await Promise.all([
+      apiFetch('/api/status'),
+      apiFetch('/api/assets'),
+      apiFetch('/api/trade-settings'),
+      apiFetch('/api/strategy-config'),
+      apiFetch('/api/history?limit=20'),
+      apiFetch('/api/logs?limit=20'),
+      apiFetch('/api/confluence'),
+      apiFetch('/api/ai_params'),
+      apiFetch('/api/metrics'),
+      apiFetch('/api/equity_curve'),
+      apiFetch('/api/pending'),
+    ]);
+    fillStatus(status);
+    renderActiveTrades(status.active_trades || []);
+    fillTradeSettings(tradeSettings.settings || tradeSettings);
+    setStrategyValues(strategy.settings || strategy);
+    renderAssets(assets);
+    renderHistory(history || []);
+    renderLogs(logs.logs || logs || []);
+    renderConfluence(confluence.confluence || confluence || []);
+    renderAI(ai);
+    fillMetrics(metrics);
+    renderPending(pending || []);
+    makeChart(curve || []);
+    $('bt-status-tag').textContent = 'pronto';
+    $('bt-summary').textContent = `Banco vivo: ${fmtMoney(status.balance)} · Drawdown ${fmtNum(status.drawdown_pct || 0,1)}%`;
+    $('api-dot').className = 'dot ok';
+  } catch (err) {
+    $('api-dot').className = 'dot bad';
+    $('api-state').textContent = 'offline';
+    showError(err.message || String(err));
   }
-  state.status = res.data;
-  renderStatus(res.data);
 }
-
-async function loadAssets(){
-  const res = await requestJSON(API + '/assets');
-  if (!res.ok || !res.data){
-    $('assets-meta').textContent = 'Ativos indisponíveis no momento.';
-    $('assets-grid').innerHTML = '';
-    return;
-  }
-  const data = res.data || {};
-  state.assets = data.assets || [];
-  state.selected = data.selected_symbols || [];
-  state.allowed = data.allowed_symbols || [];
-  $('assets-meta').textContent = `${state.selected.length} ativos selecionados • ${state.allowed.length} permitidos pela banca`;
-  $('assets-grid').innerHTML = state.assets.length ? state.assets.map(a => `
-    <label class="asset">
-      <div>
-        <strong>${esc(a.symbol)}</strong>
-        <small>${esc(a.name)}</small>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span class="tag ${a.allowed ? 'green' : 'red'}">${a.allowed ? 'OK' : 'Bloq.'}</span>
-        <input type="checkbox" data-symbol="${esc(a.symbol)}" ${a.selected ? 'checked' : ''} ${a.allowed ? '' : 'disabled'}>
-      </div>
-    </label>
-  `).join('') : '<div class="row"><span class="muted">Nenhum ativo disponível.</span></div>';
+async function saveStrategy() {
+  const payload = readStrategyValues();
+  const res = await apiFetch('/api/strategy-config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  setStrategyValues(res.settings || payload);
+  $('bt-status-tag').textContent = 'estratégia salva';
+  await refreshAll();
 }
-
-function selectedAssetSymbols(){
-  return [...document.querySelectorAll('#assets-grid input[type="checkbox"]')]
-    .filter(el => el.checked)
-    .map(el => el.dataset.symbol);
+async function saveAssets() {
+  const selected = Array.from(document.querySelectorAll('#asset-grid input[type=checkbox]:checked')).map(el => el.dataset.symbol);
+  await apiFetch('/api/assets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ selected_symbols: selected }) });
+  await refreshAll();
 }
-
-async function saveAssets(){
-  const selected_symbols = selectedAssetSymbols();
-  const res = await requestJSON(API + '/assets', {
-    method: 'POST',
-    body: JSON.stringify({ selected_symbols })
-  });
-  if (res.ok){
-    setError('');
-    await refreshAll();
-    return;
-  }
-  setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar ativos');
+async function saveTradeLimit() {
+  const v = $('trade-limit-select').value;
+  await apiFetch('/api/trade-settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ max_active_trades: v === 'auto' ? null : Number(v) }) });
+  await refreshAll();
 }
-
-async function loadTradeSettings(){
-  const res = await requestJSON(API + '/trade-settings');
-  if (!res.ok || !res.data){
-    $('trade-limit-current').textContent = 'Auto';
-    $('trade-limit-default').textContent = '—';
-    $('trade-limit-mode').textContent = 'Auto';
-    $('trade-limit-select').value = 'auto';
-    return;
-  }
-  const s = res.data || {};
-  state.tradeSettings = s.settings || {};
-  const current = s.max_active_trades;
-  $('trade-limit-select').value = current === null || current === undefined ? 'auto' : String(current);
-  $('trade-limit-current').textContent = current === null || current === undefined ? 'Auto' : `${current}`;
-  $('trade-limit-default').textContent = `${s.default_max_active_trades ?? '—'}`;
-  $('trade-limit-mode').textContent = s.mode === 'manual' ? 'Manual' : 'Auto';
+async function runLiveBacktest() {
+  $('bt-status-tag').textContent = 'rodando…';
+  const payload = { symbol: 'EURUSD', outputsize: 5000, balance: Number($('bt_balance').value || 1000), ...readStrategyValues() };
+  const res = await apiFetch('/api/backtest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  $('bt-summary').textContent = `${res.symbol} · ${res.interval} · ${res.bars} candles · Trades ${res.metrics.total_trades} · PF ${fmtNum(res.metrics.profit_factor, 2)} · WR ${fmtNum(res.metrics.winrate, 1)}% · PnL ${fmtMoney(res.metrics.total_pnl)}`;
+  $('bt-status-tag').textContent = 'backtest live pronto';
+  if (res.equity_curve) makeChart(res.equity_curve);
 }
-
-async function saveTradeSettings(){
-  const value = $('trade-limit-select').value;
-  const payload = { max_active_trades: value === 'auto' ? null : Number(value) };
-  const res = await requestJSON(API + '/trade-settings', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-  if (res.ok){
-    setError('');
-    await refreshAll();
-    return;
-  }
-  setError((res.data && (res.data.message || res.data.error)) || res.error || 'Falha ao salvar limite de trades');
+async function runCsvBacktest() {
+  const file = $('csv_file').files[0];
+  if (!file) { showError('Escolha um CSV primeiro.'); return; }
+  $('bt-status-tag').textContent = 'rodando CSV…';
+  const fd = new FormData();
+  fd.append('csv', file);
+  fd.append('symbol', 'EURUSD');
+  fd.append('balance', String(Number($('bt_balance').value || 1000)));
+  Object.entries(readStrategyValues()).forEach(([k,v]) => fd.append(k, String(v)));
+  const res = await apiFetch('/api/backtest/upload', { method:'POST', body: fd });
+  $('bt-summary').textContent = `${res.symbol} · ${res.timeframe} · ${res.bars} candles · Trades ${res.metrics.total_trades} · PF ${fmtNum(res.metrics.profit_factor, 2)} · WR ${fmtNum(res.metrics.winrate, 1)}% · PnL ${fmtMoney(res.metrics.total_pnl)}`;
+  $('bt-status-tag').textContent = 'CSV pronto';
+  if (res.equity_curve) makeChart(res.equity_curve);
 }
-
-function renderActiveTrades(list){
-  const el = $('active-trades');
-  if (!list || !list.length){
-    el.innerHTML = '<div class="row"><span class="muted">Nenhum trade ativo no momento.</span></div>';
-    return;
-  }
-  el.innerHTML = list.map(t => `
-    <div class="row">
-      <div class="left">
-        <strong>${esc(t.symbol)}</strong>
-        <span class="tag ${badgeColor(t.dir)}">${esc(t.dir)}</span>
-        <span class="tag ${Number(t.pnl) >= 0 ? 'green' : 'red'}">${fmtMoney(t.pnl)}</span>
-        <span class="tag blue">RR 1:${esc(t.rr ?? '—')}</span>
-      </div>
-      <div class="left">
-        <span class="muted">Entrada ${esc(Number(t.entry || 0).toFixed(5))}</span>
-        <button class="ghost" onclick="closeTrade(${JSON.stringify(t.symbol)})">Fechar</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-async function loadPending(){
-  const res = await requestJSON(API + '/pending');
-  const list = Array.isArray(res.data) ? res.data : (res.data?.pending || []);
-  $('pending-meta').textContent = `${list.length} sinal(is)`;
-  const el = $('pending-list');
-  if (!list.length){
-    el.innerHTML = '<div class="row"><span class="muted">Nenhum sinal pendente.</span></div>';
-    return;
-  }
-  el.innerHTML = list.map((p, idx) => {
-    const pid = p.pending_id ?? p.id ?? idx;
-    return `
-      <div class="row" style="display:block">
-        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
-          <div class="left">
-            <strong>${esc(p.symbol)}</strong>
-            <span class="tag ${badgeColor(p.dir)}">${esc(p.dir)}</span>
-            <span class="tag amber">Score ${esc(p.score)}/${esc(p.max_score)}</span>
-            <span class="tag purple">IA ${esc(p.ai_confidence ?? 0)}/10</span>
-          </div>
-          <div class="left muted">${esc(p.created_at || '')}</div>
-        </div>
-        <div class="tiny" style="margin-top:8px;line-height:1.6">
-          Entrada ${esc(Number(p.entry || 0).toFixed(5))} • SL ${esc(Number(p.sl || 0).toFixed(5))} • TP ${esc(Number(p.tp || 0).toFixed(5))}<br>
-          RR 1:${esc(p.rr ?? '—')} • Risco sugerido ${fmtMoney(p.suggested_risk_usd)} • Margem mínima ${fmtMoney(p.min_lot_margin)}
-        </div>
-        <div class="toolbar" style="margin-top:10px">
-          <input id="amt-${esc(pid)}" type="number" min="0" step="1" value="${Math.max(1, Math.ceil(Number(p.min_lot_margin || 1)))}" style="max-width:140px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text)">
-          <button class="success" onclick="executePending(${JSON.stringify(pid)})">Executar</button>
-          <button class="danger" onclick="rejectPending(${JSON.stringify(pid)})">Rejeitar</button>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-async function loadHistory(){
-  const res = await requestJSON(API + '/history');
-  const list = Array.isArray(res.data) ? res.data : [];
-  const body = $('history-body');
-  if (!list.length){
-    body.innerHTML = '<tr><td colspan="6" class="muted">Nenhuma operação ainda.</td></tr>';
-    return;
-  }
-  body.innerHTML = list.slice().reverse().map(h => `
+async function optimizeCsv() {
+  const file = $('csv_file').files[0];
+  if (!file) { showError('Escolha um CSV para otimização.'); return; }
+  $('bt-status-tag').textContent = 'otimizando…';
+  const fd = new FormData();
+  fd.append('csv', file);
+  fd.append('symbol', 'EURUSD');
+  fd.append('balance', String(Number($('bt_balance').value || 1000)));
+  const res = await apiFetch('/api/backtest/optimize', { method:'POST', body: fd });
+  $('bt-status-tag').textContent = 'otimização pronta';
+  const b = res.best || {};
+  $('best-table').innerHTML = b ? `
     <tr>
-      <td>${esc(h.closed_at || '')}</td>
-      <td><strong>${esc(h.symbol)}</strong></td>
-      <td><span class="tag ${badgeColor(h.dir)}">${esc(h.dir)}</span></td>
-      <td><span class="tag ${h.result === 'WIN' ? 'green' : 'red'}">${esc(h.result)}</span></td>
-      <td style="color:${Number(h.pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${fmtMoney(h.pnl)}</td>
-      <td>${esc(h.ai_confidence ?? 0)}/10</td>
-    </tr>
-  `).join('');
-}
-
-async function loadAI(){
-  const res = await requestJSON(API + '/ai_params');
-  const a = res.data && typeof res.data === 'object' ? res.data : {};
-  state.ai = a;
-  $('live-conf').textContent = `${a.live_confluence ?? 7}/11`;
-  $('ai-bias').textContent = `Viés: ${a.strategy_bias || 'balanced'}`;
-  $('adx-avg').textContent = a.live_adx_avg ?? '—';
-  $('min-rr').textContent = a.min_rr ?? '—';
-  $('regime-badge').textContent = (a.live_regime || 'neutral').toUpperCase();
-  $('regime-summary').textContent = a.opus_summary || 'Sem resumo estratégico ainda.';
-  $('ai-summary').textContent = a.last_suggestion || (res.ok ? 'Sem sugestão da IA no momento.' : 'IA indisponível no momento.');
-}
-
-async function loadConfluence(){
-  const res = await requestJSON(API + '/confluence');
-  const data = Array.isArray(res.data) ? res.data : [];
-  $('conf-refresh').textContent = new Date().toLocaleTimeString('pt-BR');
-  $('confluence-list').innerHTML = data.slice(0, 10).map(item => `
-    <div class="row">
-      <div class="left">
-        <strong>${esc(item.symbol)}</strong>
-        <span class="tag ${badgeColor(item.best_dir)}">${esc(item.best_dir)}</span>
-      </div>
-      <div class="left muted">${esc(item.best_score)}/${esc(item.total)}</div>
-    </div>
-  `).join('') || '<div class="row"><span class="muted">Sem dados de confluência.</span></div>';
-}
-
-async function loadLogs(){
-  const res = await requestJSON(API + '/logs?limit=12&hours=24');
-  const payload = res.data && typeof res.data === 'object' ? res.data : {};
-  const logs = Array.isArray(payload.logs) ? payload.logs : [];
-  $('log-count').textContent = `${payload.count ?? logs.length} entradas`;
-  $('logs-list').innerHTML = logs.length ? logs.map(l => `
-    <div class="row">
-      <div class="left"><strong>${esc(l.type || 'log')}</strong><span class="muted">${esc(l.created_at || '')}</span></div>
-      <div class="muted" style="max-width:70ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.message || JSON.stringify(l))}</div>
-    </div>
-  `).join('') : '<div class="row"><span class="muted">Nenhum log recente.</span></div>';
-}
-
-async function closeTrade(symbol){
-  if (!confirm(`Fechar trade de ${symbol}?`)) return;
-  const res = await requestJSON(API + '/close_trade', {
-    method: 'POST',
-    body: JSON.stringify({ symbol })
-  });
-  if (!res.ok){
-    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao fechar trade');
-    return;
-  }
-  setError('');
-  await refreshAll();
-}
-
-async function executePending(pid){
-  const inp = document.getElementById('amt-' + pid);
-  const amount = Number(inp?.value || 0);
-  if (!amount || amount <= 0){ alert('Margem inválida'); return; }
-  const res = await requestJSON(API + '/execute', {
-    method: 'POST',
-    body: JSON.stringify({ pending_id: pid, amount })
-  });
-  if (!res.ok){
-    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao executar');
-    return;
-  }
-  setError('');
-  await refreshAll();
-}
-
-async function rejectPending(pid){
-  const res = await requestJSON(API + '/reject', {
-    method: 'POST',
-    body: JSON.stringify({ pending_id: pid })
-  });
-  if (!res.ok){
-    setError((res.data && (res.data.message || res.data.error)) || res.error || 'Erro ao rejeitar');
-    return;
-  }
-  await refreshAll();
-}
-
-async function refreshAll(){
-  const errors = [];
-  try { await loadHealth(); } catch (e) { errors.push(`health: ${e.message}`); }
-  try { await loadStatus(); } catch (e) { errors.push(`status: ${e.message}`); }
-  try { await loadAssets(); } catch (e) { errors.push(`assets: ${e.message}`); }
-  try { await loadTradeSettings(); } catch (e) { errors.push(`tradeSettings: ${e.message}`); }
-  try { await loadAI(); } catch (e) { errors.push(`ai: ${e.message}`); }
-  try { await loadConfluence(); } catch (e) { errors.push(`confluence: ${e.message}`); }
-  try { await loadPending(); } catch (e) { errors.push(`pending: ${e.message}`); }
-  try { await loadHistory(); } catch (e) { errors.push(`history: ${e.message}`); }
-  try { await loadLogs(); } catch (e) { errors.push(`logs: ${e.message}`); }
-
-  if (errors.length){
-    setError(`Algumas áreas ficaram indisponíveis:\n- ${errors.slice(0, 4).join('\n- ')}`);
-  } else {
-    setError('');
+      <td>${fmtNum(b.score || 0, 2)}</td>
+      <td>${b.min_confluence ?? '—'}</td>
+      <td>${fmtNum(b.adx_min ?? 0, 1)}</td>
+      <td>${fmtNum(b.atr_sl_mult ?? 0, 2)}</td>
+      <td>${fmtNum(b.atr_tp_mult ?? 0, 2)}</td>
+      <td>${Array.isArray(b.pull_range) ? `${fmtNum(b.pull_range[0], 1)} / ${fmtNum(b.pull_range[1], 1)}` : '—'}</td>
+      <td>${fmtNum(b.risk_pct ?? 0, 1)}%</td>
+    </tr>` : '<tr><td colspan="7" class="muted">Sem resultado.</td></tr>';
+  $('bt-summary').textContent = `Melhor score: ${fmtNum(b.score || 0, 2)} · ${res.symbol} · ${res.timeframe} · ${res.top ? res.top.length : 0} combinações no topo.`;
+  setStrategyValues(b);
+  if (b && b.metrics) {
+    $('pf').textContent = fmtNum(b.metrics.profit_factor ?? 0, 2);
+    $('wr-sub').textContent = `${b.metrics.wins || 0}W / ${b.metrics.losses || 0}L`;
   }
 }
+async function rejectPending(id) { if (!id) return; await apiFetch('/api/reject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pending_id: id }) }); await refreshAll(); }
+async function executePending(id) { if (!id) return; await apiFetch('/api/execute', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pending_id: id, amount: 1 }) }); await refreshAll(); }
 
 $('btn-refresh').addEventListener('click', refreshAll);
+$('btn-save-strategy').addEventListener('click', saveStrategy);
 $('btn-save-assets').addEventListener('click', saveAssets);
-$('btn-save-trade-limit').addEventListener('click', saveTradeSettings);
-
-// ══════════════════════════════════════════════════════════
-// BACKTEST
-// ══════════════════════════════════════════════════════════
-
-let _btCsvFile = null;
-
-function btTab(tab) {
-  $('bt-panel-live').style.display = tab === 'live' ? '' : 'none';
-  $('bt-panel-csv').style.display  = tab === 'csv'  ? '' : 'none';
-  const active   = 'background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;border:none';
-  const inactive = 'background:var(--panel2);color:var(--muted);border:1px solid var(--line)';
-  $('bt-tab-live').style.cssText += tab === 'live' ? active : inactive;
-  $('bt-tab-csv').style.cssText  += tab === 'csv'  ? active : inactive;
-  btHideResults();
-}
-
-function btHideResults() {
-  ['bt-loading','bt-results','bt-error'].forEach(id => btShow(id, false));
-}
-
-function btShow(el, show) { $(el).style.display = show ? '' : 'none'; }
-
-function btFileSelect(input) {
-  if (input.files && input.files[0]) {
-    _btCsvFile = input.files[0];
-    $('bt-file-name').textContent = `✅ ${_btCsvFile.name} (${(_btCsvFile.size/1024).toFixed(1)} KB)`;
-    $('bt-dropzone').style.borderColor = '#10b981';
-  }
-}
-
-function btFileDrop(e) {
-  e.preventDefault();
-  $('bt-dropzone').style.borderColor = 'var(--line)';
-  const file = e.dataTransfer.files[0];
-  if (file) {
-    _btCsvFile = file;
-    $('bt-file-name').textContent = `✅ ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
-    $('bt-dropzone').style.borderColor = '#10b981';
-  }
-}
-
-function btMetricCard(label, value, color) {
-  return `<div style="background:var(--panel2);border-radius:12px;padding:12px;text-align:center">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div>
-    <div style="font-size:18px;font-weight:800;color:${color||'var(--text)'}">${value}</div>
-  </div>`;
-}
-
-function btVerdict(m) {
-  const pf  = parseFloat(m.profit_factor);
-  const wr  = parseFloat(m.winrate);
-  const dd  = parseFloat(m.max_drawdown_pct);
-  const tot = parseInt(m.total_trades);
-  if (tot < 10) return { bg:'rgba(99,102,241,.15)', border:'rgba(99,102,241,.3)', color:'#a5b4fc', icon:'🔬',
-    text:'Trades insuficientes — tente reduzir a confluência mínima ou usar mais dados.' };
-  if (pf >= 1.4 && wr >= 45 && dd <= 30) return { bg:'rgba(34,197,94,.1)', border:'rgba(34,197,94,.3)', color:'#4ade80', icon:'✅',
-    text:`Estratégia válida — PF ${pf.toFixed(2)} · WR ${wr}% · DD ${dd}%` };
-  if (pf >= 1.1 && wr >= 40) return { bg:'rgba(251,191,36,.1)', border:'rgba(251,191,36,.3)', color:'#fbbf24', icon:'⚠️',
-    text:`Resultado marginal — ajuste parâmetros e rode de novo.` };
-  return { bg:'rgba(239,68,68,.1)', border:'rgba(239,68,68,.3)', color:'#f87171', icon:'❌',
-    text:`Resultado negativo neste período — não operar com esses parâmetros.` };
-}
-
-function btDrawChart(ec) {
-  const canvas = $('bt-chart');
-  const ctx    = canvas.getContext('2d');
-  canvas.width  = canvas.offsetWidth || 600;
-  canvas.height = 180;
-  if (!ec || ec.length < 2) return;
-  const vals = ec.map(p => p.balance);
-  const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1;
-  const W = canvas.width, H = canvas.height, pad = 12;
-  const x = i => pad + (i / (ec.length-1)) * (W - pad*2);
-  const y = v => H - pad - ((v - min) / range) * (H - pad*2);
-  const isPos = vals[vals.length-1] >= vals[0];
-  const grad  = ctx.createLinearGradient(0,0,0,H);
-  grad.addColorStop(0, isPos ? 'rgba(74,222,128,.25)' : 'rgba(248,113,113,.25)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.beginPath();
-  ctx.moveTo(x(0), y(vals[0]));
-  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
-  ctx.lineTo(x(ec.length-1), H); ctx.lineTo(x(0), H); ctx.closePath();
-  ctx.fillStyle = grad; ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x(0), y(vals[0]));
-  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
-  ctx.strokeStyle = isPos ? '#4ade80' : '#f87171';
-  ctx.lineWidth = 2; ctx.stroke();
-}
-
-function btShowResults(data) {
-  const m = data.metrics;
-  const tf = data.timeframe || 'H1';
-  $('bt-meta').textContent = `${data.symbol} · ${tf} · ${data.start} → ${data.end} · ${data.bars} barras`;
-  const pnlColor = parseFloat(m.total_pnl) >= 0 ? '#4ade80' : '#f87171';
-  $('bt-metrics-grid').innerHTML = [
-    btMetricCard('Trades',        m.total_trades, 'var(--text)'),
-    btMetricCard('Win Rate',      m.winrate+'%', parseFloat(m.winrate)>=45?'#4ade80':'#f87171'),
-    btMetricCard('Profit Factor', parseFloat(m.profit_factor).toFixed(2), parseFloat(m.profit_factor)>=1.4?'#4ade80':parseFloat(m.profit_factor)>=1?'#fbbf24':'#f87171'),
-    btMetricCard('Max Drawdown',  m.max_drawdown_pct+'%', parseFloat(m.max_drawdown_pct)<=25?'#4ade80':'#f87171'),
-    btMetricCard('Sharpe',        parseFloat(m.sharpe_ratio||0).toFixed(2), 'var(--text)'),
-    btMetricCard('P&L Total',     (parseFloat(m.total_pnl)>=0?'+':'')+parseFloat(m.total_pnl).toFixed(2)+'$', pnlColor),
-    btMetricCard('Saldo final',   '$'+parseFloat(m.current_balance).toFixed(2), pnlColor),
-    btMetricCard('Expectancy',    '$'+parseFloat(m.expectancy).toFixed(2), parseFloat(m.expectancy)>=0?'#4ade80':'#f87171'),
-  ].join('');
-  const v = btVerdict(m);
-  $('bt-verdict').innerHTML = `${v.icon} ${v.text}`;
-  Object.assign($('bt-verdict').style, {background:v.bg, border:'1px solid '+v.border, color:v.color});
-  btDrawChart(data.equity_curve);
-  const tbody = $('bt-trades-body');
-  tbody.innerHTML = '';
-  (data.trades||[]).slice().reverse().forEach(t => {
-    const win = t.result === 'WIN';
-    tbody.innerHTML += `<tr>
-      <td>${esc(t.symbol)}</td>
-      <td><span class="tag ${t.dir==='BUY'?'green':'red'}">${esc(t.dir)}</span></td>
-      <td><span class="tag ${win?'green':'red'}">${esc(t.result)}</span></td>
-      <td>${parseFloat(t.entry).toFixed(5)}</td>
-      <td>${parseFloat(t.exit).toFixed(5)}</td>
-      <td style="color:${win?'#4ade80':'#f87171'}">${(parseFloat(t.pnl)>=0?'+':'')+parseFloat(t.pnl).toFixed(2)}</td>
-      <td class="tiny">${(t.closed_at||'').slice(0,10)}</td>
-    </tr>`;
-  });
-  if (!data.trades||!data.trades.length)
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum trade gerado</td></tr>';
-  btShow('bt-results', true);
-  $('bt-status-tag').textContent = 'Concluído';
-  $('bt-status-tag').className   = 'tag green';
-}
-
-function btStartLoading(msg) {
-  btHideResults();
-  $('bt-loading-msg').textContent = msg;
-  btShow('bt-loading', true);
-  btShow('bt-status-tag', true);
-  $('bt-status-tag').textContent = 'Rodando...';
-  $('bt-status-tag').className   = 'tag amber';
-}
-
-function btHandleError(msg) {
-  btShow('bt-loading', false);
-  $('bt-error').textContent = '❌ ' + msg;
-  btShow('bt-error', true);
-  $('bt-status-tag').textContent = 'Erro';
-  $('bt-status-tag').className   = 'tag red';
-}
-
-async function runBacktestLive() {
-  const symbol  = $('bt-symbol').value;
-  const osz     = parseInt($('bt-period').value) || 2000;
-  const balance = parseFloat($('bt-balance').value) || 150;
-  const conf    = parseInt($('bt-confluence').value) || 5;
-  btStartLoading(`Buscando ${osz} barras H1 de ${symbol} via Twelve Data...`);
+$('btn-save-trade-limit').addEventListener('click', saveTradeLimit);
+$('btn-run-live').addEventListener('click', runLiveBacktest);
+$('btn-run-csv').addEventListener('click', runCsvBacktest);
+$('btn-optimize').addEventListener('click', optimizeCsv);
+$('btn-token').addEventListener('click', () => {
+  const v = prompt('Token da dashboard (opcional):', getToken() || '');
+  if (v !== null) { setToken(v.trim()); refreshAll(); }
+});
+['min_confluence','adx_min','atr_sl_mult','atr_tp_mult','pull_min','pull_max','risk_pct'].forEach(name => {
+  const n = $(name), r = $(`${name}_range`), v = $(`${name}_val`);
+  const sync = () => { n.value = r.value = n.value || r.value; v.value = n.value; };
+  n.addEventListener('input', () => { r.value = n.value; v.value = n.value; });
+  r.addEventListener('input', () => { n.value = r.value; v.value = r.value; });
+});
+setToken(localStorage.getItem('dashboard_token') || tokenFromUrl());
+(async () => {
   try {
-    const resp = await fetch('/api/backtest', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ symbol, outputsize: osz, balance, min_confluence: conf }),
-    });
-    const data = await resp.json().catch(() => ({ ok:false, error:`HTTP ${resp.status}` }));
-    btShow('bt-loading', false);
-    if (!data.ok) { btHandleError(data.error || 'Erro desconhecido'); return; }
-    btShowResults(data);
-  } catch(e) { btHandleError(e.message); }
-}
-
-async function runBacktestCsv() {
-  if (!_btCsvFile) { btHandleError('Selecione um arquivo CSV primeiro'); return; }
-  const symbol  = $('bt-csv-symbol').value;
-  const balance = parseFloat($('bt-csv-balance').value) || 150;
-  btStartLoading(`Processando ${_btCsvFile.name}...`);
-  try {
-    const fd = new FormData();
-    fd.append('csv', _btCsvFile);
-    if (symbol) fd.append('symbol', symbol);
-    fd.append('balance', balance);
-    const resp = await fetch('/api/backtest/upload', { method: 'POST', body: fd });
-    const data = await resp.json().catch(() => ({ ok:false, error:`HTTP ${resp.status}` }));
-    btShow('bt-loading', false);
-    if (!data.ok) { btHandleError(data.error || 'Erro desconhecido'); return; }
-    btShowResults(data);
-  } catch(e) { btHandleError(e.message); }
-}
-
-refreshAll();
-setInterval(refreshAll, 15000);
-
-function btShow(el, show){ $(el).style.display = show ? '' : 'none'; }
-
-function btMetricCard(label, value, color){
-  return `<div style="background:var(--panel2);border-radius:12px;padding:12px;text-align:center">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div>
-    <div style="font-size:20px;font-weight:800;color:${color||'var(--text)'}">${value}</div>
-  </div>`;
-}
-
-function btVerdict(m){
-  const pf  = parseFloat(m.profit_factor);
-  const wr  = parseFloat(m.winrate);
-  const dd  = parseFloat(m.max_drawdown_pct);
-  const tot = parseInt(m.total_trades);
-
-  if(tot < 10) return { bg:'rgba(99,102,241,.15)', border:'rgba(99,102,241,.3)', color:'#a5b4fc', icon:'🔬',
-    text:'Trades insuficientes para conclusão — tente um período maior ou reduzir a confluência mínima.' };
-  if(pf >= 1.5 && wr >= 50 && dd <= 25) return { bg:'rgba(34,197,94,.1)', border:'rgba(34,197,94,.3)', color:'#4ade80', icon:'✅',
-    text:`Estratégia válida. PF ${pf.toFixed(2)} · WR ${wr}% · DD ${dd}% — dentro dos parâmetros profissionais.` };
-  if(pf >= 1.2 && wr >= 45) return { bg:'rgba(251,191,36,.1)', border:'rgba(251,191,36,.3)', color:'#fbbf24', icon:'⚠️',
-    text:`Resultado marginal. Considere ajustar a confluência mínima ou o RR e rodar de novo.` };
-  return { bg:'rgba(239,68,68,.1)', border:'rgba(239,68,68,.3)', color:'#f87171', icon:'❌',
-    text:`Estratégia com resultado negativo neste período. Não operar com esses parâmetros.` };
-}
-
-function btDrawChart(ec){
-  const canvas = $('bt-chart');
-  const ctx    = canvas.getContext('2d');
-  canvas.width  = canvas.offsetWidth || 600;
-  canvas.height = 180;
-
-  if(!ec || ec.length < 2){ ctx.fillStyle='var(--muted)'; ctx.fillText('Sem dados',10,20); return; }
-
-  const vals  = ec.map(p => p.balance);
-  const min   = Math.min(...vals);
-  const max   = Math.max(...vals);
-  const range = max - min || 1;
-  const W     = canvas.width;
-  const H     = canvas.height;
-  const pad   = 12;
-
-  const x = i => pad + (i / (ec.length - 1)) * (W - pad * 2);
-  const y = v => H - pad - ((v - min) / range) * (H - pad * 2);
-
-  // Gradiente de fundo
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  const isPos = vals[vals.length-1] >= vals[0];
-  grad.addColorStop(0, isPos ? 'rgba(74,222,128,.25)' : 'rgba(248,113,113,.25)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-
-  ctx.beginPath();
-  ctx.moveTo(x(0), y(vals[0]));
-  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
-  ctx.lineTo(x(ec.length-1), H);
-  ctx.lineTo(x(0), H);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Linha
-  ctx.beginPath();
-  ctx.moveTo(x(0), y(vals[0]));
-  ec.forEach((p,i) => { if(i>0) ctx.lineTo(x(i), y(p.balance)); });
-  ctx.strokeStyle = isPos ? '#4ade80' : '#f87171';
-  ctx.lineWidth   = 2;
-  ctx.stroke();
-
-  // Linha de base (saldo inicial)
-  const baseY = y(vals[0]);
-  ctx.beginPath();
-  ctx.setLineDash([4,4]);
-  ctx.moveTo(pad, baseY);
-  ctx.lineTo(W - pad, baseY);
-  ctx.strokeStyle = 'rgba(255,255,255,.15)';
-  ctx.lineWidth   = 1;
-  ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-async function runBacktest(){
-  const symbol   = $('bt-symbol').value;
-  const conf_val = $('bt-period').value;
-  const period   = conf_val;
-  const balance  = parseFloat($('bt-balance').value) || 500;
-  const conf     = parseInt($('bt-confluence').value) || 6;
-
-  // Reset UI
-  btShow('bt-loading', true);
-  btShow('bt-results', false);
-  btShow('bt-error',   false);
-  $('bt-loading-msg').textContent = `Baixando ${period} de dados para ${symbol}...`;
-  $('btn-run-backtest').disabled = true;
-  $('bt-status-tag').style.display = '';
-  $('bt-status-tag').textContent   = 'Rodando...';
-  $('bt-status-tag').className     = 'tag amber';
-
-  try {
-    const resp = await fetch('/api/backtest', {
-      method:  'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ symbol, outputsize: parseInt(conf_val || 2000), balance, min_confluence: conf }),
-    });
-
-    let data;
-    try { data = await resp.json(); }
-    catch(e) { data = { ok: false, error: `Servidor retornou status ${resp.status} (resposta não-JSON)` }; }
-
-    btShow('bt-loading', false);
-
-    if(!data.ok){
-      $('bt-error').textContent = '❌ ' + (data.error || 'Erro desconhecido');
-      btShow('bt-error', true);
-      $('bt-status-tag').textContent = 'Erro';
-      $('bt-status-tag').className   = 'tag red';
-      return;
-    }
-
-    const m = data.metrics;
-
-    // Meta
-    const intervalLabel = data.interval === '1d' ? 'D1' : 'H1';
-    $('bt-meta').textContent = `${data.symbol} · ${data.start} → ${data.end} · ${data.bars} barras ${intervalLabel}`;
-
-    // Métricas
-    const pnlColor = parseFloat(m.total_pnl) >= 0 ? '#4ade80' : '#f87171';
-    $('bt-metrics-grid').innerHTML = [
-      btMetricCard('Trades',       m.total_trades,                  'var(--text)'),
-      btMetricCard('Win Rate',     m.winrate + '%',                 parseFloat(m.winrate)>=50?'#4ade80':'#f87171'),
-      btMetricCard('Profit Factor',parseFloat(m.profit_factor).toFixed(2), parseFloat(m.profit_factor)>=1.5?'#4ade80':parseFloat(m.profit_factor)>=1?'#fbbf24':'#f87171'),
-      btMetricCard('Max Drawdown', m.max_drawdown_pct + '%',        parseFloat(m.max_drawdown_pct)<=20?'#4ade80':'#f87171'),
-      btMetricCard('Sharpe',       parseFloat(m.sharpe_ratio||0).toFixed(2), 'var(--text)'),
-      btMetricCard('P&L Total',    (parseFloat(m.total_pnl)>=0?'+':'')+parseFloat(m.total_pnl).toFixed(2)+'$', pnlColor),
-      btMetricCard('Saldo final',  '$'+parseFloat(m.current_balance).toFixed(2), pnlColor),
-      btMetricCard('Expectancy',   '$'+parseFloat(m.expectancy).toFixed(2),      parseFloat(m.expectancy)>=0?'#4ade80':'#f87171'),
-    ].join('');
-
-    // Veredicto
-    const v = btVerdict(m);
-    $('bt-verdict').innerHTML = `${v.icon} ${v.text}`;
-    $('bt-verdict').style.background  = v.bg;
-    $('bt-verdict').style.border      = '1px solid ' + v.border;
-    $('bt-verdict').style.color       = v.color;
-
-    // Gráfico
-    btDrawChart(data.equity_curve);
-
-    // Trades
-    const tbody = $('bt-trades-body');
-    tbody.innerHTML = '';
-    (data.trades || []).slice().reverse().forEach(t => {
-      const win = t.result === 'WIN';
-      tbody.innerHTML += `<tr>
-        <td>${esc(t.symbol)}</td>
-        <td><span class="tag ${t.dir==='BUY'?'green':'red'}">${esc(t.dir)}</span></td>
-        <td><span class="tag ${win?'green':'red'}">${esc(t.result)}</span></td>
-        <td>${parseFloat(t.entry).toFixed(5)}</td>
-        <td>${parseFloat(t.exit).toFixed(5)}</td>
-        <td style="color:${win?'#4ade80':'#f87171'}">${(parseFloat(t.pnl)>=0?'+':'')+parseFloat(t.pnl).toFixed(2)}</td>
-        <td class="tiny">${(t.closed_at||'').slice(0,10)}</td>
-      </tr>`;
-    });
-    if(!data.trades || !data.trades.length){
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum trade gerado</td></tr>';
-    }
-
-    btShow('bt-results', true);
-    $('bt-status-tag').textContent = 'Concluído';
-    $('bt-status-tag').className   = 'tag green';
-
-  } catch(e) {
-    btShow('bt-loading', false);
-    $('bt-error').textContent = '❌ Falha na requisição: ' + e.message;
-    btShow('bt-error', true);
-    $('bt-status-tag').textContent = 'Erro';
-    $('bt-status-tag').className   = 'tag red';
-  } finally {
-    $('btn-run-backtest').disabled = false;
-  }
-}
-
-$('btn-run-backtest').addEventListener('click', runBacktest);
-
-refreshAll();
-setInterval(refreshAll, 15000);
+    const s = await apiFetch('/api/strategy-config');
+    setStrategyValues(s.settings || s);
+  } catch {}
+  refreshAll();
+  setInterval(refreshAll, 45000);
+})();
 </script>
 </body>
 </html>

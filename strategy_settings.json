@@ -1,0 +1,10 @@
+{
+  "min_confluence": 5,
+  "adx_min": 18,
+  "atr_sl_mult": 1.5,
+  "atr_tp_mult": 3.5,
+  "pull_min": -1.0,
+  "pull_max": 2.0,
+  "risk_pct": 2.0,
+  "updated_at": "2026-05-04T00:00:00Z"
+}

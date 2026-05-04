@@ -147,6 +147,71 @@ def get_trade_limit_override():
     return load_trade_settings()["max_active_trades"]
 
 
+STRATEGY_SETTINGS_FILE = "strategy_settings.json"
+DEFAULT_STRATEGY_SETTINGS = {
+    "min_confluence": 5,
+    "adx_min": 18.0,
+    "atr_sl_mult": 1.5,
+    "atr_tp_mult": 3.5,
+    "pull_min": -1.0,
+    "pull_max": 2.0,
+    "risk_pct": 2.0,
+}
+
+def _normalize_strategy_settings(data: dict | None) -> dict:
+    base = DEFAULT_STRATEGY_SETTINGS.copy()
+    if not isinstance(data, dict):
+        return base
+
+    def _float(key, default):
+        try:
+            return float(data.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _int(key, default):
+        try:
+            return int(data.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    base["min_confluence"] = max(1, min(20, _int("min_confluence", base["min_confluence"])))
+    base["adx_min"] = max(0.0, _float("adx_min", base["adx_min"]))
+    base["atr_sl_mult"] = max(0.1, _float("atr_sl_mult", base["atr_sl_mult"]))
+    base["atr_tp_mult"] = max(0.1, _float("atr_tp_mult", base["atr_tp_mult"]))
+    base["pull_min"] = _float("pull_min", base["pull_min"])
+    base["pull_max"] = _float("pull_max", base["pull_max"])
+    if base["pull_min"] > base["pull_max"]:
+        base["pull_min"], base["pull_max"] = base["pull_max"], base["pull_min"]
+    base["risk_pct"] = max(0.1, min(10.0, _float("risk_pct", base["risk_pct"])))
+    return base
+
+def load_strategy_settings() -> dict:
+    defaults = {**DEFAULT_STRATEGY_SETTINGS, "updated_at": None}
+    if not os.path.exists(STRATEGY_SETTINGS_FILE):
+        return defaults
+    try:
+        with open(STRATEGY_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+        normalized = _normalize_strategy_settings(stored)
+        return {**defaults, **stored, **normalized}
+    except Exception as e:
+        log(f"[STRATEGY] Erro ao carregar strategy_settings.json: {e}")
+        return defaults
+
+def save_strategy_settings(settings: dict) -> dict:
+    cleaned = _normalize_strategy_settings(settings)
+    data = {**cleaned, "updated_at": datetime.utcnow().isoformat()}
+    tmp = STRATEGY_SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, STRATEGY_SETTINGS_FILE)
+    return data
+
+def get_strategy_settings() -> dict:
+    return load_strategy_settings()
+
+
 
 def is_jpy_pair(symbol):
     return symbol.endswith("JPY")
