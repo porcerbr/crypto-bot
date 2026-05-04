@@ -386,6 +386,9 @@ def scan(bot):
         from utils import get_dynamic_leverage
         eff_lev = get_dynamic_leverage(bot.balance)
 
+        # Carrega a estratégia antes de usar qualquer parâmetro dela
+        strategy = load_strategy_settings()
+
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
             risk_pct=float(strategy.get("risk_pct", Config.ATR_RISK_PCT)),
@@ -411,7 +414,6 @@ def scan(bot):
 
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
-        strategy   = load_strategy_settings()
         min_rr     = max(float(ai_params.get("min_rr", 1.5)), float(strategy.get("min_rr", 1.8)))
 
         base_conf = max(int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)), int(strategy.get("min_confluence", Config.MIN_CONFLUENCE)))
