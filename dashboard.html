@@ -1,734 +1,566 @@
-<!doctype html>
-<html lang="pt-BR">
+<!DOCTYPE html><html lang="pt-br">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sniper Bot · Institutional Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <style>
-    :root{
-      --bg:#070b11; --bg2:#0c121a; --panel:rgba(15,23,36,.78); --panel2:#111a27; --line:rgba(148,163,184,.14);
-      --text:#e5eefb; --muted:#90a4bd; --green:#4ade80; --red:#fb7185; --amber:#fbbf24; --blue:#60a5fa; --cyan:#22d3ee; --violet:#a78bfa;
-      --shadow:0 20px 70px rgba(0,0,0,.35);
-      --radius:24px;
-    }
-    *{box-sizing:border-box}
-    html,body{margin:0;min-height:100%;background:
-      radial-gradient(circle at top left, rgba(96,165,250,.16), transparent 28%),
-      radial-gradient(circle at top right, rgba(167,139,250,.14), transparent 22%),
-      linear-gradient(180deg,var(--bg),var(--bg2));
-      color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-    body{padding:20px}
-    .wrap{max-width:1500px;margin:0 auto}
-    .topbar{display:flex;gap:14px;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap}
-    .brand{display:flex;flex-direction:column;gap:8px}
-    .brand h1{margin:0;font-size:30px;letter-spacing:.2px}
-    .brand p{margin:0;color:var(--muted);max-width:760px;line-height:1.45}
-    .status-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:flex-end}
-    .pill,.btn,.chip,.tag,.input,.select,textarea{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text)}
-    .pill{padding:10px 14px;border-radius:999px;display:flex;align-items:center;gap:8px;box-shadow:var(--shadow);backdrop-filter:blur(16px)}
-    .dot{width:10px;height:10px;border-radius:999px;background:#64748b;box-shadow:0 0 0 4px rgba(255,255,255,.04)}
-    .dot.ok{background:var(--green)} .dot.warn{background:var(--amber)} .dot.bad{background:var(--red)}
-    .btn{padding:11px 14px;border-radius:14px;cursor:pointer;font-weight:700;transition:.18s ease;box-shadow:var(--shadow)}
-    .btn:hover{transform:translateY(-1px);filter:brightness(1.05)}
-    .btn.primary{background:linear-gradient(135deg,#2563eb,#7c3aed);border-color:transparent}
-    .btn.good{background:linear-gradient(135deg,#0f9d58,#22c55e);border-color:transparent}
-    .btn.ghost{background:rgba(255,255,255,.03)}
-    .grid{display:grid;gap:14px}
-    .cards{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
-    .metric{padding:18px 18px 16px}
-    .metric .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
-    .metric .value{font-size:28px;font-weight:800;line-height:1.05}
-    .metric .sub{color:var(--muted);font-size:12px;margin-top:8px}
-    .layout{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;align-items:start}
-    .section{display:grid;gap:14px}
-    .panel{padding:18px}
-    .panel h2{margin:0;font-size:18px}
-    .panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-    .subtle{color:var(--muted);font-size:12px}
-    .hr{height:1px;background:var(--line);margin:14px 0}
-    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    .field{display:flex;flex-direction:column;gap:7px}
-    .field label{font-size:12px;color:#bfd0e6;text-transform:uppercase;letter-spacing:.08em}
-    .input,.select,textarea{width:100%;padding:11px 12px;border-radius:14px;outline:none}
-    .input:focus,.select:focus,textarea:focus{border-color:rgba(96,165,250,.7);box-shadow:0 0 0 4px rgba(96,165,250,.08)}
-    .range-row{display:grid;grid-template-columns:120px 1fr 80px;gap:10px;align-items:center}
-    .range-row input[type=range]{width:100%}
-    .mini{font-size:12px;color:var(--muted)}
-    .chips{display:flex;gap:8px;flex-wrap:wrap}
-    .chip{padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700}
-    .chip.green{color:var(--green)} .chip.red{color:var(--red)} .chip.amber{color:var(--amber)} .chip.blue{color:var(--blue)} .chip.violet{color:var(--violet)}
-    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px}
-    table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.02)}
-    th,td{padding:10px 10px;border-bottom:1px solid rgba(148,163,184,.12);font-size:13px;text-align:left;white-space:nowrap}
-    th{font-size:11px;color:#c3d0e2;text-transform:uppercase;letter-spacing:.08em;background:rgba(255,255,255,.03)}
-    .list{display:grid;gap:10px}
-    .row-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
-    .row-item .title{font-weight:700}
-    .row-item .meta{color:var(--muted);font-size:12px;margin-top:4px}
-    .asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-    .asset{padding:12px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
-    .asset .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .asset small{display:block;color:var(--muted);margin-top:6px}
-    .canvas-card{padding:14px;height:420px}
-    #equityChart{width:100%;height:100%}
-    .error{display:none;padding:12px 14px;border-radius:16px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#fecaca;white-space:pre-wrap;margin-bottom:14px}
-    .ok{color:var(--green)} .bad{color:var(--red)} .muted{color:var(--muted)}
-    @media (max-width: 1240px){
-      .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
-      .layout{grid-template-columns:1fr}
-    }
-    @media (max-width: 760px){
-      body{padding:14px}
-      .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .form-grid,.two-col,.asset-grid{grid-template-columns:1fr}
-      .range-row{grid-template-columns:1fr}
-      .canvas-card{height:340px}
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>SniperBot Desk Mobile</title>
+<style>
+:root{
+  --bg:#08101f;
+  --bg2:#0b162c;
+  --panel:rgba(15, 23, 42, .82);
+  --panel2:rgba(20, 30, 54, .92);
+  --line:rgba(148, 163, 184, .16);
+  --text:#e5eefc;
+  --muted:#8fa3c7;
+  --accent:#4f8cff;
+  --accent2:#22c55e;
+  --warn:#f59e0b;
+  --danger:#ef4444;
+  --shadow: 0 12px 30px rgba(0,0,0,.28);
+  --radius:22px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(79,140,255,.22), transparent 28%),
+    radial-gradient(circle at top right, rgba(34,197,94,.14), transparent 24%),
+    linear-gradient(180deg, var(--bg), var(--bg2));
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 18%, transparent 82%, rgba(255,255,255,.02));
+}
+.app{
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 12px 12px 92px;
+}
+.topbar{
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 12px;
+  padding: 14px 14px 12px;
+  border:1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(7, 13, 25, .78);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+}
+.brand-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.logo{
+  width:42px;height:42px;border-radius:14px;
+  background: linear-gradient(135deg, rgba(79,140,255,.95), rgba(34,197,94,.85));
+  box-shadow: 0 8px 18px rgba(79,140,255,.25);
+  display:grid;place-items:center;
+  font-weight:800;
+}
+.brand h1{font-size:15px;line-height:1;margin:0;letter-spacing:.2px}
+.brand p{font-size:12px;color:var(--muted);margin:4px 0 0}
+.pill{
+  padding:8px 10px;border-radius:999px;
+  background:rgba(34,197,94,.14);
+  border:1px solid rgba(34,197,94,.28);
+  color:#bff4cc;
+  font-size:12px;font-weight:700;
+  white-space:nowrap;
+}
+.status-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+  margin-top:12px;
+}
+.kpi{
+  border:1px solid var(--line);
+  background: rgba(15, 23, 42, .62);
+  border-radius:18px;
+  padding:10px 10px 9px;
+}
+.kpi .label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.kpi .value{font-size:16px;font-weight:800;letter-spacing:.1px}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:4px}
+.tabs{
+  display:none;
+}
+.tab.active{display:block;animation:fade .18s ease-out}
+@keyframes fade{from{opacity:.5;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.card{
+  border:1px solid var(--line);
+  background: linear-gradient(180deg, rgba(20, 30, 54, .92), rgba(12, 19, 37, .92));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;
+}
+.card h2{margin:0;font-size:14px;letter-spacing:.2px}
+.card .hint{font-size:12px;color:var(--muted)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.metric{
+  padding:12px;border-radius:18px;
+  background: rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.05);
+}
+.metric .m-label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.metric .m-value{font-size:18px;font-weight:800}
+.metric .m-foot{font-size:11px;color:var(--muted);margin-top:4px}
+.chart-wrap{
+  border-radius:18px;
+  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+  border:1px solid rgba(255,255,255,.06);
+  padding:12px;
+}
+svg{width:100%;height:auto;display:block}
+.axis-label{fill:#8fa3c7;font-size:11px}
+.line{fill:none;stroke:#4f8cff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.area{fill:rgba(79,140,255,.14)}
+.dot{fill:#22c55e}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.legend span{
+  font-size:11px;color:#d8e4fb;padding:6px 8px;border-radius:999px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);
+}
+.row{display:flex;gap:10px;align-items:center}
+.row-between{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.progress{
+  height:10px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid rgba(255,255,255,.06);
+}
+.progress > div{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));width:61%}
+.list{
+  display:flex;flex-direction:column;gap:10px;
+}
+.item{
+  display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
+  padding:12px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);
+}
+.item strong{display:block;font-size:13px}
+.item small{display:block;color:var(--muted);margin-top:4px;line-height:1.4}
+.badge{font-size:11px;font-weight:700;padding:6px 8px;border-radius:999px;white-space:nowrap}
+.badge.green{background:rgba(34,197,94,.15);color:#bef7cd;border:1px solid rgba(34,197,94,.25)}
+.badge.blue{background:rgba(79,140,255,.15);color:#d5e4ff;border:1px solid rgba(79,140,255,.25)}
+.badge.red{background:rgba(239,68,68,.15);color:#ffd0d0;border:1px solid rgba(239,68,68,.25)}
+.badge.gold{background:rgba(245,158,11,.15);color:#ffe3b0;border:1px solid rgba(245,158,11,.25)}
+input, select{
+  width:100%;
+  padding:12px 12px;
+  margin-top:8px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(4, 9, 18, .8);
+  color: var(--text);
+  outline:none;
+}
+input::placeholder{color:#6f7f9c}
+button{
+  width:100%;
+  padding:13px 14px;
+  border:none;
+  border-radius:16px;
+  color:white;
+  font-weight:800;
+  margin-top:10px;
+  background: linear-gradient(135deg, var(--accent), #2f6cff 54%, var(--accent2));
+  box-shadow: 0 10px 22px rgba(79,140,255,.22);
+}
+button.secondary{
+  background: rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:none;
+}
+.split-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.bottom-nav{
+  position:fixed;
+  left:0;right:0;bottom:0;
+  display:flex;
+  justify-content:center;
+  z-index:20;
+  padding: 10px 10px 14px;
+  pointer-events:none;
+}
+.nav-shell{
+  width:min(480px, calc(100vw - 20px));
+  background: rgba(5, 10, 20, .82);
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow: 0 18px 40px rgba(0,0,0,.38);
+  backdrop-filter: blur(18px);
+  border-radius: 22px;
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  padding:8px;
+  pointer-events:auto;
+}
+.nav-item{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  color:var(--muted);
+  border-radius:16px;
+  padding:10px 6px;
+  cursor:pointer;
+  transition:.18s ease;
+  user-select:none;
+}
+.nav-item .ico{font-size:18px;line-height:1}
+.nav-item .txt{font-size:11px;font-weight:700}
+.nav-item.active{
+  color:white;
+  background: linear-gradient(180deg, rgba(79,140,255,.18), rgba(34,197,94,.10));
+  border:1px solid rgba(79,140,255,.18);
+}
+.footer-note{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
+textarea{
+  width:100%;min-height:104px;resize:none;
+  padding:12px;border-radius:14px;margin-top:8px;
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(4, 9, 18, .8);
+  color:var(--text);
+}
+@media (min-width: 600px){
+  .app{max-width:520px}
+}
+</style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="app">
     <div class="topbar">
-      <div class="brand">
-        <h1>Sniper Bot · Institutional Dashboard</h1>
-        <p>Controle de estratégia, backtest histórico, otimização e execução em tempo real em uma única tela.</p>
+      <div class="brand-row">
+        <div class="brand">
+          <div class="logo">SB</div>
+          <div>
+            <h1>SniperBot Desk</h1>
+            <p>Mobile Institutional Control Room</p>
+          </div>
+        </div>
+        <div class="pill">LIVE • ONLINE</div>
+      </div><div class="status-grid">
+    <div class="kpi">
+      <div class="label">Saldo</div>
+      <div class="value" id="saldoTop">R$ 0</div>
+      <div class="sub">Conta principal</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Win Rate</div>
+      <div class="value" id="winrateTop">0%</div>
+      <div class="sub">Últimos testes</div>
+    </div>
+    <div class="kpi">
+      <div class="label">PF</div>
+      <div class="value" id="pfTop">0.00</div>
+      <div class="sub">Profit factor</div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-home" class="tab active">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Visão geral</h2>
+        <div class="hint">Controle resumido da operação</div>
       </div>
-      <div class="status-row">
-        <span class="pill"><span class="dot" id="api-dot"></span><strong id="api-label">API</strong> <span id="api-state">carregando</span></span>
-        <span class="pill"><strong id="updated-at">—</strong></span>
-        <span class="pill"><strong id="mode-label">—</strong> <span id="timeframe-label">—</span></span>
-        <button class="btn ghost" id="btn-token">Token</button>
-        <button class="btn primary" id="btn-refresh">Atualizar tudo</button>
-      </div>
+      <span class="badge blue">Desk</span>
     </div>
 
-    <div id="error-banner" class="error"></div>
-
-    <div class="grid cards">
-      <div class="card metric"><div class="label">Saldo</div><div class="value" id="balance">—</div><div class="sub" id="balance-sub">Inicial: —</div></div>
-      <div class="card metric"><div class="label">Win Rate</div><div class="value" id="winrate">—</div><div class="sub" id="wr-sub">—</div></div>
-      <div class="card metric"><div class="label">Profit Factor</div><div class="value" id="pf">—</div><div class="sub" id="pf-sub">Expectancy: —</div></div>
-      <div class="card metric"><div class="label">Drawdown</div><div class="value" id="dd">—</div><div class="sub" id="dd-sub">Máx. drawdown</div></div>
-      <div class="card metric"><div class="label">Trades ativos</div><div class="value" id="active-count">—</div><div class="sub">P&amp;L em tempo real</div></div>
-      <div class="card metric"><div class="label">Pendentes</div><div class="value" id="pending-count">—</div><div class="sub">Fila de sinais</div></div>
-    </div>
-
-    <div class="layout">
-      <div class="section">
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Strategy Lab</h2>
-              <div class="subtle">Ajuste do motor de decisão que o backtest e a dashboard usam.</div>
-            </div>
-            <div class="chips">
-              <span class="chip blue" id="strategy-chip">Carregando…</span>
-              <button class="btn good" id="btn-save-strategy">Salvar estratégia</button>
-            </div>
-          </div>
-          <div class="form-grid" style="margin-bottom:14px">
-            <div class="field">
-              <label>Min confluence</label>
-              <div class="range-row"><input id="min_confluence" class="input" type="number" min="1" max="20" step="1"><input id="min_confluence_range" type="range" min="1" max="20" step="1"><input id="min_confluence_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>ADX mínimo</label>
-              <div class="range-row"><input id="adx_min" class="input" type="number" min="0" max="60" step="0.5"><input id="adx_min_range" type="range" min="0" max="60" step="0.5"><input id="adx_min_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>ATR SL múltiplo</label>
-              <div class="range-row"><input id="atr_sl_mult" class="input" type="number" min="0.5" max="6" step="0.1"><input id="atr_sl_mult_range" type="range" min="0.5" max="6" step="0.1"><input id="atr_sl_mult_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>ATR TP múltiplo</label>
-              <div class="range-row"><input id="atr_tp_mult" class="input" type="number" min="0.5" max="10" step="0.1"><input id="atr_tp_mult_range" type="range" min="0.5" max="10" step="0.1"><input id="atr_tp_mult_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>Pullback mínimo</label>
-              <div class="range-row"><input id="pull_min" class="input" type="number" min="-10" max="10" step="0.1"><input id="pull_min_range" type="range" min="-10" max="10" step="0.1"><input id="pull_min_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>Pullback máximo</label>
-              <div class="range-row"><input id="pull_max" class="input" type="number" min="-10" max="10" step="0.1"><input id="pull_max_range" type="range" min="-10" max="10" step="0.1"><input id="pull_max_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>Risco por trade (%)</label>
-              <div class="range-row"><input id="risk_pct" class="input" type="number" min="0.1" max="10" step="0.1"><input id="risk_pct_range" type="range" min="0.1" max="10" step="0.1"><input id="risk_pct_val" class="input" type="text" readonly></div>
-            </div>
-            <div class="field">
-              <label>Saldo para backtest</label>
-              <input id="bt_balance" class="input" type="number" min="10" step="10" placeholder="1000">
-            </div>
-          </div>
-          <div class="two-col">
-            <div>
-              <div class="mini" style="margin-bottom:8px">Arquivo CSV de 5 anos</div>
-              <input id="csv_file" class="input" type="file" accept=".csv,.xls,.xlsx" />
-              <div class="mini" style="margin-top:8px">Você pode otimizar a configuração no histórico local enviado para a dashboard.</div>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:10px;align-items:stretch;justify-content:flex-end">
-              <button class="btn primary" id="btn-run-live">Rodar backtest no Twelve Data</button>
-              <button class="btn" id="btn-run-csv">Rodar backtest no CSV</button>
-              <button class="btn good" id="btn-optimize">Otimizar no CSV</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Curva de capital</h2>
-              <div class="subtle">Equity curve do histórico recente.</div>
-            </div>
-            <span class="chip violet" id="equity-tag">—</span>
-          </div>
-          <div class="canvas-card"><canvas id="equityChart"></canvas></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Ativos</h2>
-              <div class="subtle">Selecione os símbolos liberados para a operação.</div>
-            </div>
-            <div class="chips">
-              <span class="chip blue" id="allowed-label">—</span>
-              <button class="btn" id="btn-save-assets">Salvar ativos</button>
-            </div>
-          </div>
-          <div id="asset-grid" class="asset-grid"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Trades ativos</h2>
-              <div class="subtle">Preço atual, distância até SL/TP e P&amp;L estimado.</div>
-            </div>
-            <span class="chip blue" id="trade-limit-mode">—</span>
-          </div>
-          <div id="active-trades" class="list"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Histórico</h2>
-              <div class="subtle">Últimos fechamentos.</div>
-            </div>
-            <div class="chips"><span class="chip green" id="wins-tag">0W</span><span class="chip red" id="losses-tag">0L</span><span class="chip amber" id="dd-tag">DD 0%</span></div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Fechado</th><th>Ativo</th><th>Dir.</th><th>Resultado</th><th>P&amp;L</th><th>Conf.</th></tr></thead>
-              <tbody id="history-body"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
+    <div class="grid-2">
+      <div class="metric">
+        <div class="m-label">P&L total</div>
+        <div class="m-value" id="pnl">+0.00</div>
+        <div class="m-foot">Acumulado do backtest</div>
       </div>
-
-      <div class="section">
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Gestão operacional</h2>
-              <div class="subtle">Limite de simultâneos e atualização rápida.</div>
-            </div>
-            <span class="chip blue" id="trade-limit-current">—</span>
-          </div>
-          <div class="two-col">
-            <div class="field">
-              <label>Limite de trades ativos</label>
-              <select id="trade-limit-select" class="select">
-                <option value="auto">Auto (dinâmico)</option>
-                <option value="1">1 trade ativo</option>
-                <option value="2">2 trades ativos</option>
-                <option value="3">3 trades ativos</option>
-                <option value="4">4 trades ativos</option>
-                <option value="5">5 trades ativos</option>
-                <option value="6">6 trades ativos</option>
-                <option value="7">7 trades ativos</option>
-                <option value="8">8 trades ativos</option>
-                <option value="9">9 trades ativos</option>
-                <option value="10">10 trades ativos</option>
-              </select>
-            </div>
-            <div style="display:flex;align-items:flex-end"><button class="btn primary" id="btn-save-trade-limit">Salvar limite</button></div>
-          </div>
-          <div class="hr"></div>
-          <div class="two-col">
-            <div class="field"><label>Token da dashboard</label><input id="token_input" class="input" placeholder="Bearer token opcional"></div>
-            <div class="field"><label>Confluência ao vivo</label><input id="live_conf" class="input" readonly></div>
-          </div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Confluência e IA</h2>
-              <div class="subtle">Leitura do regime e do filtro inteligente.</div>
-            </div>
-            <span class="chip violet" id="regime-badge">—</span>
-          </div>
-          <div class="two-col">
-            <div class="card" style="padding:14px;background:rgba(255,255,255,.03)"><div class="mini">ADX médio</div><div style="font-size:26px;font-weight:800" id="adx-avg">—</div></div>
-            <div class="card" style="padding:14px;background:rgba(255,255,255,.03)"><div class="mini">RR mínimo</div><div style="font-size:26px;font-weight:800" id="min-rr">—</div></div>
-          </div>
-          <div style="margin-top:12px" id="ai-summary" class="subtle">Nenhuma leitura de IA ainda.</div>
-          <div style="margin-top:8px" id="regime-summary" class="subtle"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Confluência atual</h2>
-              <div class="subtle">Pressão de compra/venda e ativos bloqueados.</div>
-            </div>
-            <span class="chip green" id="conf-count">—</span>
-          </div>
-          <div id="confluence-list" class="list"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Sinais pendentes</h2>
-              <div class="subtle">Ordens aguardando execução.</div>
-            </div>
-            <span class="chip amber" id="pending-meta">—</span>
-          </div>
-          <div id="pending-list" class="list"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Logs recentes</h2>
-              <div class="subtle">Eventos importantes do motor.</div>
-            </div>
-            <span class="chip blue" id="log-count">—</span>
-          </div>
-          <div id="logs-list" class="list"></div>
-        </div>
-
-        <div class="card panel">
-          <div class="panel-head">
-            <div>
-              <h2>Resultado do backtest</h2>
-              <div class="subtle">Resumo do teste atual e melhores parâmetros encontrados.</div>
-            </div>
-            <span class="chip blue" id="bt-status-tag">—</span>
-          </div>
-          <div id="bt-summary" class="subtle">Nenhum teste rodado ainda.</div>
-          <div class="hr"></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Score</th><th>Confluência</th><th>ADX</th><th>ATR SL</th><th>ATR TP</th><th>Pullback</th><th>Risco</th></tr></thead>
-              <tbody id="best-table"><tr><td colspan="7" class="muted">Aguardando otimização…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
+      <div class="metric">
+        <div class="m-label">Trades</div>
+        <div class="m-value" id="trades">0</div>
+        <div class="m-foot">Executados na amostra</div>
       </div>
     </div>
   </div>
 
-<script>
-const $ = (id) => document.getElementById(id);
-let equityChart = null;
-let currentSettings = null;
-let assetMap = [];
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Equity curve</h2>
+        <div class="hint">Linha de performance do sistema</div>
+      </div>
+      <span class="badge green">AUX</span>
+    </div>
+    <div class="chart-wrap">
+      <svg viewBox="0 0 400 180" preserveAspectRatio="none" aria-label="Equity curve">
+        <defs>
+          <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(79,140,255,.30)"/>
+            <stop offset="100%" stop-color="rgba(79,140,255,0)"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="400" height="180" rx="16" fill="rgba(255,255,255,.01)" />
+        <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62 L400,180 L0,180 Z" fill="url(#fade)" />
+        <path d="M0,150 L40,146 L80,138 L120,141 L160,128 L200,116 L240,120 L280,98 L320,84 L360,70 L400,62" class="line" />
+        <circle cx="0" cy="150" r="3.5" class="dot" />
+        <circle cx="80" cy="138" r="3.5" class="dot" />
+        <circle cx="160" cy="128" r="3.5" class="dot" />
+        <circle cx="240" cy="120" r="3.5" class="dot" />
+        <circle cx="320" cy="84" r="3.5" class="dot" />
+        <circle cx="400" cy="62" r="3.5" class="dot" />
+        <text x="8" y="20" class="axis-label">+ tendência positiva</text>
+        <text x="320" y="170" class="axis-label">tempo →</text>
+      </svg>
+      <div class="legend">
+        <span>Drawdown controlado</span>
+        <span>Execução por confluência</span>
+        <span>Risco por trade ajustável</span>
+      </div>
+    </div>
+  </div>
 
-function showError(msg) {
-  const el = $('error-banner');
-  el.style.display = 'block';
-  el.textContent = msg;
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Risk desk</h2>
+        <div class="hint">Gestão operacional em tempo real</div>
+      </div>
+      <span class="badge gold">RISK</span>
+    </div>
+    <div class="grid-3">
+      <div class="metric">
+        <div class="m-label">Risk %</div>
+        <div class="m-value" id="riskPct">2.0%</div>
+        <div class="m-foot">por operação</div>
+      </div>
+      <div class="metric">
+        <div class="m-label">ADX min</div>
+        <div class="m-value" id="adxMin">18</div>
+        <div class="m-foot">força de tendência</div>
+      </div>
+      <div class="metric">
+        <div class="m-label">Confluência</div>
+        <div class="m-value" id="conf">5</div>
+        <div class="m-foot">filtros mínimos</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-strategy" class="tab">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Strategy control</h2>
+        <div class="hint">Parâmetros do motor</div>
+      </div>
+      <span class="badge blue">CONFIG</span>
+    </div>
+    <label>Min confluence<input id="min_confluence" type="number" placeholder="5" /></label>
+    <label>ADX minimum<input id="adx_min" type="number" step="0.1" placeholder="18" /></label>
+    <label>ATR SL multiplier<input id="atr_sl_mult" type="number" step="0.1" placeholder="1.5" /></label>
+    <label>ATR TP multiplier<input id="atr_tp_mult" type="number" step="0.1" placeholder="3.5" /></label>
+    <label>Risk %<input id="risk_pct" type="number" step="0.1" placeholder="2.0" /></label>
+    <label>Pull range
+      <div class="grid-2">
+        <input id="pull_min" type="number" step="0.1" placeholder="-1.0" />
+        <input id="pull_max" type="number" step="0.1" placeholder="2.0" />
+      </div>
+    </label>
+    <div class="split-actions">
+      <button onclick="saveConfig()">Salvar parâmetros</button>
+      <button class="secondary" onclick="loadConfig()">Carregar atual</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Preset institucional</h2>
+        <div class="hint">Baseado na melhor configuração encontrada</div>
+      </div>
+      <span class="badge green">READY</span>
+    </div>
+    <div class="list">
+      <div class="item"><div><strong>Entrada</strong><small>Filtro por confluência e força</small></div><span class="badge blue">5 filtros</span></div>
+      <div class="item"><div><strong>Stop</strong><small>ATR adaptativo para oscilações maiores</small></div><span class="badge red">1.5x ATR</span></div>
+      <div class="item"><div><strong>Take</strong><small>Relação risco/retorno ampliada</small></div><span class="badge green">3.5x ATR</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-backtest" class="tab">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Backtest engine</h2>
+        <div class="hint">Rodar e revisar resultados</div>
+      </div>
+      <span class="badge green">ENGINE</span>
+    </div>
+    <div class="split-actions">
+      <button onclick="runBacktest()">Rodar backtest</button>
+      <button class="secondary" onclick="runOptimize()">Otimizar</button>
+    </div>
+    <div style="margin-top:12px" class="progress"><div id="progressBar"></div></div>
+    <div class="footer-note">Barra visual de operação</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Resultado</h2>
+        <div class="hint">JSON resumido da última execução</div>
+      </div>
+      <span class="badge gold">LOG</span>
+    </div>
+    <textarea id="result" readonly placeholder="Os resultados aparecerão aqui..."></textarea>
+  </div>
+</div>
+
+<div id="tab-exec" class="tab">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Execution monitor</h2>
+        <div class="hint">Situação operacional</div>
+      </div>
+      <span class="badge blue">SYNC</span>
+    </div>
+    <div class="list">
+      <div class="item"><div><strong>Status do motor</strong><small>API conectada e pronta</small></div><span class="badge green">ONLINE</span></div>
+      <div class="item"><div><strong>Último update</strong><small id="lastUpdate">Sem execução ainda</small></div><span class="badge blue">TIME</span></div>
+      <div class="item"><div><strong>Modo</strong><small>Backtest / análise / otimização</small></div><span class="badge gold">MIXED</span></div>
+    </div>
+  </div>
+</div>
+
+  </div>  <div class="bottom-nav">
+    <div class="nav-shell">
+      <div class="nav-item active" data-tab="home" onclick="switchTab('home', this)"><div class="ico">⌂</div><div class="txt">Home</div></div>
+      <div class="nav-item" data-tab="strategy" onclick="switchTab('strategy', this)"><div class="ico">⚙</div><div class="txt">Estratégia</div></div>
+      <div class="nav-item" data-tab="backtest" onclick="switchTab('backtest', this)"><div class="ico">↻</div><div class="txt">Backtest</div></div>
+      <div class="nav-item" data-tab="exec" onclick="switchTab('exec', this)"><div class="ico">▣</div><div class="txt">Execução</div></div>
+    </div>
+  </div><script>
+const DEFAULT_CONFIG = {
+  min_confluence: 5,
+  adx_min: 18,
+  atr_sl_mult: 1.5,
+  atr_tp_mult: 3.5,
+  pull_range: [-1.0, 2.0],
+  risk_pct: 2.0
+};
+
+function switchTab(tab, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
 }
-function clearError() {
-  const el = $('error-banner');
-  el.style.display = 'none';
-  el.textContent = '';
+
+function updateUIFromResult(result) {
+  if (!result) return;
+  const pnl = Number(result.pnl ?? result.total_pnl ?? 0);
+  const winrate = Number(result.winrate ?? result.win_rate ?? 0);
+  const pf = Number(result.profit_factor ?? result.pf ?? 0);
+  const trades = Number(result.trades ?? result.total_trades ?? 0);
+  const balance = Number(result.balance ?? result.equity ?? 0);
+
+  document.getElementById('pnl').innerText = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+  document.getElementById('winrateTop').innerText = winrate.toFixed(1) + '%';
+  document.getElementById('pfTop').innerText = pf.toFixed(2);
+  document.getElementById('trades').innerText = trades.toString();
+  document.getElementById('saldoTop').innerText = 'R$ ' + balance.toFixed(2);
+  document.getElementById('result').value = JSON.stringify(result, null, 2);
+  document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
+  document.getElementById('progressBar').style.width = Math.max(10, Math.min(100, pf * 20)) + '%';
 }
-function fmtMoney(v) {
-  const n = Number(v || 0);
-  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
-}
-function fmtNum(v, d=2) {
-  const n = Number(v || 0);
-  return n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-function tokenFromUrl() {
+
+async function loadConfig() {
   try {
-    const u = new URL(window.location.href);
-    return u.searchParams.get('token') || '';
-  } catch { return ''; }
-}
-function getToken() {
-  return $('token_input').value.trim() || localStorage.getItem('dashboard_token') || tokenFromUrl();
-}
-function setToken(v) {
-  $('token_input').value = v || '';
-  if (v) localStorage.setItem('dashboard_token', v); else localStorage.removeItem('dashboard_token');
-}
-function authHeaders(extra={}) {
-  const h = { ...extra };
-  const t = getToken();
-  if (t) h['Authorization'] = `Bearer ${t}`;
-  return h;
-}
-async function apiFetch(url, opts={}) {
-  const init = { ...opts };
-  init.headers = authHeaders(init.headers || {});
-  const resp = await fetch(url, init);
-  if (!resp.ok) {
-    let txt = '';
-    try { txt = await resp.text(); } catch {}
-    throw new Error(`HTTP ${resp.status} ${resp.statusText}${txt ? ` — ${txt}` : ''}`);
-  }
-  return resp.json();
-}
-function bindRange(name) {
-  const n = $(name);
-  const r = $(`${name}_range`);
-  const v = $(`${name}_val`);
-  const sync = (val) => { n.value = val; r.value = val; v.value = String(val); };
-  n.addEventListener('input', () => sync(n.value));
-  r.addEventListener('input', () => sync(r.value));
-  return sync;
-}
-const syncMinConfluence = bindRange('min_confluence');
-const syncAdx = bindRange('adx_min');
-const syncAtrSl = bindRange('atr_sl_mult');
-const syncAtrTp = bindRange('atr_tp_mult');
-const syncPullMin = bindRange('pull_min');
-const syncPullMax = bindRange('pull_max');
-const syncRisk = bindRange('risk_pct');
+    const res = await fetch('/config');
+    const cfg = await res.json();
+    document.getElementById('min_confluence').value = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
+    document.getElementById('adx_min').value = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
+    document.getElementById('atr_sl_mult').value = cfg.atr_sl_mult ?? DEFAULT_CONFIG.atr_sl_mult;
+    document.getElementById('atr_tp_mult').value = cfg.atr_tp_mult ?? DEFAULT_CONFIG.atr_tp_mult;
+    document.getElementById('risk_pct').value = cfg.risk_pct ?? DEFAULT_CONFIG.risk_pct;
+    const pr = cfg.pull_range ?? DEFAULT_CONFIG.pull_range;
+    document.getElementById('pull_min').value = pr[0];
+    document.getElementById('pull_max').value = pr[1];
 
-function setStrategyValues(s) {
-  currentSettings = s;
-  syncMinConfluence(s.min_confluence);
-  syncAdx(s.adx_min);
-  syncAtrSl(s.atr_sl_mult);
-  syncAtrTp(s.atr_tp_mult);
-  syncPullMin(s.pull_min);
-  syncPullMax(s.pull_max);
-  syncRisk(s.risk_pct);
-  $('strategy-chip').textContent = `min ${s.min_confluence} · ADX ${fmtNum(s.adx_min,1)} · risco ${fmtNum(s.risk_pct,1)}%`;
+    document.getElementById('riskPct').innerText = (cfg.risk_pct ?? DEFAULT_CONFIG.risk_pct).toFixed(1) + '%';
+    document.getElementById('adxMin').innerText = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
+    document.getElementById('conf').innerText = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
+  } catch (e) {
+    const cfg = DEFAULT_CONFIG;
+    document.getElementById('min_confluence').value = cfg.min_confluence;
+    document.getElementById('adx_min').value = cfg.adx_min;
+    document.getElementById('atr_sl_mult').value = cfg.atr_sl_mult;
+    document.getElementById('atr_tp_mult').value = cfg.atr_tp_mult;
+    document.getElementById('risk_pct').value = cfg.risk_pct;
+    document.getElementById('pull_min').value = cfg.pull_range[0];
+    document.getElementById('pull_max').value = cfg.pull_range[1];
+  }
 }
-function readStrategyValues() {
-  return {
-    min_confluence: Number($('min_confluence').value),
-    adx_min: Number($('adx_min').value),
-    atr_sl_mult: Number($('atr_sl_mult').value),
-    atr_tp_mult: Number($('atr_tp_mult').value),
-    pull_min: Number($('pull_min').value),
-    pull_max: Number($('pull_max').value),
-    risk_pct: Number($('risk_pct').value),
+
+async function saveConfig() {
+  const config = {
+    min_confluence: Number(document.getElementById('min_confluence').value || DEFAULT_CONFIG.min_confluence),
+    adx_min: Number(document.getElementById('adx_min').value || DEFAULT_CONFIG.adx_min),
+    atr_sl_mult: Number(document.getElementById('atr_sl_mult').value || DEFAULT_CONFIG.atr_sl_mult),
+    atr_tp_mult: Number(document.getElementById('atr_tp_mult').value || DEFAULT_CONFIG.atr_tp_mult),
+    pull_range: [
+      Number(document.getElementById('pull_min').value || DEFAULT_CONFIG.pull_range[0]),
+      Number(document.getElementById('pull_max').value || DEFAULT_CONFIG.pull_range[1])
+    ],
+    risk_pct: Number(document.getElementById('risk_pct').value || DEFAULT_CONFIG.risk_pct)
   };
-}
-function renderMetric(id, val) { $(id).textContent = val; }
-function renderPill(id, val) { $(id).textContent = val; }
-function badgeClassForOutcome(text) {
-  const t = String(text || '').toUpperCase();
-  if (t.includes('WIN') || t.includes('BUY') || t.includes('ALTA') || t.includes('OK')) return 'ok';
-  if (t.includes('LOSS') || t.includes('SELL') || t.includes('BAIXA') || t.includes('ERROR')) return 'bad';
-  return 'warn';
-}
-function makeChart(curve) {
-  const ctx = $('equityChart');
-  const labels = (curve || []).map(x => x.t || x.i || '');
-  const data = (curve || []).map(x => Number(x.balance ?? x.y ?? 0));
-  if (equityChart) equityChart.destroy();
-  equityChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Equity',
-        data,
-        tension: 0.25,
-        borderWidth: 2,
-        pointRadius: 0,
-        fill: true,
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#9fb1c9', maxTicksLimit: 8 }, grid: { color: 'rgba(148,163,184,.08)' } },
-        y: { ticks: { color: '#9fb1c9' }, grid: { color: 'rgba(148,163,184,.08)' } },
-      }
-    }
-  });
-  $('equity-tag').textContent = `${data.length} pontos`;
-}
-function renderAssets(payload) {
-  assetMap = payload.assets || [];
-  $('allowed-label').textContent = `Liberados: ${(payload.allowed_symbols || []).length}`;
-  const selected = new Set(payload.selected_symbols || []);
-  $('asset-grid').innerHTML = assetMap.map(a => `
-    <label class="asset">
-      <div class="top">
-        <div>
-          <div style="font-weight:800">${a.symbol}</div>
-          <small>${a.name}</small>
-        </div>
-        <input type="checkbox" ${selected.has(a.symbol) ? 'checked' : ''} data-symbol="${a.symbol}" ${a.allowed ? '' : 'disabled'} />
-      </div>
-      <small>${a.allowed ? 'Permitido pela banca' : 'Bloqueado pela banca'}</small>
-    </label>`).join('');
-}
-function renderActiveTrades(items) {
-  $('active-count').textContent = String(items.length);
-  if (!items.length) {
-    $('active-trades').innerHTML = '<div class="subtle">Nenhum trade ativo.</div>';
-    return;
-  }
-  $('active-trades').innerHTML = items.map(t => `
-    <div class="row-item">
-      <div>
-        <div class="title">${t.symbol} · ${t.dir}</div>
-        <div class="meta">Entry ${fmtNum(t.entry, t.symbol === 'USDJPY' ? 3 : 5)} · SL ${fmtNum(t.sl, t.symbol === 'USDJPY' ? 3 : 5)} · TP ${fmtNum(t.tp, t.symbol === 'USDJPY' ? 3 : 5)}</div>
-        <div class="meta">${fmtNum(t.tp_progress, 1)}% até o TP · ${fmtNum(t.sl_dist_pips, 1)} pips do SL · ${fmtNum(t.tp_dist_pips, 1)} pips do TP</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:18px;font-weight:800;color:${Number(t.pnl) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(t.pnl)}</div>
-        <div class="meta">${fmtNum(t.pnl_pips, 1)} pips · ${fmtNum(t.pnl_pct, 1)}%</div>
-      </div>
-    </div>`).join('');
-}
-function renderHistory(rows) {
-  $('history-body').innerHTML = rows.length ? rows.map(r => `
-    <tr>
-      <td>${r.closed_at || ''}</td>
-      <td>${r.symbol || ''}</td>
-      <td>${r.dir || ''}</td>
-      <td><span class="chip ${badgeClassForOutcome(r.result)}">${r.result || ''}</span></td>
-      <td style="color:${Number(r.pnl) >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoney(r.pnl)}</td>
-      <td>${fmtNum(r.score || r.ai_confidence || 0, 1)}</td>
-    </tr>`).join('') : '<tr><td colspan="6" class="muted">Sem histórico.</td></tr>';
-  const wins = Number(window.__metrics?.wins || 0);
-  const losses = Number(window.__metrics?.losses || 0);
-  $('wins-tag').textContent = `${wins}W`;
-  $('losses-tag').textContent = `${losses}L`;
-}
-function renderLogs(logs) {
-  $('log-count').textContent = `${logs.length}`;
-  $('logs-list').innerHTML = logs.length ? logs.map(l => `
-    <div class="row-item">
-      <div>
-        <div class="title">${l.type || 'log'}</div>
-        <div class="meta">${l.message || l.msg || JSON.stringify(l).slice(0, 160)}</div>
-      </div>
-      <div class="meta">${l.created_at || l.ts || ''}</div>
-    </div>`).join('') : '<div class="subtle">Sem logs recentes.</div>';
-}
-function renderPending(rows) {
-  $('pending-count').textContent = String(rows.length);
-  $('pending-meta').textContent = `${rows.length} pendentes`;
-  $('pending-list').innerHTML = rows.length ? rows.map(p => `
-    <div class="row-item">
-      <div>
-        <div class="title">${p.symbol || ''} · ${p.dir || p.direction || ''}</div>
-        <div class="meta">Conf. ${fmtNum(p.score || 0, 1)} / ${fmtNum(p.score_total || 0, 1)} · RR ${fmtNum(p.rr || 0, 2)}</div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn ghost" onclick="rejectPending('${p.id || p.pending_id || ''}')">Rejeitar</button>
-        <button class="btn primary" onclick="executePending('${p.id || p.pending_id || ''}')">Executar</button>
-      </div>
-    </div>`).join('') : '<div class="subtle">Nenhum sinal pendente.</div>';
-}
-function renderConfluence(rows) {
-  $('conf-count').textContent = `${rows.length}`;
-  $('confluence-list').innerHTML = rows.length ? rows.map(r => `
-    <div class="row-item">
-      <div>
-        <div class="title">${r.symbol || ''} · ${r.direction || ''}</div>
-        <div class="meta">Score ${r.score || 0}/${r.max_score || 0} · ${r.regime || '—'} · ${r.setup_type || '—'}</div>
-      </div>
-      <div class="chips">
-        <span class="chip ${r.locked ? 'red' : 'green'}">${r.locked ? 'bloqueado' : 'liberado'}</span>
-        <span class="chip blue">${r.pass ? 'passou' : 'aguardando'}</span>
-      </div>
-    </div>`).join('') : '<div class="subtle">Sem leitura de confluência.</div>';
-}
-function renderAI(ai) {
-  $('regime-badge').textContent = ai.live_regime || 'neutral';
-  $('live_conf').value = ai.live_confluence ?? '';
-  $('strategy-chip').textContent = `min ${$('min_confluence').value} · ADX ${fmtNum($('adx_min').value,1)} · risco ${fmtNum($('risk_pct').value,1)}%`;
-  $('adx-avg').textContent = fmtNum(ai.live_adx_avg || 0, 1);
-  $('min-rr').textContent = fmtNum(ai.min_rr || 0, 2);
-  $('ai-summary').textContent = ai.opus_summary || '—';
-  $('regime-summary').textContent = ai.last_suggestion || '';
-}
-function fillTradeSettings(s) {
-  $('trade-limit-select').value = s.max_active_trades === null ? 'auto' : String(s.max_active_trades);
-  $('trade-limit-mode').textContent = s.max_active_trades === null ? 'Auto' : 'Manual';
-  $('trade-limit-current').textContent = s.max_active_trades === null ? 'Auto' : String(s.max_active_trades);
-}
-function fillStatus(status) {
-  $('balance').textContent = fmtMoney(status.balance);
-  $('balance-sub').textContent = `Inicial: ${fmtMoney(status.initial_balance)}`;
-  $('winrate').textContent = `${fmtNum(status.winrate, 1)}%`;
-  $('wr-sub').textContent = `${status.wins || 0}W / ${status.losses || 0}L`;
-  $('active-count').textContent = String((status.active_trades || []).length);
-  $('pending-count').textContent = String(status.pending_count || 0);
-  $('dd').textContent = `${fmtNum(status.drawdown_pct || 0, 1)}%`;
-  $('dd-sub').textContent = `Máx. ${fmtNum(status.max_drawdown_pct || 0, 1)}%`;
-  $('mode-label').textContent = status.signal_only ? 'Signal only' : 'Live';
-  $('timeframe-label').textContent = `${status.leverage || '—'}x`;
-  $('updated-at').textContent = new Date().toLocaleString('pt-BR');
-  $('trade-limit-current').textContent = status.max_trades_source === 'auto' ? 'Auto' : String(status.max_trades_override || '—');
-  $('trade-limit-mode').textContent = status.max_trades_source === 'auto' ? 'Auto' : 'Manual';
-  $('allowed-label').textContent = `Liberados: ${(status.allowed_symbols || []).length}`;
-  $('api-dot').className = 'dot ok';
-  $('api-state').textContent = 'online';
-  $('api-label').textContent = 'API';
-  $('api-state').className = 'ok';
-  window.__status = status;
-}
-function fillMetrics(metrics) {
-  window.__metrics = metrics.current || metrics;
-  $('pf').textContent = fmtNum(metrics.current?.profit_factor ?? metrics.profit_factor ?? 0, 2);
-  $('pf-sub').textContent = `Expectancy: ${fmtMoney(metrics.current?.expectancy ?? metrics.expectancy ?? 0)}`;
-}
-async function refreshAll() {
-  clearError();
-  try {
-    const [status, assets, tradeSettings, strategy, history, logs, confluence, ai, metrics, curve, pending] = await Promise.all([
-      apiFetch('/api/status'),
-      apiFetch('/api/assets'),
-      apiFetch('/api/trade-settings'),
-      apiFetch('/api/strategy-config'),
-      apiFetch('/api/history?limit=20'),
-      apiFetch('/api/logs?limit=20'),
-      apiFetch('/api/confluence'),
-      apiFetch('/api/ai_params'),
-      apiFetch('/api/metrics'),
-      apiFetch('/api/equity_curve'),
-      apiFetch('/api/pending'),
-    ]);
-    fillStatus(status);
-    renderActiveTrades(status.active_trades || []);
-    fillTradeSettings(tradeSettings.settings || tradeSettings);
-    setStrategyValues(strategy.settings || strategy);
-    renderAssets(assets);
-    renderHistory(history || []);
-    renderLogs(logs.logs || logs || []);
-    renderConfluence(confluence.confluence || confluence || []);
-    renderAI(ai);
-    fillMetrics(metrics);
-    renderPending(pending || []);
-    makeChart(curve || []);
-    $('bt-status-tag').textContent = 'pronto';
-    $('bt-summary').textContent = `Banco vivo: ${fmtMoney(status.balance)} · Drawdown ${fmtNum(status.drawdown_pct || 0,1)}%`;
-    $('api-dot').className = 'dot ok';
-  } catch (err) {
-    $('api-dot').className = 'dot bad';
-    $('api-state').textContent = 'offline';
-    showError(err.message || String(err));
-  }
-}
-async function saveStrategy() {
-  const payload = readStrategyValues();
-  const res = await apiFetch('/api/strategy-config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-  setStrategyValues(res.settings || payload);
-  $('bt-status-tag').textContent = 'estratégia salva';
-  await refreshAll();
-}
-async function saveAssets() {
-  const selected = Array.from(document.querySelectorAll('#asset-grid input[type=checkbox]:checked')).map(el => el.dataset.symbol);
-  await apiFetch('/api/assets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ selected_symbols: selected }) });
-  await refreshAll();
-}
-async function saveTradeLimit() {
-  const v = $('trade-limit-select').value;
-  await apiFetch('/api/trade-settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ max_active_trades: v === 'auto' ? null : Number(v) }) });
-  await refreshAll();
-}
-async function runLiveBacktest() {
-  $('bt-status-tag').textContent = 'rodando…';
-  const payload = { symbol: 'EURUSD', outputsize: 5000, balance: Number($('bt_balance').value || 1000), ...readStrategyValues() };
-  const res = await apiFetch('/api/backtest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-  $('bt-summary').textContent = `${res.symbol} · ${res.interval} · ${res.bars} candles · Trades ${res.metrics.total_trades} · PF ${fmtNum(res.metrics.profit_factor, 2)} · WR ${fmtNum(res.metrics.winrate, 1)}% · PnL ${fmtMoney(res.metrics.total_pnl)}`;
-  $('bt-status-tag').textContent = 'backtest live pronto';
-  if (res.equity_curve) makeChart(res.equity_curve);
-}
-async function runCsvBacktest() {
-  const file = $('csv_file').files[0];
-  if (!file) { showError('Escolha um CSV primeiro.'); return; }
-  $('bt-status-tag').textContent = 'rodando CSV…';
-  const fd = new FormData();
-  fd.append('csv', file);
-  fd.append('symbol', 'EURUSD');
-  fd.append('balance', String(Number($('bt_balance').value || 1000)));
-  Object.entries(readStrategyValues()).forEach(([k,v]) => fd.append(k, String(v)));
-  const res = await apiFetch('/api/backtest/upload', { method:'POST', body: fd });
-  $('bt-summary').textContent = `${res.symbol} · ${res.timeframe} · ${res.bars} candles · Trades ${res.metrics.total_trades} · PF ${fmtNum(res.metrics.profit_factor, 2)} · WR ${fmtNum(res.metrics.winrate, 1)}% · PnL ${fmtMoney(res.metrics.total_pnl)}`;
-  $('bt-status-tag').textContent = 'CSV pronto';
-  if (res.equity_curve) makeChart(res.equity_curve);
-}
-async function optimizeCsv() {
-  const file = $('csv_file').files[0];
-  if (!file) { showError('Escolha um CSV para otimização.'); return; }
-  $('bt-status-tag').textContent = 'otimizando…';
-  const fd = new FormData();
-  fd.append('csv', file);
-  fd.append('symbol', 'EURUSD');
-  fd.append('balance', String(Number($('bt_balance').value || 1000)));
-  const res = await apiFetch('/api/backtest/optimize', { method:'POST', body: fd });
-  $('bt-status-tag').textContent = 'otimização pronta';
-  const b = res.best || {};
-  $('best-table').innerHTML = b ? `
-    <tr>
-      <td>${fmtNum(b.score || 0, 2)}</td>
-      <td>${b.min_confluence ?? '—'}</td>
-      <td>${fmtNum(b.adx_min ?? 0, 1)}</td>
-      <td>${fmtNum(b.atr_sl_mult ?? 0, 2)}</td>
-      <td>${fmtNum(b.atr_tp_mult ?? 0, 2)}</td>
-      <td>${Array.isArray(b.pull_range) ? `${fmtNum(b.pull_range[0], 1)} / ${fmtNum(b.pull_range[1], 1)}` : '—'}</td>
-      <td>${fmtNum(b.risk_pct ?? 0, 1)}%</td>
-    </tr>` : '<tr><td colspan="7" class="muted">Sem resultado.</td></tr>';
-  $('bt-summary').textContent = `Melhor score: ${fmtNum(b.score || 0, 2)} · ${res.symbol} · ${res.timeframe} · ${res.top ? res.top.length : 0} combinações no topo.`;
-  setStrategyValues(b);
-  if (b && b.metrics) {
-    $('pf').textContent = fmtNum(b.metrics.profit_factor ?? 0, 2);
-    $('wr-sub').textContent = `${b.metrics.wins || 0}W / ${b.metrics.losses || 0}L`;
-  }
-}
-async function rejectPending(id) { if (!id) return; await apiFetch('/api/reject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pending_id: id }) }); await refreshAll(); }
-async function executePending(id) { if (!id) return; await apiFetch('/api/execute', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pending_id: id, amount: 1 }) }); await refreshAll(); }
 
-$('btn-refresh').addEventListener('click', refreshAll);
-$('btn-save-strategy').addEventListener('click', saveStrategy);
-$('btn-save-assets').addEventListener('click', saveAssets);
-$('btn-save-trade-limit').addEventListener('click', saveTradeLimit);
-$('btn-run-live').addEventListener('click', runLiveBacktest);
-$('btn-run-csv').addEventListener('click', runCsvBacktest);
-$('btn-optimize').addEventListener('click', optimizeCsv);
-$('btn-token').addEventListener('click', () => {
-  const v = prompt('Token da dashboard (opcional):', getToken() || '');
-  if (v !== null) { setToken(v.trim()); refreshAll(); }
-});
-['min_confluence','adx_min','atr_sl_mult','atr_tp_mult','pull_min','pull_max','risk_pct'].forEach(name => {
-  const n = $(name), r = $(`${name}_range`), v = $(`${name}_val`);
-  const sync = () => { n.value = r.value = n.value || r.value; v.value = n.value; };
-  n.addEventListener('input', () => { r.value = n.value; v.value = n.value; });
-  r.addEventListener('input', () => { n.value = r.value; v.value = r.value; });
-});
-setToken(localStorage.getItem('dashboard_token') || tokenFromUrl());
-(async () => {
-  try {
-    const s = await apiFetch('/api/strategy-config');
-    setStrategyValues(s.settings || s);
-  } catch {}
-  refreshAll();
-  setInterval(refreshAll, 45000);
-})();
-</script>
-</body>
+  const res = await fetch('/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  const data = await res.json();
+  document.getElementById('riskPct').innerText = config.risk_pct.toFixed(1) + '%';
+  document.getElementById('adxMin').innerText = config.adx_min;
+  document.getElementById('conf').innerText = config.min_confluence;
+  document.getElementById('lastUpdate').innerText = 'Config salva agora';
+  updateUIFromResult(data.result || {});
+  alert('Configuração salva');
+}
+
+async function runBacktest() {
+  document.getElementById('progressBar').style.width = '18%';
+  const res = await fetch('/run_backtest', { method: 'POST' });
+  const data = await res.json();
+  updateUIFromResult(data.result || data);
+  document.getElementById('progressBar').style.width = '100%';
+}
+
+async function runOptimize() {
+  document.getElementById('progressBar').style.width = '12%';
+  const res = await fetch('/api/backtest/optimize', { method: 'POST' });
+  const data = await res.json();
+  updateUIFromResult(data.best_result || data.result || data);
+  document.getElementById('progressBar').style.width = '100%';
+}
+
+loadConfig();
+</script></body>
 </html>
