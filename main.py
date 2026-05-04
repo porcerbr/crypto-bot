@@ -28,6 +28,7 @@ from db import load_state, append_log, save_metrics, calculate_metrics
 from bot import TradingBot
 from signals import scan
 from api import create_api
+from telegram_hedgefund import TelegramDesk
 
 # Pandas .ewm() em séries longas pode aprofundar a pilha — aumenta o limite
 sys.setrecursionlimit(5000)
@@ -71,7 +72,13 @@ def send_startup_notification(bot):
     
     msg += f"🕐 Iniciado: {datetime.now().strftime('%d/%m %H:%M UTC')}"
 
-    bot.send(msg)
+    if getattr(bot, 'telegram_desk', None):
+        try:
+            bot.telegram_desk.push_startup(bot)
+        except Exception:
+            bot.send(msg)
+    else:
+        bot.send(msg)
     append_log("startup", {"balance": bot.balance, "winrate": wr})
 
 
@@ -99,7 +106,7 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
         "VOLATILE": "⚡",
     }.get(live_regime, "➡️")
 
-    bot.send(
+    msg = (
         "💓 HEARTBEAT — Bot operando\n"
         "------------------------------\n"
         f"💰 Saldo: ${round(bot.balance, 2)}\n"
@@ -108,6 +115,13 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
         f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\n"
         f"🎯 Confluência mínima efetiva: {eff_conf} pts"
     )
+    if getattr(bot, 'telegram_desk', None):
+        try:
+            bot.telegram_desk.push_heartbeat(bot, regime_info)
+        except Exception:
+            bot.send(msg)
+    else:
+        bot.send(msg)
     
     append_log("heartbeat", {
         "balance": bot.balance,
@@ -156,7 +170,13 @@ def send_daily_report(bot):
         f"   Expectancy: ${metrics['expectancy']}/trade\n"
         f"   Max Drawdown: {metrics['max_drawdown_pct']}%"
     )
-    bot.send(msg)
+    if getattr(bot, 'telegram_desk', None):
+        try:
+            bot.telegram_desk.push_report(bot)
+        except Exception:
+            bot.send(msg)
+    else:
+        bot.send(msg)
     save_metrics(metrics)
     append_log("daily_report", metrics)
 
@@ -172,7 +192,10 @@ def send_error_notification(bot, error_msg: str, traceback_str: str = ""):
         msg += f"\n📋 Traceback:\n{traceback_str[:500]}\n"
     msg += f"\n🕐 {datetime.now().strftime('%d/%m %H:%M:%S UTC')}"
     try:
-        bot.send(msg)
+        if getattr(bot, 'telegram_desk', None):
+            bot.telegram_desk.send_plain(msg)
+        else:
+            bot.send(msg)
     except Exception:
         pass
     append_log("error", {"message": error_msg, "traceback": traceback_str})
@@ -184,7 +207,10 @@ def _send_confluence_report(bot):
     from ai_validator import load_ai_params
     from utils import get_allowed_symbols
 
-    bot.send("⏳ Calculando confluência...")
+    if getattr(bot, 'telegram_desk', None):
+        bot.telegram_desk.send("⏳ <b>Calculando confluência...</b>")
+    else:
+        bot.send("⏳ Calculando confluência...")
     try:
         snapshot        = get_confluence_snapshot()
         ai_params       = load_ai_params()
@@ -228,9 +254,15 @@ def _send_confluence_report(bot):
         lines.append("─────────────────────────────────")
         lines.append("🔒 = par bloqueado pelo tier de capital atual.")
         lines.append("Use /confluencia para atualizar.")
-        bot.send("\n".join(lines))
+        if getattr(bot, 'telegram_desk', None):
+            bot.telegram_desk.send("\n".join(lines))
+        else:
+            bot.send("\n".join(lines))
     except Exception as e:
-        bot.send(f"❌ Erro ao calcular confluência: {e}")
+        if getattr(bot, 'telegram_desk', None):
+            bot.telegram_desk.send(f"❌ <b>Erro ao calcular confluência:</b> {e}")
+        else:
+            bot.send(f"❌ Erro ao calcular confluência: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -364,23 +396,26 @@ def bot_loop(bot):
 
         # ── COMANDOS TELEGRAM ──
         try:
-            url  = (
-                f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
-                f"/getUpdates?offset={bot.last_id + 1}&timeout=5"
-            )
-            resp = requests.get(url, timeout=10).json()
-            if "result" in resp:
-                for u in resp["result"]:
-                    if "message" in u and "text" in u["message"]:
-                        txt = u["message"]["text"].strip()
+            if getattr(bot, 'telegram_desk', None):
+                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
+            else:
+                url  = (
+                    f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
+                    f"/getUpdates?offset={bot.last_id + 1}&timeout=5"
+                )
+                resp = requests.get(url, timeout=10).json()
+                if "result" in resp:
+                    for u in resp["result"]:
+                        if "message" in u and "text" in u["message"]:
+                            txt = u["message"]["text"].strip()
 
-                        if txt in ("/confluencia", "/confluência"):
-                            _send_confluence_report(bot)
+                            if txt in ("/confluencia", "/confluência"):
+                                _send_confluence_report(bot)
 
-                        elif txt == "/status":
-                            send_heartbeat(bot)
+                            elif txt == "/status":
+                                send_heartbeat(bot)
 
-                    bot.last_id = u["update_id"]
+                        bot.last_id = u["update_id"]
         except Exception as e:
             log(f"[TELEGRAM] Erro ao buscar updates: {e}")
 
@@ -399,6 +434,7 @@ def main():
     log(f"Versão Python: {sys.version.split()[0]}")
     
     bot = TradingBot()
+    bot.telegram_desk = TelegramDesk(Config.BOT_TOKEN, Config.CHAT_ID)
 
     # 1. Carrega estado persistido
     state_loaded = load_state(bot)

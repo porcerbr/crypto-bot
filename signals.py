@@ -306,7 +306,6 @@ def scan(bot):
     if bot.is_paused():
         return
 
-    strategy = load_strategy_settings()
     from utils import get_dynamic_max_trades
     max_trades = get_dynamic_max_trades(bot.balance)
     if len(bot.active_trades) >= max_trades:
@@ -387,9 +386,12 @@ def scan(bot):
         from utils import get_dynamic_leverage
         eff_lev = get_dynamic_leverage(bot.balance)
 
+        # Carrega a estratégia antes de usar qualquer parâmetro dela
+        strategy = load_strategy_settings()
+
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
-            risk_pct=load_strategy_settings().get("risk_pct", Config.ATR_RISK_PCT),
+            risk_pct=float(strategy.get("risk_pct", Config.ATR_RISK_PCT)),
             atr=atr,
             atr_mult=Config.ATR_MULT_FOR_RISK
         )
@@ -412,10 +414,10 @@ def scan(bot):
 
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
-        min_rr     = ai_params.get("min_rr", 1.5)
+        min_rr     = max(float(ai_params.get("min_rr", 1.5)), float(strategy.get("min_rr", 1.8)))
 
-        base_conf = max(int(strategy.get("min_confluence", Config.MIN_CONFLUENCE)), int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)))
-        bias      = ai_params.get("strategy_bias", strategy.get("mode", "balanced"))
+        base_conf = max(int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)), int(strategy.get("min_confluence", Config.MIN_CONFLUENCE)))
+        bias      = ai_params.get("strategy_bias", "balanced")
         regime    = meta.get("regime", ai_params.get("live_regime", "neutral"))
         setup_type = meta.get("setup_type", "wait")
         regime_base = Config.REGIME_MIN_CONFLUENCE.get(regime, base_conf)
@@ -427,8 +429,8 @@ def scan(bot):
         else:
             bias_adj = 0
 
-        live_conf = max(int(ai_params.get("live_confluence", regime_base)), base_conf)
-        effective_min_conf = max(1, min(regime_base, live_conf + bias_adj, base_conf + (0 if bias == "aggressive" else 1)))
+        live_conf = ai_params.get("live_confluence", regime_base)
+        effective_min_conf = max(regime_base, live_conf + bias_adj)
 
         news_window = is_high_impact_news_window(minutes_before=15, minutes_after=30, symbol=sym)
         if news_window:
@@ -439,7 +441,7 @@ def scan(bot):
             continue
 
         min_rr_regime = Config.REGIME_MIN_RR.get(regime, min_rr)
-        effective_min_rr = max(1.2, min(min_rr, min_rr_regime))
+        effective_min_rr = max(min_rr, min_rr_regime)
         if rr < effective_min_rr:
             log(f"[RR] {sym}: R:R {rr} abaixo do mínimo {effective_min_rr}, descartado")
             continue

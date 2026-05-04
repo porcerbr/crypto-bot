@@ -25,6 +25,7 @@ class TradingBot:
         self.pending_counter = 0
         self._usdjpy_price = 0.0
         self._current_leverage = Config.DEFAULT_LEVERAGE
+        self.telegram_desk = None
 
     def next_pending_id(self):
         self.pending_counter += 1
@@ -32,6 +33,17 @@ class TradingBot:
 
     def is_paused(self):
         return time.time() < self.paused_until
+
+    def pause_for(self, seconds: int, reason: str = ""):
+        seconds = max(1, int(seconds))
+        self.paused_until = time.time() + seconds
+        if reason:
+            log(f"[PAUSE] {reason} ({seconds}s)")
+
+    def resume(self):
+        self.paused_until = 0
+        self.consecutive_losses = 0
+        log("[PAUSE] Bot retomado manualmente")
 
     def reset_pause(self):
         self.paused_until = 0
@@ -204,6 +216,14 @@ class TradingBot:
 
     def send_signal_notification(self, trade: dict):
         """Envia notificacao de sinal ativo — automatico, sem confirmacao."""
+        try:
+            desk = getattr(self, "telegram_desk", None)
+            if desk:
+                desk.push_signal(trade, self)
+                return
+        except Exception as e:
+            log(f"[TELEGRAM] Desk sinal falhou: {e}")
+
         checks_lines = []
         for c in trade.get("checks", []):
             icon = "✅" if c["ok"] else "❌"
@@ -407,19 +427,37 @@ class TradingBot:
             elif result == "LOSS" and ai_conf <= 4:
                 ai_feedback = f"\n🤖 IA desconfiou e perdeu ({ai_conf}/10 ❌)"
 
-        msg = (
-            f"{emoji} RESULTADO — {symbol} {trade['dir']}\n"
-            f"——————————————————\n"
-            f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}\n"
-            f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)\n"
-            f"⏱ Duração: {duration_str}\n"
-            f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}\n"
-            f"——————————————————\n"
-            f"🏦 Saldo: ${round(self.balance, 2)}\n"
-            f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L)"
-            f"{ai_feedback}"
-        )
-        self.send(msg)
+        try:
+            desk = getattr(self, "telegram_desk", None)
+            if desk:
+                desk.push_result(trade, self, result)
+            else:
+                msg = "\n".join([
+                    f"{emoji} RESULTADO — {symbol} {trade['dir']}",
+                    "——————————————————",
+                    f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}",
+                    f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)",
+                    f"⏱ Duração: {duration_str}",
+                    f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}",
+                    "——————————————————",
+                    f"🏦 Saldo: ${round(self.balance, 2)}",
+                    f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L){ai_feedback}",
+                ])
+                self.send(msg)
+        except Exception as e:
+            log(f"[TELEGRAM] Desk resultado falhou: {e}")
+            msg = "\n".join([
+                f"{emoji} RESULTADO — {symbol} {trade['dir']}",
+                "——————————————————",
+                f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}",
+                f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)",
+                f"⏱ Duração: {duration_str}",
+                f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}",
+                "——————————————————",
+                f"🏦 Saldo: ${round(self.balance, 2)}",
+                f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L){ai_feedback}",
+            ])
+            self.send(msg)
         save_state(self)
 
     # ═══════════════════════════════════════════════════════
@@ -428,11 +466,27 @@ class TradingBot:
 
     def send(self, text):
         url = "https://api.telegram.org/bot" + Config.BOT_TOKEN + "/sendMessage"
-        payload = {"chat_id": Config.CHAT_ID, "text": text}
+        payload = {"chat_id": Config.CHAT_ID, "text": text, "disable_web_page_preview": True}
         try:
-            requests.post(url, json=payload, timeout=5)
+            requests.post(url, json=payload, timeout=8)
         except Exception as e:
             log("[SEND] Erro: " + str(e))
+        self.send_push(text)
+
+    def send_html(self, text, reply_markup=None):
+        url = "https://api.telegram.org/bot" + Config.BOT_TOKEN + "/sendMessage"
+        payload = {
+            "chat_id": Config.CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        try:
+            requests.post(url, json=payload, timeout=8)
+        except Exception as e:
+            log("[SEND_HTML] Erro: " + str(e))
         self.send_push(text)
 
     def send_push(self, text):
