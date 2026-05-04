@@ -145,8 +145,8 @@ class Config:
     SL_MIN_PCT            = 0.5
     TP_SL_RATIO           = 2.5
 
-    ATR_SL_MULT = 1.5
-    ATR_TP_MULT = 4.0
+    ATR_SL_MULT = 2.0
+    ATR_TP_MULT = 3.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # SISTEMA DE PESOS PARA CONFLUÊNCIA
@@ -176,7 +176,7 @@ class Config:
     MIN_CONFLUENCE_WEIGHTED = 10  # score mínimo para gerar sinal (default, pode ser ajustado pela IA)
 
     # Legado — mantido para compatibilidade
-    MIN_CONFLUENCE = 4
+    MIN_CONFLUENCE = 7
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # PERFIL PROFISSIONAL DE EXECUÇÃO
@@ -193,7 +193,7 @@ class Config:
         "transition": 1.8,
         "neutral": 1.8,
     }
-    REGIME_ADX_TRENDING = 15
+    REGIME_ADX_TRENDING = 25
     REGIME_ADX_RANGING  = 18
     REGIME_ADX_STRONG   = 30
     PREMIUM_SETUP_BONUS = 1
@@ -214,6 +214,55 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
     RISK_PERCENT_PER_TRADE = 2.0
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # MULTI-CONTA / ESCALA DE CAPITAL / PROTEÇÃO INTELIGENTE
+    # ═══════════════════════════════════════════════════════════════════════════════
+    MULTI_ACCOUNT_ENABLED = True
+    ACCOUNT_ALLOCATIONS = {
+        "core": 0.55,
+        "growth": 0.30,
+        "reserve": 0.15,
+    }
+    ACCOUNT_RISK_MULTIPLIERS = {
+        "core": 0.90,
+        "growth": 1.10,
+        "reserve": 0.55,
+    }
+    RISK_SCALING_TIERS = {
+        200: 0.85,
+        500: 1.00,
+        1000: 1.15,
+        2500: 1.30,
+        float('inf'): 1.45,
+    }
+    RISK_SCALING_BASE_PCT = 1.0
+    MIN_RISK_PCT = 0.5
+    MAX_RISK_PCT = 2.2
+    ACCOUNT_DAILY_LOSS_LIMIT_PCT = {
+        "core": 3.5,
+        "growth": 4.5,
+        "reserve": 2.0,
+    }
+    ACCOUNT_WEEKLY_LOSS_LIMIT_PCT = {
+        "core": 7.5,
+        "growth": 9.0,
+        "reserve": 4.0,
+    }
+    ACCOUNT_MAX_DRAWDOWN_PCT = {
+        "core": 8.0,
+        "growth": 10.0,
+        "reserve": 5.0,
+    }
+    ACCOUNT_CONSECUTIVE_LOSSES_PAUSE = 3
+    ACCOUNT_LOCK_SECONDS = 3600
+    EQUITY_PROTECTION_DD_PCT = 12.0
+    PROFIT_LOCK_LEVELS = {
+        200: 0.0,
+        500: 1.0,
+        1000: 2.0,
+        2500: 3.0,
+    }
 
     # Correlação (regra 3-5-7)
     CORRELATION_GROUPS = {
@@ -352,5 +401,16 @@ class Config:
         
         if cls.MAX_CONSECUTIVE_LOSSES < 1:
             errors.append(f"❌ MAX_CONSECUTIVE_LOSSES deve ser >= 1")
-        
+
+        # Multi-account / escala de capital
+        alloc_sum = round(sum(cls.ACCOUNT_ALLOCATIONS.values()), 4)
+        if abs(alloc_sum - 1.0) > 0.01:
+            errors.append(f"❌ ACCOUNT_ALLOCATIONS deve somar 1.0 (atual: {alloc_sum})")
+        if cls.MIN_RISK_PCT <= 0 or cls.MAX_RISK_PCT <= 0:
+            errors.append("❌ MIN_RISK_PCT / MAX_RISK_PCT inválidos")
+        if cls.MIN_RISK_PCT > cls.MAX_RISK_PCT:
+            errors.append("❌ MIN_RISK_PCT > MAX_RISK_PCT")
+        if cls.EQUITY_PROTECTION_DD_PCT <= 0:
+            errors.append("❌ EQUITY_PROTECTION_DD_PCT inválido")
+
         return errors

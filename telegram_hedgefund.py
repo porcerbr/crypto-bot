@@ -22,6 +22,7 @@ from utils import (
     load_strategy_settings,
     load_trade_settings,
 )
+from portfolio import portfolio_report_lines, portfolio_snapshot
 
 TG_LIMIT = 3900
 
@@ -104,9 +105,9 @@ class TelegramDesk:
         return self._post("sendMessage", payload)
 
     def get_updates(self):
-        params = {"timeout": 1, "offset": self.state.offset}
+        params = {"timeout": 0.5, "offset": self.state.offset}
         try:
-            resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=3)
+            resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=1.5)
             return resp.json()
         except Exception as e:
             return {"ok": False, "description": str(e), "result": []}
@@ -128,6 +129,9 @@ class TelegramDesk:
 
     def push_status(self, bot, extra: str = ""):
         self.send(format_status(bot, extra=extra), reply_markup=keyboard_markup())
+
+    def push_portfolio(self, bot):
+        self.send(format_portfolio(bot), reply_markup=keyboard_markup())
 
     def push_confluence(self, bot):
         try:
@@ -247,6 +251,9 @@ class TelegramDesk:
                 elif txt.startswith("/report"):
                     self.push_report(bot)
 
+                elif txt.startswith("/portfolio"):
+                    self.push_portfolio(bot)
+
                 elif txt.startswith("/confluencia") or txt.startswith("/confluência"):
                     if on_confluence:
                         on_confluence(bot)
@@ -316,6 +323,7 @@ def format_startup(bot) -> str:
         f"<b>ADX min:</b> {strategy.get('adx_min')}",
         f"<b>Risk %:</b> {strategy.get('risk_pct')}",
         f"<b>Weekly target:</b> {strategy.get('weekly_trade_target')}",
+        f"<b>Portfolio mode:</b> {'ON' if getattr(Config, 'MULTI_ACCOUNT_ENABLED', False) else 'OFF'}",
     ]
     lines.append("<b>Status:</b> ⏸️ PAUSADO" if bot.is_paused() else "<b>Status:</b> ✅ OPERANDO")
     return "\n".join(lines)
@@ -363,6 +371,7 @@ def format_status(bot, extra: str = "") -> str:
         f"<b>Ativos liberados:</b> {len(allowed)}",
         f"<b>Min confluence:</b> {strategy.get('min_confluence')} | <b>ADX min:</b> {strategy.get('adx_min')}",
         f"<b>Risk %:</b> {strategy.get('risk_pct')} | <b>Weekly target:</b> {strategy.get('weekly_trade_target')}",
+        f"<b>Portfolio:</b> {' / '.join(portfolio_report_lines(getattr(bot, 'accounts', {}))[:2])}",
     ]
     if trade_settings.get("max_active_trades") is not None:
         lines.append(f"<b>Override max trades:</b> {trade_settings['max_active_trades']}")
@@ -398,6 +407,20 @@ def format_report(bot) -> str:
     ])
 
 
+def format_portfolio(bot) -> str:
+    snap = portfolio_snapshot(getattr(bot, "accounts", {}))
+    lines = [
+        "🏦 <b>MULTI-ACCOUNT PORTFOLIO</b>",
+        f"<b>Horário:</b> {_now_utc()}",
+        f"<b>Total equity:</b> {_format_money(snap.get('total_equity', bot.balance))}",
+        f"<b>Available:</b> {_format_money(snap.get('available_equity', bot.balance))}",
+        "—" * 18,
+    ]
+    for line in portfolio_report_lines(getattr(bot, "accounts", {})):
+        lines.append(f"• {esc(line)}")
+    return "\n".join(lines)
+
+
 def format_signal(trade: dict, bot=None) -> str:
     strategy = load_strategy_settings()
     direction = str(trade.get("dir", "—"))
@@ -425,6 +448,7 @@ def format_signal(trade: dict, bot=None) -> str:
         f"<b>Daily bias:</b> {esc(trade.get('daily_bias', 'NEUTRO'))}",
         f"<b>OTE:</b> {'✅' if trade.get('ote_active') else '⬜'}",
         f"<b>Risk:</b> {_format_money(trade.get('suggested_risk_usd', 0))} ({trade.get('suggested_risk_pct', 0)}%)",
+        f"<b>Conta:</b> {esc(trade.get('account_name', trade.get('account_id', 'core')))}",
         f"<b>Lote:</b> {esc(trade.get('lot','—'))}",
         f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
     ]
@@ -454,5 +478,6 @@ def format_result(trade: dict, bot, result: str) -> str:
         f"<b>Saldo:</b> {_format_money(bot.balance)}",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W/{bot.losses}L)",
         f"<b>Margem liberada:</b> {_format_money(trade.get('margin_required', 0))}",
+        f"<b>Conta:</b> {esc(trade.get('account_name', trade.get('account_id', 'core')))}",
         f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
     ])

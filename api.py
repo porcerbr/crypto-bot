@@ -967,4 +967,11 @@ def create_api(bot):
         return jsonify({"ok": True, "diagnostics": results})
 
 
+
+    @app.route("/api/portfolio")
+    @require_auth
+    def portfolio():
+        from portfolio import portfolio_snapshot
+        return jsonify(portfolio_snapshot(getattr(bot, "accounts", {})))
+
     return app

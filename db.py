@@ -165,6 +165,7 @@ def save_state(bot):
             "pending_counter":    bot.pending_counter,
             "last_id":            getattr(bot, "last_id", 0),
             "_current_leverage":  getattr(bot, "_current_leverage", bot.leverage),
+            "accounts":           getattr(bot, "accounts", {}),
             "saved_at":           datetime.now().isoformat(),
         }
         _write_state_payload(data)
