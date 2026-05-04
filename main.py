@@ -361,49 +361,24 @@ def bot_loop(bot):
             except Exception as e:
                 log(f"[DAILY] Erro: {e}")
 
+        # ── COMANDOS TELEGRAM (rápido, antes da varredura) ──
+        try:
+            if getattr(bot, 'telegram_desk', None):
+                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
+        except Exception as e:
+            log(f"[TELEGRAM] Erro ao buscar updates (pré-scan): {e}")
+
         # ── SCAN / MONITOR (BLOCKING) ──
-        if not bot.is_paused():
-            try:
-                bot.expire_pending_signals(max_age_seconds=Config.PENDING_EXPIRY_SECONDS)
-            except Exception as e:
-                error_msg = f"expire_pending_signals: {e}"
-                tb = traceback.format_exc()
-                log(f"Erro no loop: {error_msg}")
-                send_error_notification(bot, error_msg, tb)
-                append_log("loop_error", {"error": error_msg})
-                time.sleep(Config.SCAN_INTERVAL)
-                continue
-
-            try:
-                scan(bot)
-            except Exception as e:
-                error_msg = f"scan: {e}"
-                tb = traceback.format_exc()
-                log(f"Erro no loop: {error_msg}")
-                send_error_notification(bot, error_msg, tb)
-                append_log("loop_error", {"error": error_msg})
-                time.sleep(Config.SCAN_INTERVAL)
-                continue
-
-            try:
-                bot.monitor_trades()
-            except Exception as e:
-                error_msg = f"monitor_trades: {e}"
-                tb = traceback.format_exc()
-                log(f"Erro no loop: {error_msg}")
-                send_error_notification(bot, error_msg, tb)
-                append_log("loop_error", {"error": error_msg})
-
-        # ── COMANDOS TELEGRAM ──
+        # ── COMANDOS TELEGRAM (pós-scan, pega respostas rápidas) ──
         try:
             if getattr(bot, 'telegram_desk', None):
                 bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
             else:
                 url  = (
                     f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
-                    f"/getUpdates?offset={bot.last_id + 1}&timeout=5"
+                    f"/getUpdates?offset={bot.last_id + 1}&timeout=1"
                 )
-                resp = requests.get(url, timeout=10).json()
+                resp = requests.get(url, timeout=3).json()
                 if "result" in resp:
                     for u in resp["result"]:
                         if "message" in u and "text" in u["message"]:
@@ -418,6 +393,13 @@ def bot_loop(bot):
                         bot.last_id = u["update_id"]
         except Exception as e:
             log(f"[TELEGRAM] Erro ao buscar updates: {e}")
+
+        # segunda checagem rápida do Telegram após monitorar sinais
+        try:
+            if getattr(bot, 'telegram_desk', None):
+                bot.telegram_desk.poll_commands(bot, on_confluence=_send_confluence_report)
+        except Exception as e:
+            log(f"[TELEGRAM] Erro ao buscar updates (pós-scan): {e}")
 
         time.sleep(Config.SCAN_INTERVAL)
 

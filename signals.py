@@ -9,6 +9,11 @@ from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
 
+# Cache do snapshot de confluência
+_SNAPSHOT_TTL = 600  # 10 minutos
+_snapshot_cache = []
+_snapshot_ts = 0.0
+
 
 def _is_safe_to_trade(bot, symbol):
     """

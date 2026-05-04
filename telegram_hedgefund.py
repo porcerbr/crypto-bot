@@ -66,7 +66,7 @@ def keyboard_markup() -> dict:
 class TelegramDeskState:
     offset: int = 0
     last_poll_ts: float = 0.0
-    poll_interval: float = 2.5
+    poll_interval: float = 0.8
 
 
 class TelegramDesk:
@@ -106,7 +106,7 @@ class TelegramDesk:
     def get_updates(self):
         params = {"timeout": 1, "offset": self.state.offset}
         try:
-            resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=8)
+            resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=3)
             return resp.json()
         except Exception as e:
             return {"ok": False, "description": str(e), "result": []}

@@ -92,7 +92,7 @@ class Config:
     # não veto absoluto. Isso evita o bot ficar parado por longos períodos.
     SESSION_HARD_BLOCK = False
     NEWS_HARD_BLOCK = False
-    MAX_SYMBOLS_PER_REFRESH = 8
+    MAX_SYMBOLS_PER_REFRESH = 6
 
     FXGOLD_ASSETS = {
         "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY",
@@ -182,20 +182,20 @@ class Config:
     # PERFIL PROFISSIONAL DE EXECUÇÃO
     # ═══════════════════════════════════════════════════════════════════════════════
     REGIME_MIN_CONFLUENCE = {
-        "trend": 9,
-        "range": 7,
-        "transition": 8,
-        "neutral": 8,
+        "trend": 11,
+        "range": 9,
+        "transition": 10,
+        "neutral": 10,
     }
     REGIME_MIN_RR = {
-        "trend": 1.7,
-        "range": 1.4,
-        "transition": 1.6,
-        "neutral": 1.6,
+        "trend": 2.0,
+        "range": 1.6,
+        "transition": 1.8,
+        "neutral": 1.8,
     }
-    REGIME_ADX_TRENDING = 22
-    REGIME_ADX_RANGING  = 16
-    REGIME_ADX_STRONG   = 28
+    REGIME_ADX_TRENDING = 25
+    REGIME_ADX_RANGING  = 18
+    REGIME_ADX_STRONG   = 30
     PREMIUM_SETUP_BONUS = 1
 
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -213,7 +213,7 @@ class Config:
     # CAPITAL E RISCO
     # ═══════════════════════════════════════════════════════════════════════════════
     INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
-    RISK_PERCENT_PER_TRADE = 1.0
+    RISK_PERCENT_PER_TRADE = 2.0
 
     # Correlação (regra 3-5-7)
     CORRELATION_GROUPS = {
@@ -225,7 +225,7 @@ class Config:
     }
     MAX_CORRELATED_RISK_PCT = 7.0
 
-    MAX_TRADES             = 4
+    MAX_TRADES             = 3
     ASSET_COOLDOWN         = 3600
     SCAN_INTERVAL          = 60
     PAUSE_DURATION         = 3600
@@ -261,9 +261,9 @@ class Config:
 
     # Máximo de trades ativos por nível de banca
     DYNAMIC_MAX_TRADES = {
-        500:          2,
-        1500:         3,
-        float('inf'): 4,
+        500:          1,
+        1500:         2,
+        float('inf'): 3,
     }
 
     # Tier system de ativos
@@ -300,9 +300,9 @@ class Config:
 
     # Cooldown após loss
     DYNAMIC_COOLDOWN = {
-        500:          3600,  # 1h
-        1500:         2700,  # 45min
-        float('inf'): 1800,  # 30min
+        500:          7200,  # 2h
+        1500:         5400,  # 1.5h
+        float('inf'): 3600,  # 1h
     }
 
     # ═══════════════════════════════════════════════════════════════════════════════
