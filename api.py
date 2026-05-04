@@ -608,6 +608,8 @@ def create_api(bot):
                     "initial_balance":  m.get("initial_balance",  balance),
                     "current_balance":  m.get("current_balance",  balance),
                     "total_pnl":        m.get("total_pnl",        0),
+                    "trade_frequency_per_week": m.get("trade_frequency_per_week", 0),
+                    "avg_bars_per_trade":       m.get("avg_bars_per_trade", 0),
                 },
                 "equity_curve": ec,
                 "trades":        result.trades[-100:],
@@ -695,7 +697,10 @@ def create_api(bot):
                     risk_pct=float(rp),
                 )
                 m = result.metrics
-                score = (m.get("total_pnl", 0) * 1.0) + (m.get("profit_factor", 0) * 150) + (m.get("winrate", 0) * 10) - (m.get("max_drawdown_pct", 0) * 12)
+                target_week = float(strategy.get("weekly_trade_target", 3.0))
+                freq = float(m.get("trade_frequency_per_week", 0) or 0)
+                freq_score = max(0.0, 1.0 - abs(freq - target_week) / max(1.0, target_week))
+                score = (m.get("total_pnl", 0) * 0.9) + (float(m.get("profit_factor", 0) or 0) * 120) + (float(m.get("winrate", 0) or 0) * 8) + (float(m.get("expectancy", 0) or 0) * 2) + (freq_score * 150) - (float(m.get("max_drawdown_pct", 0) or 0) * 10)
                 item = {
                     "min_confluence": int(mc),
                     "adx_min": float(adx),
@@ -908,6 +913,8 @@ def create_api(bot):
                     "initial_balance":  m.get("initial_balance",  balance),
                     "current_balance":  m.get("current_balance",  balance),
                     "total_pnl":        m.get("total_pnl",        0),
+                    "trade_frequency_per_week": m.get("trade_frequency_per_week", 0),
+                    "avg_bars_per_trade":       m.get("avg_bars_per_trade", 0),
                 },
                 "equity_curve": ec,
                 "trades":        result.trades[-50:],

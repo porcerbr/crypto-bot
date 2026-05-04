@@ -4,7 +4,7 @@ from datetime import datetime
 from config import Config
 from utils import (log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair,
                    is_good_session, get_kill_zone, is_price_in_ote,
-                   get_allowed_symbols)
+                   get_allowed_symbols, load_strategy_settings)
 from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
@@ -388,7 +388,7 @@ def scan(bot):
 
         suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
             sym, entry, sl, bot.balance,
-            risk_pct=Config.ATR_RISK_PCT,
+            risk_pct=float(strategy.get("risk_pct", Config.ATR_RISK_PCT)),
             atr=atr,
             atr_mult=Config.ATR_MULT_FOR_RISK
         )
@@ -411,9 +411,10 @@ def scan(bot):
 
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
-        min_rr     = ai_params.get("min_rr", 1.5)
+        strategy   = load_strategy_settings()
+        min_rr     = max(float(ai_params.get("min_rr", 1.5)), float(strategy.get("min_rr", 1.8)))
 
-        base_conf = ai_params.get("min_confluence", Config.MIN_CONFLUENCE)
+        base_conf = max(int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)), int(strategy.get("min_confluence", Config.MIN_CONFLUENCE)))
         bias      = ai_params.get("strategy_bias", "balanced")
         regime    = meta.get("regime", ai_params.get("live_regime", "neutral"))
         setup_type = meta.get("setup_type", "wait")

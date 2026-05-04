@@ -1,14 +1,10 @@
 """
-backtester.py — Backtester multi-timeframe (H1 e W1).
+backtester.py — motor de backtest robusto e regime-adaptativo.
 
-Detecta automaticamente o timeframe pelos intervalos entre barras.
-Ajusta todos os parâmetros de acordo (sessão, cooldown, ATR, EMA).
-
-Estratégia: Pullback em tendência (EMA-based trend-following).
-  - Entry: preço voltou para zona da EMA21 após extensão
-  - Trigger: MACD cruzou signal + candle de confirmação
-  - SL: 1.5×ATR  |  TP: 2.5×ATR  (RR = 1.67)
-  - Filtros: ADX mínimo, sessão (H1 apenas), cooldown pós-loss
+Objetivos:
+- reduzir overfitting
+- manter frequência mínima razoável
+- avaliar sinais com lógica mais parecida com a operação ao vivo
 """
 
 from __future__ import annotations
@@ -16,9 +12,8 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import random
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -26,117 +21,215 @@ import pandas as pd
 
 from config import Config
 from performance import calculate_metrics_from_history
-from utils import calc_pnl_usd, is_jpy_pair, log
+from utils import calc_pnl_usd, is_jpy_pair, log, load_strategy_settings, pip_factor, get_sl_tp_atr
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ESTRUTURAS
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class Bar:
     timestamp: datetime
-    open:  float
-    high:  float
-    low:   float
+    open: float
+    high: float
+    low: float
     close: float
 
 
 @dataclass
 class BacktestResult:
-    metrics:      dict
-    trades:       list[dict]
+    metrics: dict
+    trades: list[dict]
     equity_curve: list[dict]
-    params:       dict = field(default_factory=dict)
+    params: dict = field(default_factory=dict)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIMEFRAME DETECTION
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Timeframe / parsing
+# ──────────────────────────────────────────────────────────────────────────────
 
 def detect_timeframe(bars: list[Bar]) -> str:
-    """Detecta o timeframe baseado no intervalo médio entre barras."""
     if len(bars) < 2:
         return "H1"
+
     deltas = []
     for i in range(1, min(10, len(bars))):
-        d = abs((bars[i].timestamp - bars[i-1].timestamp).total_seconds())
+        d = abs((bars[i].timestamp - bars[i - 1].timestamp).total_seconds())
         if d > 0:
             deltas.append(d)
+
     if not deltas:
         return "H1"
+
     avg_seconds = sum(deltas) / len(deltas)
-    if avg_seconds >= 5 * 24 * 3600:   # ≥5 dias
+    if avg_seconds >= 5 * 24 * 3600:
         return "W1"
-    if avg_seconds >= 23 * 3600:        # ≥23h
+    if avg_seconds >= 23 * 3600:
         return "D1"
     return "H1"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CSV
-# ═══════════════════════════════════════════════════════════════════════════════
+def _parse_dt(value: str) -> datetime | None:
+    if not value:
+        return None
+    raw = str(value).strip().replace("Z", "+00:00")
+    for fmt in (
+        None,
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+    ):
+        try:
+            if fmt is None:
+                dt = datetime.fromisoformat(raw)
+            else:
+                dt = datetime.strptime(raw, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            continue
+    return None
+
 
 def load_bars_from_csv(path: str | Path) -> list[Bar]:
-    """Carrega barras de CSV padrão (timestamp,open,high,low,close)."""
     path = Path(path)
-    bars: list[Bar] = []
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            ts_raw = row.get("timestamp") or row.get("time") or row.get("date")
-            if not ts_raw:
+
+    def _from_rows(rows) -> list[Bar]:
+        bars: list[Bar] = []
+        for row in rows:
+            row = dict(row)
+            ts = _parse_dt(
+                row.get("timestamp")
+                or row.get("time")
+                or row.get("date")
+                or row.get("datetime")
+                or row.get("Data")
+                or row.get("Data/Hora")
+            )
+            if ts is None:
                 continue
+
+            def _num(*keys: str) -> float | None:
+                for k in keys:
+                    v = row.get(k)
+                    if v is None:
+                        continue
+                    try:
+                        return float(str(v).replace(",", ".").strip())
+                    except Exception:
+                        continue
+                return None
+
+            o = _num("open", "Open", "abertura")
+            h = _num("high", "High", "máxima", "max")
+            l = _num("low", "Low", "mínima", "min")
+            c = _num("close", "Close", "fechamento")
+            if None in (o, h, l, c):
+                continue
+            bars.append(Bar(timestamp=ts, open=float(o), high=float(h), low=float(l), close=float(c)))
+        return sorted(bars, key=lambda b: b.timestamp)
+
+    # Planilha Excel renomeada para .csv (começa com PK)
+    try:
+        with path.open('rb') as fh:
+            sig = fh.read(4)
+        if sig.startswith(b'PK'):
+            from shutil import copyfile
+            from tempfile import NamedTemporaryFile
+            from openpyxl import load_workbook
+
+            with NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+                copyfile(path, tmp.name)
+                tmp_path = Path(tmp.name)
             try:
-                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-            except Exception:
+                wb = load_workbook(tmp_path, read_only=True, data_only=True)
+                ws = wb.active
+                rows = []
+                for vals in ws.iter_rows(values_only=True):
+                    if not vals:
+                        continue
+                    cell = next((v for v in vals if isinstance(v, str) and v.strip()), None)
+                    if cell:
+                        rows.append(cell.strip())
+                parsed = []
+                for i, line in enumerate(rows):
+                    try:
+                        parts = next(csv.reader([line]))
+                    except Exception:
+                        continue
+                    parts = [p.strip() for p in parts if p is not None and str(p).strip()]
+                    if not parts:
+                        continue
+                    if i == 0 and parts[0].lower().startswith('data'):
+                        continue
+                    # Formato típico: Data,Preço,Abertura,Alta,Baixa,Var%
+                    if len(parts) >= 5:
+                        date_s = parts[0]
+                        close_s = parts[1] if len(parts) > 1 else None
+                        open_s = parts[2] if len(parts) > 2 else None
+                        high_s = parts[3] if len(parts) > 3 else None
+                        low_s = parts[4] if len(parts) > 4 else None
+                        row = {
+                            'timestamp': date_s,
+                            'open': open_s,
+                            'high': high_s,
+                            'low': low_s,
+                            'close': close_s,
+                        }
+                        parsed.append(row)
+                if parsed:
+                    return _from_rows(parsed)
+            finally:
                 try:
-                    ts = datetime.strptime(ts_raw, "%Y-%m-%d %H:%M:%S")
-                    ts = ts.replace(tzinfo=timezone.utc)
+                    tmp_path.unlink(missing_ok=True)
                 except Exception:
-                    continue
-            try:
-                bars.append(Bar(
-                    timestamp=ts,
-                    open= float(row.get("open")  or row.get("Open")),
-                    high= float(row.get("high")  or row.get("High")),
-                    low=  float(row.get("low")   or row.get("Low")),
-                    close=float(row.get("close") or row.get("Close")),
-                ))
-            except Exception:
-                continue
-    return sorted(bars, key=lambda b: b.timestamp)
+                    pass
+    except Exception:
+        pass
+
+    raw = path.read_text(encoding="utf-8-sig", errors="ignore")
+    sample = raw[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;	|")
+    except Exception:
+        dialect = csv.get_dialect("excel")
+
+    reader = csv.DictReader(raw.splitlines(), dialect=dialect)
+    return _from_rows(reader)
 
 
 def bars_from_dicts(data: list[dict]) -> list[Bar]:
-    """Converte lista de dicts (output do csv_parser) para lista de Bar."""
     bars = []
     for d in data:
         try:
-            bars.append(Bar(
-                timestamp=d["timestamp"],
-                open= float(d["open"]),
-                high= float(d["high"]),
-                low=  float(d["low"]),
-                close=float(d["close"]),
-            ))
+            ts = d["timestamp"]
+            if not isinstance(ts, datetime):
+                ts = _parse_dt(ts) or datetime.fromtimestamp(float(ts), tz=timezone.utc)
+            bars.append(Bar(timestamp=ts, open=float(d["open"]), high=float(d["high"]), low=float(d["low"]), close=float(d["close"])))
         except Exception:
             continue
     return sorted(bars, key=lambda b: b.timestamp)
 
 
 def bars_to_dataframe(bars: list[Bar]) -> pd.DataFrame:
-    records = [{"Open": b.open, "High": b.high, "Low": b.low, "Close": b.close}
-               for b in bars]
-    df = pd.DataFrame(records,
-                      index=pd.to_datetime([b.timestamp for b in bars], utc=True))
-    df["Volume"] = 0.0
+    idx = pd.to_datetime([b.timestamp for b in bars], utc=True)
+    df = pd.DataFrame(
+        {
+            "Open": [b.open for b in bars],
+            "High": [b.high for b in bars],
+            "Low": [b.low for b in bars],
+            "Close": [b.close for b in bars],
+            "Volume": [0.0 for _ in bars],
+        },
+        index=idx,
+    )
     return df
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SESSÃO (apenas H1)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Session / costs
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _in_session(bar: Bar, symbol: str) -> bool:
     h = bar.timestamp.hour
@@ -149,13 +242,23 @@ def _in_session(bar: Bar, symbol: str) -> bool:
     return 7 <= h < 17
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INDICADORES
-# ═══════════════════════════════════════════════════════════════════════════════
+def _apply_cost(price: float, direction: str, symbol: str) -> float:
+    spread_pips = Config.SPREAD_PIPS.get(symbol, 1.0) if getattr(Config, "USE_SPREAD_MODEL", True) else 0.0
+    slippage_pips = Config.SLIPPAGE_PIPS.get(symbol, 0.3) if getattr(Config, "USE_SLIPPAGE_MODEL", True) else 0.0
+    # custo conservador: metade do spread + slippage médio esperado
+    cost = (spread_pips * 0.5 + slippage_pips * 0.5) * pip_factor(symbol)
+    if direction == "BUY":
+        return round(price + cost, 5)
+    return round(price - cost, 5)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Indicators
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _indicators(df: pd.DataFrame) -> dict | None:
     n = len(df)
-    if n < 30:
+    if n < 40:
         return None
 
     c = df["Close"]
@@ -163,80 +266,92 @@ def _indicators(df: pd.DataFrame) -> dict | None:
     l = df["Low"]
     o = df["Open"]
 
-    ema21  = c.ewm(span=21,  adjust=False).mean()
-    ema50  = c.ewm(span=50,  adjust=False).mean()
-    ema200 = c.ewm(span=min(200, n-1), adjust=False).mean()
+    ema9 = c.ewm(span=9, adjust=False).mean()
+    ema21 = c.ewm(span=21, adjust=False).mean()
+    ema50 = c.ewm(span=50, adjust=False).mean()
+    ema200 = c.ewm(span=min(200, n - 1), adjust=False).mean()
 
-    macd_line   = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    macd_line = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
 
-    d    = c.diff()
+    d = c.diff()
     gain = d.clip(lower=0).ewm(span=14, adjust=False).mean()
     loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean()
-    rsi  = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
+    rsi = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
 
-    tr  = pd.concat([h - l,
-                     (h - c.shift()).abs(),
-                     (l - c.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     atr = tr.ewm(span=14, adjust=False).mean()
 
-    pdm = (h.diff()).clip(lower=0)
-    ndm = (-l.diff()).clip(lower=0)
-    pdi = 100 * pdm.ewm(span=14).mean() / atr.replace(0, 1e-10)
-    ndi = 100 * ndm.ewm(span=14).mean() / atr.replace(0, 1e-10)
-    adx = ((abs(pdi - ndi) / (pdi + ndi + 1e-10)) * 100).ewm(span=14).mean()
+    up_move = h.diff()
+    down_move = -l.diff()
+    plus_dm = ((up_move > down_move) & (up_move > 0)) * up_move.clip(lower=0)
+    minus_dm = ((down_move > up_move) & (down_move > 0)) * down_move.clip(lower=0)
+    atr_safe = atr.replace(0, 1e-10)
+    plus_di = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    minus_di = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    adx = ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10) * 100).ewm(span=14, adjust=False).mean()
 
-    price   = float(c.iloc[-1])
-    atr_val = float(atr.iloc[-1])
-    e21     = float(ema21.iloc[-1])
-    e50     = float(ema50.iloc[-1])
-    e200    = float(ema200.iloc[-1])
-    dist_e21 = (price - e21) / atr_val if atr_val > 0 else 0
+    bb_mid = c.rolling(20).mean()
+    bb_std = c.rolling(20).std(ddof=0).fillna(0)
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
 
-    # MACD cruzou nos últimos 3 candles
-    ml_now  = float(macd_line.iloc[-1])
-    ms_now  = float(macd_signal.iloc[-1])
-    macd_above = ml_now > ms_now
-    macd_below = ml_now < ms_now
-
-    # Cruzou recentemente (últimas 3 barras)
-    crossed_up = crossed_down = False
-    for k in range(2, min(4, n)):
-        ml_k = float(macd_line.iloc[-k])
-        ms_k = float(macd_signal.iloc[-k])
-        if macd_above and ml_k <= ms_k:
-            crossed_up = True
-        if macd_below and ml_k >= ms_k:
-            crossed_down = True
-
-    rsi_val  = float(rsi.iloc[-1])
+    price = float(c.iloc[-1])
+    atr_val = float(atr.iloc[-1]) if not math.isnan(float(atr.iloc[-1])) else 0.0
+    e21 = float(ema21.iloc[-1])
+    e50 = float(ema50.iloc[-1])
+    e200 = float(ema200.iloc[-1])
+    e9 = float(ema9.iloc[-1])
+    rsi_val = float(rsi.iloc[-1])
     rsi_prev = float(rsi.iloc[-2]) if n >= 2 else rsi_val
+    macd_now = float(macd_line.iloc[-1])
+    macd_sig = float(macd_signal.iloc[-1])
+    macd_prev = float(macd_line.iloc[-2]) if n >= 2 else macd_now
+    sig_prev = float(macd_signal.iloc[-2]) if n >= 2 else macd_sig
 
     return {
-        "price":          price,
-        "ema21":          e21,
-        "ema50":          e50,
-        "ema200":         e200,
-        "atr":            atr_val,
-        "adx":            float(adx.iloc[-1]),
-        "pdi":            float(pdi.iloc[-1]),
-        "ndi":            float(ndi.iloc[-1]),
-        "rsi":            rsi_val,
-        "macd_above":     macd_above,
-        "macd_below":     macd_below,
-        "macd_cross_up":  crossed_up,
-        "macd_cross_down": crossed_down,
-        "dist_e21":       dist_e21,
-        "candle_bull":    float(c.iloc[-1]) > float(o.iloc[-1]),
-        "candle_bear":    float(c.iloc[-1]) < float(o.iloc[-1]),
-        "rsi_bounce_up":  rsi_prev < 42 and rsi_val >= 42,
-        "rsi_bounce_dn":  rsi_prev > 58 and rsi_val <= 58,
+        "price": price,
+        "ema9": e9,
+        "ema21": e21,
+        "ema50": e50,
+        "ema200": e200,
+        "atr": atr_val,
+        "adx": float(adx.iloc[-1]),
+        "pdi": float(plus_di.iloc[-1]),
+        "ndi": float(minus_di.iloc[-1]),
+        "rsi": rsi_val,
+        "rsi_prev": rsi_prev,
+        "macd_above": macd_now > macd_sig,
+        "macd_below": macd_now < macd_sig,
+        "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
+        "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
+        "dist_e21": (price - e21) / atr_val if atr_val > 0 else 0.0,
+        "dist_bb_up": (float(bb_upper.iloc[-1]) - price) / atr_val if atr_val > 0 else 0.0,
+        "dist_bb_dn": (price - float(bb_lower.iloc[-1])) / atr_val if atr_val > 0 else 0.0,
+        "candle_bull": float(c.iloc[-1]) > float(o.iloc[-1]),
+        "candle_bear": float(c.iloc[-1]) < float(o.iloc[-1]),
+        "rsi_bounce_up": rsi_prev < 42 and rsi_val >= 42,
+        "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
+        "trend_up": price > e200 and e21 > e50,
+        "trend_dn": price < e200 and e21 < e50,
+        "range_mode": float(adx.iloc[-1]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SINAL: PULLBACK EM TENDÊNCIA
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Signal logic
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _regime(res: dict, tf: str) -> str:
+    adx = float(res.get("adx", 0) or 0)
+    if adx >= getattr(Config, "REGIME_ADX_TRENDING", 25) and (res["trend_up"] or res["trend_dn"]):
+        return "trend"
+    if adx <= getattr(Config, "REGIME_ADX_RANGING", 18):
+        return "range"
+    if tf == "W1" and adx >= getattr(Config, "REGIME_ADX_STRONG", 30):
+        return "trend"
+    return "transition"
+
 
 def _signal(
     res: dict,
@@ -244,121 +359,161 @@ def _signal(
     min_confluence: int = 5,
     adx_min: float | None = None,
     pull_range: tuple[float, float] | None = None,
+    weekly_trade_target: float = 3.0,
 ) -> str | None:
-    """
-    Detecta setup de pullback em tendência com score mínimo configurável.
-    O score passa a contar condições essenciais, tornando a otimização útil.
-    """
-    p = res["price"]
-    d21 = res["dist_e21"]
     adx_min = float(adx_min if adx_min is not None else (15 if tf == "W1" else 18))
     pull_range = pull_range or ((-1.5, 2.5) if tf == "W1" else (-1.0, 2.0))
-    min_confluence = max(1, min(6, int(min_confluence or 5)))
+    min_confluence = max(1, min(8, int(min_confluence or 5)))
 
-    def _count(*conds: bool) -> int:
+    regime = _regime(res, tf)
+    price = res["price"]
+    d21 = res["dist_e21"]
+
+    def count(*conds: bool) -> int:
         return sum(1 for c in conds if c)
 
-    trend_up = p > res["ema200"] and res["ema21"] > res["ema50"]
-    pull_up = pull_range[0] <= d21 <= pull_range[1]
-    trig_up = res["macd_cross_up"] or res["rsi_bounce_up"]
-    score_up = _count(trend_up, pull_up, trig_up, res["candle_bull"], res["adx"] >= adx_min, res["pdi"] > res["ndi"])
-    if score_up >= min_confluence and trend_up and pull_up and trig_up:
-        return "BUY"
+    def pull_ok(direction: str) -> bool:
+        if direction == "BUY":
+            return pull_range[0] <= d21 <= pull_range[1]
+        return -pull_range[1] <= d21 <= -pull_range[0]
 
-    trend_dn = p < res["ema200"] and res["ema21"] < res["ema50"]
-    pull_dn = -pull_range[1] <= d21 <= -pull_range[0]
-    trig_dn = res["macd_cross_down"] or res["rsi_bounce_dn"]
-    score_dn = _count(trend_dn, pull_dn, trig_dn, res["candle_bear"], res["adx"] >= adx_min, res["ndi"] > res["pdi"])
-    if score_dn >= min_confluence and trend_dn and pull_dn and trig_dn:
-        return "SELL"
+    # Trend-following: pullback + momentum trigger
+    if regime in ("trend", "transition"):
+        if res["trend_up"]:
+            score = count(
+                res["trend_up"],
+                pull_ok("BUY"),
+                res["macd_cross_up"] or res["rsi_bounce_up"],
+                res["candle_bull"],
+                res["adx"] >= adx_min,
+                res["pdi"] >= res["ndi"],
+                res["rsi"] >= 40,
+                res["rsi"] <= 70,
+            )
+            if score >= min_confluence and pull_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
+                return "BUY"
+
+        if res["trend_dn"]:
+            score = count(
+                res["trend_dn"],
+                pull_ok("SELL"),
+                res["macd_cross_down"] or res["rsi_bounce_dn"],
+                res["candle_bear"],
+                res["adx"] >= adx_min,
+                res["ndi"] >= res["pdi"],
+                res["rsi"] <= 60,
+                res["rsi"] >= 30,
+            )
+            if score >= min_confluence and pull_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
+                return "SELL"
+
+    # Mean reversion in ranges: use extremes + reversals
+    if regime == "range":
+        buy_score = count(
+            res["rsi"] <= 40,
+            price <= res["ema21"],
+            res["candle_bull"],
+            res["dist_bb_dn"] >= 1.0,
+            res["rsi_bounce_up"],
+            res["macd_cross_up"],
+        )
+        if buy_score >= max(3, min_confluence - 1):
+            return "BUY"
+
+        sell_score = count(
+            res["rsi"] >= 60,
+            price >= res["ema21"],
+            res["candle_bear"],
+            res["dist_bb_up"] >= 1.0,
+            res["rsi_bounce_dn"],
+            res["macd_cross_down"],
+        )
+        if sell_score >= max(3, min_confluence - 1):
+            return "SELL"
+
+    # Light frequency relief: if target trades/week is high, accept slightly weaker transitions
+    if weekly_trade_target >= 3.0 and regime == "transition":
+        if res["trend_up"] and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
+            return "BUY"
+        if res["trend_dn"] and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
+            return "SELL"
 
     return None
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SL / TP
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 
-def _sl_tp(
-    entry: float,
-    direction: str,
-    atr: float,
-    atr_sl_mult: float = 1.5,
-    atr_tp_mult: float = 2.5,
-) -> tuple[float, float]:
-    """SL/TP por ATR com multiplicadores configuráveis."""
+def _sl_tp(entry: float, direction: str, atr: float, atr_sl_mult: float = 1.5, atr_tp_mult: float = 3.0) -> tuple[float, float]:
     atr_sl_mult = max(0.1, float(atr_sl_mult or 1.5))
-    atr_tp_mult = max(0.1, float(atr_tp_mult or 2.5))
-    if direction == "BUY":
-        return round(entry - atr * atr_sl_mult, 5), round(entry + atr * atr_tp_mult, 5)
-    return round(entry + atr * atr_sl_mult, 5), round(entry - atr * atr_tp_mult, 5)
+    atr_tp_mult = max(0.1, float(atr_tp_mult or 3.0))
+    return get_sl_tp_atr(entry, atr, direction, atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)[:2]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MOTOR
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Backtest engine
+# ──────────────────────────────────────────────────────────────────────────────
 
 def run_backtest(
-    bars:            list[Bar],
-    symbol:          str,
+    bars: list[Bar],
+    symbol: str,
     initial_balance: float | None = None,
-    min_confluence:  int          = 5,
-    adx_min:         float | None = None,
-    atr_sl_mult:     float = 1.5,
-    atr_tp_mult:     float = 2.5,
-    pull_range:      tuple[float, float] | None = None,
-    risk_pct:        float = 3.0,
-    warmup_bars:     int | None   = None,
+    min_confluence: int = 5,
+    adx_min: float | None = None,
+    atr_sl_mult: float = 1.5,
+    atr_tp_mult: float = 3.0,
+    pull_range: tuple[float, float] | None = None,
+    risk_pct: float = 2.0,
+    warmup_bars: int | None = None,
+    weekly_trade_target: float = 3.0,
+    max_bars_in_trade: int | None = None,
 ) -> BacktestResult:
+    if not bars:
+        return BacktestResult(metrics=calculate_metrics_from_history([], initial_balance=initial_balance), trades=[], equity_curve=[], params={"symbol": symbol})
 
-    tf              = detect_timeframe(bars)
-    initial_balance = float(initial_balance or Config.INITIAL_BALANCE)
-    balance         = initial_balance
+    tf = detect_timeframe(bars)
+    initial_balance = float(initial_balance if initial_balance is not None else Config.INITIAL_BALANCE)
+    balance = initial_balance
 
-    if tf == "W1":
-        wb       = warmup_bars or 30
-        max_bars = 16
-        cooldown_after_loss = 1
-    else:
-        wb       = warmup_bars or 60
-        max_bars = 48
-        cooldown_after_loss = 2
+    wb = warmup_bars or (80 if tf == "H1" else 40)
+    max_bars = int(max_bars_in_trade or (60 if tf == "H1" else 12))
+    cooldown_after_loss = 2 if tf == "H1" else 1
 
-    df_full  = bars_to_dataframe(bars)
-    trades: list[dict]  = []
+    df_full = bars_to_dataframe(bars)
+    trades: list[dict] = []
     active: dict | None = None
-    cooldown            = 0
+    cooldown = 0
 
     for i in range(wb, len(bars)):
         bar = bars[i]
 
-        if cooldown > 0:
-            cooldown -= 1
-
         if active is not None:
-            t         = active
+            t = active
             bars_open = i - t["bar_i"]
 
             if t["dir"] == "BUY":
-                hit_sl = bar.low  <= t["sl"]
+                hit_sl = bar.low <= t["sl"]
                 hit_tp = bar.high >= t["tp"]
             else:
                 hit_sl = bar.high >= t["sl"]
-                hit_tp = bar.low  <= t["tp"]
+                hit_tp = bar.low <= t["tp"]
 
             if hit_sl and hit_tp:
+                # Conservador: assume SL primeiro quando ambos tocam na mesma vela
                 hit_tp = False
 
             force = bars_open >= max_bars
-
             if hit_sl or hit_tp or force:
                 if force and not hit_sl and not hit_tp:
                     exit_px = bar.close
-                    result  = "WIN" if bar.close > t["entry"] and t["dir"] == "BUY" else                               "WIN" if bar.close < t["entry"] and t["dir"] == "SELL" else "LOSS"
+                    pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], exit_px, t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
+                    result = "WIN" if pnl > 0 else "LOSS"
                 else:
                     exit_px = t["tp"] if hit_tp else t["sl"]
-                    result  = "WIN" if hit_tp else "LOSS"
+                    pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], exit_px, t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
+                    result = "WIN" if hit_tp else "LOSS"
 
-                pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], exit_px, t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
                 balance = round(balance + t["margin"] + pnl, 2)
                 trades.append({
                     "symbol": symbol,
@@ -384,75 +539,112 @@ def run_backtest(
             continue
 
         if cooldown > 0:
+            cooldown -= 1
             continue
 
         if tf == "H1" and not _in_session(bar, symbol):
             continue
 
-        window = max(0, i - 250)
-        res    = _indicators(df_full.iloc[window: i + 1])
+        window = max(0, i - 260)
+        res = _indicators(df_full.iloc[window : i + 1])
         if not res or res["atr"] <= 0:
             continue
 
-        direction = _signal(res, tf, min_confluence=min_confluence, adx_min=adx_min, pull_range=pull_range)
+        direction = _signal(
+            res,
+            tf,
+            min_confluence=min_confluence,
+            adx_min=adx_min,
+            pull_range=pull_range,
+            weekly_trade_target=weekly_trade_target,
+        )
         if not direction:
             continue
 
-        entry  = _apply_cost(bar.close, direction, symbol)
+        entry = _apply_cost(bar.close, direction, symbol)
         sl, tp = _sl_tp(entry, direction, res["atr"], atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)
 
-        if direction == "BUY"  and (sl >= entry or tp <= entry): continue
-        if direction == "SELL" and (sl <= entry or tp >= entry): continue
-
-        try:
-            from risk import calc_lot_for_risk
-            lot, _, _ = calc_lot_for_risk(symbol, entry, sl, balance)
-        except Exception:
-            lot = Config.MIN_LOT
-
-        cs      = 100 if symbol == "XAUUSD" else 100_000
-        sl_dist = abs(entry - sl)
-        max_risk_usd = balance * max(0.1, float(risk_pct)) / 100.0
-        if sl_dist > 0:
-            lot_by_risk = max_risk_usd / (sl_dist * cs)
-            lot = min(lot, lot_by_risk)
-        lot = max(Config.MIN_LOT, round(lot, 2))
-
-        margin = round(entry * lot * cs / Config.DEFAULT_LEVERAGE, 2)
-        if margin > balance * 0.4 or margin <= 0 or margin > balance:
+        if direction == "BUY" and (sl >= entry or tp <= entry):
+            continue
+        if direction == "SELL" and (sl <= entry or tp >= entry):
             continue
 
-        comm    = Config.COMMISSION_PER_LOT.get("FOREX", 6.0) * lot
+        cs = 100 if symbol == "XAUUSD" else 100_000
+        sl_dist = abs(entry - sl)
+        max_risk_usd = balance * max(0.1, float(risk_pct)) / 100.0
+        if sl_dist <= 0:
+            continue
+
+        lot_by_risk = max_risk_usd / (sl_dist * cs)
+        lot = max(Config.MIN_LOT, round(min(lot_by_risk, 50.0), 2))
+
+        margin = round(entry * lot * cs / Config.DEFAULT_LEVERAGE, 2)
+        if margin <= 0 or margin > balance * 0.45 or margin > balance:
+            continue
+
+        comm = Config.COMMISSION_PER_LOT.get("FOREX", 6.0) * lot
         balance -= margin
 
         active = {
-            "dir": direction, "entry": entry, "sl": sl, "tp": tp,
-            "lot": lot, "margin": margin, "comm": comm,
-            "bar_i": i, "opened_at": bar.timestamp, "adx": res["adx"],
+            "dir": direction,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "lot": lot,
+            "margin": margin,
+            "comm": comm,
+            "bar_i": i,
+            "opened_at": bar.timestamp,
+            "adx": res["adx"],
         }
 
     if active is not None:
-        t   = active
+        t = active
         pnl = calc_pnl_usd(symbol, t["dir"], t["entry"], bars[-1].close, t["lot"], usdjpy_price=150.0) - t.get("comm", 0)
         balance = round(balance + t["margin"] + pnl, 2)
         trades.append({
-            "symbol": symbol, "dir": t["dir"],
+            "symbol": symbol,
+            "dir": t["dir"],
             "result": "WIN" if pnl > 0 else "LOSS",
-            "pnl": round(pnl, 2), "entry": t["entry"],
-            "exit": bars[-1].close, "sl": t["sl"], "tp": t["tp"],
-            "lot": t["lot"], "bars_open": len(bars) - t["bar_i"],
+            "pnl": round(pnl, 2),
+            "entry": t["entry"],
+            "exit": bars[-1].close,
+            "sl": t["sl"],
+            "tp": t["tp"],
+            "lot": t["lot"],
+            "bars_open": len(bars) - t["bar_i"],
             "opened_at": t["opened_at"].isoformat(),
             "closed_at": bars[-1].timestamp.isoformat(),
             "closed_ts": bars[-1].timestamp.timestamp(),
             "closed_ts_iso": bars[-1].timestamp.isoformat(),
-            "adx": t.get("adx", 0), "timeframe": tf,
+            "adx": t.get("adx", 0),
+            "timeframe": tf,
         })
 
     metrics = calculate_metrics_from_history(trades, initial_balance=initial_balance, current_balance=balance)
-    return BacktestResult(metrics=metrics, trades=trades, equity_curve=metrics.pop("equity_curve", []), params={"symbol": symbol, "timeframe": tf})
+
+    if trades:
+        first_ts = trades[0].get("closed_ts") or trades[0].get("opened_at")
+        last_ts = trades[-1].get("closed_ts") or trades[-1].get("closed_at")
+        try:
+            first_dt = datetime.fromisoformat(str(trades[0]["closed_at"]))
+            last_dt = datetime.fromisoformat(str(trades[-1]["closed_at"]))
+            span_days = max(1.0, (last_dt - first_dt).total_seconds() / 86400.0)
+        except Exception:
+            span_days = max(1.0, len(bars) / (24.0 if tf == "H1" else 5.0))
+        metrics["trade_frequency_per_week"] = round(len(trades) / max(1e-6, span_days / 7.0), 2)
+        metrics["avg_bars_per_trade"] = round(sum(t.get("bars_open", 0) for t in trades) / len(trades), 2)
+    else:
+        metrics["trade_frequency_per_week"] = 0.0
+        metrics["avg_bars_per_trade"] = 0.0
+
+    equity_curve = metrics.pop("equity_curve", [])
+    return BacktestResult(metrics=metrics, trades=trades, equity_curve=equity_curve, params={"symbol": symbol, "timeframe": tf})
 
 
-# ── Legado ────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Legacy helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def backtest_trades(trades: Iterable[dict], initial_balance=None) -> dict:
     return calculate_metrics_from_history(trades, initial_balance=initial_balance)
@@ -468,14 +660,14 @@ def backtest_from_strategy(bars, strategy, initial_balance=None) -> dict:
     return calculate_metrics_from_history(all_trades, initial_balance=initial_balance)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 # CLI
-# ═══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("csv")
-    p.add_argument("--symbol",  default="EURUSD")
+    p.add_argument("--symbol", default="EURUSD")
     p.add_argument("--balance", type=float, default=Config.INITIAL_BALANCE)
     a = p.parse_args()
 
@@ -488,16 +680,19 @@ def main():
     r = run_backtest(bars, a.symbol, a.balance)
     m = r.metrics
 
-    print(f"\n{'═'*52}")
-    print(f"  {a.symbol} · {tf} · Pullback em Tendência")
-    print(f"{'═'*52}")
+    print()
+    print("═" * 52)
+    print(f"  {a.symbol} · {tf} · Regime-adaptativo")
+    print("═" * 52)
     print(f"  Trades:        {m['total_trades']} ({m['wins']}W / {m['losses']}L)")
     print(f"  Win Rate:      {m['winrate']}%")
     print(f"  Profit Factor: {m['profit_factor']}")
     print(f"  Max Drawdown:  {m['max_drawdown_pct']}%")
     print(f"  Sharpe:        {m.get('sharpe_ratio', 0)}")
+    print(f"  Trades/week:   {m.get('trade_frequency_per_week', 0)}")
     print(f"  P&L:           ${m['total_pnl']}")
-    print(f"{'═'*52}\n")
+    print("═" * 52)
+
 
 
 if __name__ == "__main__":

@@ -149,13 +149,21 @@ def get_trade_limit_override():
 
 STRATEGY_SETTINGS_FILE = "strategy_settings.json"
 DEFAULT_STRATEGY_SETTINGS = {
+    "profile": "hedge_fund",
     "min_confluence": 5,
     "adx_min": 18.0,
     "atr_sl_mult": 1.5,
     "atr_tp_mult": 3.5,
     "pull_min": -1.0,
     "pull_max": 2.0,
-    "risk_pct": 2.0,
+    "risk_pct": 1.5,
+    "weekly_trade_target": 3.0,
+    "min_rr": 1.8,
+    "trend_adx": 25.0,
+    "range_adx": 18.0,
+    "warmup_bars": 80,
+    "max_bars_in_trade": 60,
+    "optimization_mode": "robust",
 }
 
 def _normalize_strategy_settings(data: dict | None) -> dict:
@@ -175,6 +183,7 @@ def _normalize_strategy_settings(data: dict | None) -> dict:
         except (TypeError, ValueError):
             return default
 
+    base["profile"] = str(data.get("profile", base["profile"])) or base["profile"]
     base["min_confluence"] = max(1, min(20, _int("min_confluence", base["min_confluence"])))
     base["adx_min"] = max(0.0, _float("adx_min", base["adx_min"]))
     base["atr_sl_mult"] = max(0.1, _float("atr_sl_mult", base["atr_sl_mult"]))
@@ -184,6 +193,13 @@ def _normalize_strategy_settings(data: dict | None) -> dict:
     if base["pull_min"] > base["pull_max"]:
         base["pull_min"], base["pull_max"] = base["pull_max"], base["pull_min"]
     base["risk_pct"] = max(0.1, min(10.0, _float("risk_pct", base["risk_pct"])))
+    base["weekly_trade_target"] = max(0.5, min(20.0, _float("weekly_trade_target", base["weekly_trade_target"])))
+    base["min_rr"] = max(0.5, min(10.0, _float("min_rr", base["min_rr"])))
+    base["trend_adx"] = max(5.0, _float("trend_adx", base["trend_adx"]))
+    base["range_adx"] = max(5.0, _float("range_adx", base["range_adx"]))
+    base["warmup_bars"] = max(20, min(500, _int("warmup_bars", base["warmup_bars"])))
+    base["max_bars_in_trade"] = max(5, min(500, _int("max_bars_in_trade", base["max_bars_in_trade"])))
+    base["optimization_mode"] = str(data.get("optimization_mode", base["optimization_mode"])) or base["optimization_mode"]
     return base
 
 def load_strategy_settings() -> dict:
