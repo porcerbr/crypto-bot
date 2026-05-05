@@ -289,10 +289,13 @@ def get_dynamic_leverage(balance):
     return Config.DEFAULT_LEVERAGE
 
 def get_dynamic_max_trades(balance):
-    """Retorna máximo de trades ativos permitidos para o capital atual."""
+    """Modo signal-only: sem limite prático de sinais simultâneos."""
     override = get_trade_limit_override()
     if override is not None:
-        return override
+        return int(override)
+
+    if getattr(Config, "BOT_IS_SIGNAL_ONLY", False):
+        return 999
 
     for threshold, max_t in sorted(Config.DYNAMIC_MAX_TRADES.items()):
         if balance <= threshold:

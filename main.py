@@ -60,11 +60,9 @@ def send_startup_notification(bot):
     msg = (
         "🚀 SNIPER BOT INICIADO\n"
         "------------------------------\n"
-        f"💰 Saldo simulado: ${round(bot.balance, 2)}\n"
         f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\n"
-        f"📈 Trades ativos: {len(bot.active_trades)}\n"
-        f"⏳ Pendentes: {len(bot.pending_trades)}\n"
-        f"⚡ Alavancagem: {bot.get_current_leverage()}x\n"
+        f"📡 Sinais ativos: {len(bot.active_trades)}\n"
+        f"⚡ Alavancagem interna: {bot.get_current_leverage()}x\n"
     )
     if bot.is_paused():
         msg += "🚫 Status: PAUSADO (circuit breaker)\n"
@@ -110,9 +108,8 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
     msg = (
         "💓 HEARTBEAT — Bot operando\n"
         "------------------------------\n"
-        f"💰 Saldo: ${round(bot.balance, 2)}\n"
         f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L\n"
-        f"📈 Ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\n"
+        f"📡 Sinais ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\n"
         f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\n"
         f"🎯 Confluência mínima efetiva: {eff_conf} pts"
     )
@@ -206,7 +203,6 @@ def _send_confluence_report(bot):
     """Resposta ao comando /confluencia no Telegram."""
     from signals import get_confluence_snapshot
     from ai_validator import load_ai_params
-    from utils import get_allowed_symbols
 
     if getattr(bot, 'telegram_desk', None):
         bot.telegram_desk.send("⏳ <b>Calculando confluência...</b>")
@@ -217,7 +213,7 @@ def _send_confluence_report(bot):
         ai_params       = load_ai_params()
         min_conf        = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
         live_regime     = ai_params.get("live_regime", "neutral")
-        allowed_symbols = get_allowed_symbols(bot.balance)
+        allowed_symbols = set(Config.FXGOLD_ASSETS.keys())
 
         lines = [
             f"📊 CONFLUÊNCIA — {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",

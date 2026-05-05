@@ -590,8 +590,6 @@ def check_near_signals(bot) -> None:
     Só alerta pares que o bot pode realmente operar com o saldo atual.
     """
     from ai_validator import load_ai_params
-    from utils import get_allowed_symbols
-
     ai_params      = load_ai_params()
     effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
     NEAR_THRESHOLD = effective_conf - 2
@@ -599,8 +597,6 @@ def check_near_signals(bot) -> None:
     if not hasattr(bot, "_near_signal_cooldown"):
         bot._near_signal_cooldown = {}
 
-    # Só pares liberados pelo nível de capital atual
-    allowed_symbols = get_allowed_symbols(bot.balance)
     now             = time.time()
     snapshot        = get_confluence_snapshot()
 
@@ -609,10 +605,6 @@ def check_near_signals(bot) -> None:
         score = item["best_score"]
         total = item["total"]
         direction = item.get("best_dir") or item.get("direction") or item.get("dir") or "—"
-
-        # Ignora pares bloqueados pelo SAFETY
-        if sym not in allowed_symbols:
-            continue
 
         if score < NEAR_THRESHOLD or score >= effective_conf:
             continue
