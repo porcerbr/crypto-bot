@@ -36,8 +36,8 @@ def _is_safe_to_trade(bot, symbol):
     if is_weekend_gap_risk():
         return False, "Proteção de fim de semana/gap ativa"
 
-    # 3. Cooldown dinâmico
-    cooldown = get_dynamic_cooldown(getattr(bot, 'balance', None))
+    # 3. Cooldown dinâmico (fixo no modo signal-only)
+    cooldown = get_dynamic_cooldown(None)
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
@@ -181,6 +181,18 @@ def calc_confluence(res, direction, mtf=None):
     meta = {"regime": regime, "setup_type": setup_type}
     return score, total, checks, passed, min_score, meta
 
+def _recent_pair_wr(bot, symbol: str, direction: str | None = None, lookback: int | None = None):
+    """Retorna o win rate recente do par/direção ou None se ainda não houver amostra suficiente."""
+    lookback = int(lookback or getattr(Config, "PAIR_PERFORMANCE_LOOKBACK", 12))
+    min_sample = max(5, lookback)
+    history = list(getattr(bot, "history", []) or [])
+    filtered = [h for h in history if h.get("symbol") == symbol and (direction is None or h.get("dir") == direction)]
+    if len(filtered) < min_sample:
+        return None
+    sample = filtered[-lookback:]
+    wins = sum(1 for h in sample if h.get("result") == "WIN")
+    return wins / max(1, len(sample))
+
 def _get_smc_sl_tp(entry, direction, res, mtf, atr):
     """
     Retorna (sl, tp, rr, sl_source, tp_source) baseado em SMC.
@@ -313,7 +325,14 @@ def scan(bot):
         return
 
     symbols = list(get_allowed_symbols())
-    random.shuffle(symbols)
+    try:
+        ranking = {item["symbol"]: item.get("best_score", 0) for item in get_confluence_snapshot()}
+        symbols.sort(key=lambda s: ranking.get(s, 0), reverse=True)
+    except Exception:
+        random.shuffle(symbols)
+
+    max_signals = max(1, int(getattr(Config, "MAX_SYMBOLS_PER_REFRESH", 6)))
+    executed = 0
 
     for sym in symbols:
         safe, reason = _is_safe_to_trade(bot, sym)
@@ -334,86 +353,53 @@ def scan(bot):
             continue
 
         direction = res.get("dir") or res.get("direction") or ("BUY" if res["cenario"] == "ALTA" else "SELL")
+
+        recent_wr = _recent_pair_wr(bot, sym, direction)
+        min_wr = float(getattr(Config, "MIN_RECENT_PAIR_WR", 0.40))
+        if recent_wr is not None and recent_wr < min_wr:
+            log(f"[PAIR] {sym} {direction}: WR recente {round(recent_wr * 100, 1)}% abaixo do filtro")
+            continue
+
         sc, tot_c, checks, passed, min_sc, meta = calc_confluence(res, direction, mtf)
         if not passed:
             continue
 
-        entry = res["price"]
-        atr = res.get("atr", 0)
+        price = res["price"]
+        atr   = res["atr"]
+        sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(price, direction, res, mtf, atr)
+        if sl is None or tp is None:
+            sl, tp, rr = get_sl_tp_atr(price, atr, direction, Config.ATR_SL_MULT, Config.ATR_TP_MULT)
+            sl_src = tp_src = "atr"
 
-        sl, tp, rr, sl_src, tp_src = _get_smc_sl_tp(entry, direction, res, mtf, atr)
-        if not sl or not tp:
-            log(f"[SMC] {sym}: SL/TP inválido, descartado")
+        # Análise de liquidez/sweep adiciona contexto técnico.
+        sweep = res.get("sweep", {}) or {}
+        if direction == "BUY" and sweep.get("swing_low"):
+            sl = min(sl, sweep["swing_low"] - 0.25 * atr)
+        elif direction == "SELL" and sweep.get("swing_high"):
+            sl = max(sl, sweep["swing_high"] + 0.25 * atr)
+
+        sl_pct = abs(price - sl) / price * 100 if price else 0
+        tp_pct = abs(tp - price) / price * 100 if price else 0
+        sl_pips = abs(price - sl) / (0.01 if is_jpy_pair(sym) or sym == "XAUUSD" else 0.0001)
+        tp_pips = abs(tp - price) / (0.01 if is_jpy_pair(sym) or sym == "XAUUSD" else 0.0001)
+        rr = round(tp_pips / sl_pips, 2) if sl_pips > 0 else 0
+
+        min_sl_mult = float(getattr(Config, "MIN_SL_ATR_MULT", 0.6))
+        if abs(price - sl) < atr * min_sl_mult:
+            log(f"[SL] {sym}: SL curto demais ({abs(price-sl):.5f} < {atr * min_sl_mult:.5f}) — descartado")
             continue
 
-        # ── Validação de sanidade dos SL/TP ──────────────────────────
-        if direction == "BUY":
-            if sl >= entry:
-                log(f"[SLTP] {sym}: SL ({sl:.5f}) >= entrada ({entry:.5f}) — descartado")
-                continue
-            if tp <= entry:
-                log(f"[SLTP] {sym}: TP ({tp:.5f}) <= entrada ({entry:.5f}) — descartado")
-                continue
-        else:
-            if sl <= entry:
-                log(f"[SLTP] {sym}: SL ({sl:.5f}) <= entrada ({entry:.5f}) — descartado")
-                continue
-            if tp >= entry:
-                log(f"[SLTP] {sym}: TP ({tp:.5f}) >= entrada ({entry:.5f}) — descartado")
-                continue
-
-        # Distância máxima razoável: 10% do preço
-        max_dist = entry * 0.10
-        if abs(tp - entry) > max_dist or abs(sl - entry) > max_dist:
-            log(f"[SLTP] {sym}: SL/TP fora dos limites razoáveis (>10% do preço) — entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
+        # ── Janela técnica / notícias / bias ─────────────────────
+        if not is_good_session(sym) and getattr(Config, "SESSION_HARD_BLOCK", False):
             continue
-
-        sl_pct = round((abs(entry - sl) / entry) * 100, 2) if entry else 0
-        tp_pct = round((abs(tp - entry) / entry) * 100, 2) if entry else 0
-
-        if is_jpy_pair(sym):
-            pip_factor = 0.01
-        elif sym == "XAUUSD":
-            pip_factor = 0.01
-        else:
-            pip_factor = 0.0001
-        sl_pips = round(abs(entry - sl) / pip_factor)
-        tp_pips = round(abs(tp  - entry) / pip_factor)
-
-        from utils import get_dynamic_leverage
-        eff_lev = get_dynamic_leverage(bot.balance)
-
-        # Carrega a estratégia antes de usar qualquer parâmetro dela
-        strategy = load_strategy_settings()
-
-        suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
-            sym, entry, sl, bot.balance,
-            risk_pct=float(strategy.get("risk_pct", Config.ATR_RISK_PCT)),
-            atr=atr,
-            atr_mult=Config.ATR_MULT_FOR_RISK
-        )
-
-        min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
-        dist_sl = abs(entry - sl)
-        cs_val  = contract_size_for(sym)
-
-        if is_jpy_pair(sym) and entry > 0:
-            risk_001_lot = (dist_sl * cs_val * 0.01) / entry
-        else:
-            risk_001_lot = dist_sl * cs_val * 0.01
-        risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
-
-        est_risk_usd = suggested_risk_usd
-        ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
-        if not ok_corr:
-            log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
+        if is_high_impact_news_window(minutes_before=15, minutes_after=30, symbol=sym) and getattr(Config, "NEWS_HARD_BLOCK", False):
             continue
 
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
-        min_rr     = max(float(ai_params.get("min_rr", 1.5)), float(strategy.get("min_rr", 1.8)))
+        min_rr     = max(float(ai_params.get("min_rr", 1.5)), float(load_strategy_settings().get("min_rr", 1.8)))
 
-        base_conf = max(int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)), int(strategy.get("min_confluence", Config.MIN_CONFLUENCE)))
+        base_conf = max(int(ai_params.get("min_confluence", Config.MIN_CONFLUENCE)), int(load_strategy_settings().get("min_confluence", Config.MIN_CONFLUENCE)))
         bias      = ai_params.get("strategy_bias", "balanced")
         regime    = meta.get("regime", ai_params.get("live_regime", "neutral"))
         setup_type = meta.get("setup_type", "wait")
@@ -450,13 +436,11 @@ def scan(bot):
             has_ob  = check_map.get("OB ativo", False)
             has_h4  = check_map.get("H4 alinhado", False)
             has_daily = check_map.get("Daily Bias ALTA" if direction == "BUY" else "Daily Bias BAIXA", False)
-            # Para regimes tendenciais, dois pilares confirmados já bastam.
             quality = (has_fvg or has_ob) and has_h4 and (has_daily or sc >= effective_min_conf + 1)
         else:
             sweep_ok = check_map.get("Sweep de fundo" if direction == "BUY" else "Sweep de topo", False)
             band_ok  = check_map.get("Banda inferior tocada" if direction == "BUY" else "Banda superior tocada", False)
             rsi_ok   = check_map.get("RSI sobrevenda" if direction == "BUY" else "RSI sobrecompra", False)
-            # Em range, um sweep + qualquer 1 confirmação adicional já é suficiente.
             quality  = sweep_ok and (band_ok or rsi_ok)
 
         if not quality:
@@ -472,7 +456,7 @@ def scan(bot):
             "symbol": sym,
             "name": Config.FXGOLD_ASSETS.get(sym, sym),
             "dir": direction,
-            "entry": entry,
+            "entry": price,
             "sl": sl,
             "tp": tp,
             "sl_pct": sl_pct,
@@ -483,12 +467,12 @@ def scan(bot):
             "score": sc,
             "max_score": tot_c,
             "checks": [{"name": nm, "ok": ok} for nm, ok in checks],
-            "min_lot_margin": round(min_lot_margin, 2),
-            "risk_001_lot": round(risk_001_lot, 2),
-            "risk_pct_001": round(risk_pct_001, 2),
-            "suggested_lot": suggested_lot,
-            "suggested_risk_usd": suggested_risk_usd,
-            "suggested_risk_pct": suggested_risk_pct,
+            "min_lot_margin": round(0.0, 2),
+            "risk_001_lot": round(0.0, 2),
+            "risk_pct_001": round(0.0, 2),
+            "suggested_lot": Config.MIN_LOT,
+            "suggested_risk_usd": 0.0,
+            "suggested_risk_pct": 0.0,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
             "created_ts": time.time(),
             "atr": atr,
@@ -506,7 +490,6 @@ def scan(bot):
         # ── IA: pontua o sinal (NÃO bloqueia — apenas informa) ──
         _, ai_reason = validate_signal(pend, mtf, bot)
 
-        # Extrai score numérico do texto retornado pela IA (ex: "7/10: ...")
         ai_confidence = 0
         try:
             import re as _re
@@ -516,15 +499,17 @@ def scan(bot):
         except Exception:
             pass
 
-        pend["ai_reason"]     = ai_reason
-        pend["ai_approved"]   = True
+        pend["ai_reason"]   = ai_reason
+        pend["ai_approved"] = True
         pend["ai_confidence"] = ai_confidence
 
-        # Executa sinal automaticamente — sem confirmação manual
         ok = bot.execute_signal(pend)
         if ok:
+            executed += 1
             log(f"[SIGNAL] {sym} {direction} executado automaticamente (IA conf={ai_confidence}/10)")
-        # Não dá break — continua varrendo todos os símbolos
+            if executed >= max_signals:
+                break
+
 def get_confluence_snapshot() -> list[dict]:
     """
     Varre todos os pares e retorna o score de confluência atual.
@@ -585,7 +570,7 @@ def get_confluence_snapshot() -> list[dict]:
 def check_near_signals(bot) -> None:
     """
     Verifica se algum par PERMITIDO está com score próximo do mínimo.
-    Só alerta pares que o bot pode realmente operar com o saldo atual.
+    Só alerta pares que estão próximos do threshold técnico.
     """
     from ai_validator import load_ai_params
     from utils import get_allowed_symbols
@@ -597,7 +582,7 @@ def check_near_signals(bot) -> None:
     if not hasattr(bot, "_near_signal_cooldown"):
         bot._near_signal_cooldown = {}
 
-    # Universo monitorado (sem tiers de capital)
+    # Universo monitorado
     allowed_symbols = set(get_allowed_symbols())
     now             = time.time()
     snapshot        = get_confluence_snapshot()

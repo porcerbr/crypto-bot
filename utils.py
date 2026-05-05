@@ -314,12 +314,12 @@ def get_min_free_margin_pct(balance):
             return pct
     return 0.15
 
-def get_dynamic_cooldown(balance):
-    """Retorna cooldown em segundos após loss, baseado no capital."""
-    for threshold, cd in sorted(Config.DYNAMIC_COOLDOWN.items()):
-        if balance <= threshold:
-            return cd
-    return Config.ASSET_COOLDOWN
+def get_dynamic_cooldown(balance=None):
+    """Retorna cooldown em segundos entre sinais do mesmo par.
+
+    No modo signal-only, o cooldown é fixo e não depende de capital.
+    """
+    return int(getattr(Config, "SIGNAL_COOLDOWN_SECONDS", Config.ASSET_COOLDOWN))
 
 def is_weekend_gap_risk():
     """

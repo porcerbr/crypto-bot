@@ -60,7 +60,6 @@ def send_startup_notification(bot):
     msg = (
         "🚀 SNIPER BOT INICIADO\n"
         "------------------------------\n"
-        f"💰 Saldo simulado: ${round(bot.balance, 2)}\n"
         f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\n"
         f"📈 Trades ativos: {len(bot.active_trades)}\n"
         f"⏳ Pendentes: {len(bot.pending_trades)}\n"
@@ -159,7 +158,7 @@ def send_daily_report(bot):
         "------------------------------\n"
         "📈 Hoje:\n"
         f"   Sinais: {day_trades} ({day_wins}W / {day_losses}L)\n"
-        f"   P&L: ${round(day_pnl, 2)}\n"
+        f"   P&L simulado: {round(day_pnl, 2)}\n"
         "\n"
         "💠 Geral:\n"
         f"   Total trades: {metrics['total_trades']}\n"

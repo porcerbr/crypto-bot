@@ -189,7 +189,7 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
       </div>
       <div class="pill" id="connectionPill">LIVE • ONLINE</div>
     </div><div class="status-grid">
-  <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
+  <div class="kpi"><div class="label">Sinais</div><div class="value" id="saldoTop">0</div><div class="sub">Modo signal-only</div></div>
   <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
   <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
 </div>
@@ -329,7 +329,7 @@ function updateUIFromResult(data) {
   document.getElementById('winrateTop').innerText = r.winrate.toFixed(1) + '%';
   document.getElementById('pfTop').innerText = r.pf.toFixed(2);
   document.getElementById('trades').innerText = String(r.trades);
-  document.getElementById('saldoTop').innerText = 'R$ ' + r.balance.toFixed(2);
+  document.getElementById('saldoTop').innerText = String(r.trades);
   document.getElementById('result').value = JSON.stringify(r.raw, null, 2);
   document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
   document.getElementById('progressBar').style.width = Math.max(10, Math.min(100, (r.pf || 0) * 20)) + '%';

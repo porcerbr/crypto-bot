@@ -26,6 +26,8 @@ class TradingBot:
         self.pending_counter = 0
         self._usdjpy_price = 0.0
         self._current_leverage = Config.DEFAULT_LEVERAGE
+        self.signal_only = Config.BOT_IS_SIGNAL_ONLY
+        self.signal_cooldown = {}
         self.accounts = init_accounts(self.balance)
         self.telegram_desk = None
 
@@ -127,26 +129,14 @@ class TradingBot:
             log("[USDJPY] Erro ao atualizar: " + str(e))
 
     def check_correlation_exposure(self, symbol, additional_risk_usd=0.0):
+        """Limita excesso de sinais correlacionados sem depender de capital."""
+        max_group = getattr(Config, "MAX_CORRELATED_SIGNALS_PER_GROUP", 2)
         for group_name, symbols in Config.CORRELATION_GROUPS.items():
             if symbol not in symbols:
                 continue
-            total_risk_usd = 0.0
-            # Usa o preço USDJPY em cache, com fallback para 150.0 apenas se
-            # o cache ainda não estiver populado (primeiros segundos de startup)
-            usdjpy_rate = self._usdjpy_price if self._usdjpy_price > 0 else 150.0
-            for t in self.active_trades:
-                if t["symbol"] in symbols:
-                    dist = abs(t["entry"] - t["sl"])
-                    cs = contract_size_for(t["symbol"])
-                    risk = t["lot"] * dist * cs
-                    if is_jpy_pair(t["symbol"]):
-                        risk = risk / usdjpy_rate
-                    total_risk_usd += risk
-            total_risk_usd += additional_risk_usd
-            if self.balance > 0:
-                corr_pct = (total_risk_usd / self.balance) * 100
-                if corr_pct >= Config.MAX_CORRELATED_RISK_PCT:
-                    return False, group_name + " " + str(round(corr_pct, 1)) + "%"
+            same_group_active = sum(1 for t in self.active_trades if t.get("symbol") in symbols)
+            if same_group_active >= max_group:
+                return False, f"{group_name} com {same_group_active} sinais ativos"
         return True, ""
 
     # ═══════════════════════════════════════════════════════
@@ -155,127 +145,74 @@ class TradingBot:
 
     def execute_signal(self, pend: dict) -> bool:
         """
-        Executa um sinal diretamente, sem confirmacao manual.
-        Adiciona a lista de trades ativos para monitoramento automatico de WIN/LOSS.
-        Retorna True se executado com sucesso.
+        Executa um sinal diretamente, sem confirmação manual.
+        No modo signal-only, não reserva capital e não depende de margem.
         """
-        from utils import (
-            get_dynamic_leverage,
-            get_min_free_margin_pct, is_weekend_gap_risk,
-        )
+        from utils import is_weekend_gap_risk
 
         sym = pend["symbol"]
-
-        # Seleciona a conta virtual antes de qualquer sizing
-        account_id = pend.get("account_id") or self.choose_account_for_signal(pend)
-        pend["account_id"] = account_id
-        pend["account_name"] = self.sync_accounts().get(account_id, {}).get("name", account_id)
+        direction = pend.get("dir", "—")
 
         if is_weekend_gap_risk():
             log(f"[SIGNAL] {sym}: protecao de fim de semana ativa")
             return False
 
-        est_risk = pend.get("suggested_risk_usd", 0)
-        ok_corr, msg_corr = self.check_correlation_exposure(sym, est_risk)
+        ok_corr, msg_corr = self.check_correlation_exposure(sym, pend.get("suggested_risk_usd", 0))
         if not ok_corr:
             log(f"[SIGNAL] {sym}: correlacao — {msg_corr}")
             return False
 
-        eff_lev = get_dynamic_leverage(self.balance)
-        self._current_leverage = eff_lev
-
-        max_risk_usd = float('inf')
-
-        # Usa o lote sugerido pelo motor técnico, mas também respeita a carteira virtual.
         lot = float(pend.get("suggested_lot", Config.MIN_LOT) or Config.MIN_LOT)
         if lot < Config.MIN_LOT:
             lot = Config.MIN_LOT
 
-        account_risk = self.account_risk_pct(account_id, pend)
-        from risk import calc_lot_for_risk
-        capped_lot, capped_risk_usd, capped_risk_pct = calc_lot_for_risk(
-            sym,
-            pend["entry"],
-            pend["sl"],
-            self.balance,
-            risk_pct=account_risk,
-            atr=pend.get("atr"),
-            atr_mult=Config.ATR_MULT_FOR_RISK,
-        )
-        if capped_lot > 0:
-            lot = min(lot, capped_lot)
-
-        margin_required = calc_margin(sym, pend["entry"], eff_lev, lot)
-        try:
-            from risk import commission_for
-            commission = commission_for(sym, lot)
-        except Exception:
-            commission = 0
-
-        if margin_required <= 0:
-            log(f"[SIGNAL] {sym}: margem calculada inválida")
-            return False
-        if margin_required > self.balance * 0.8:
-            log(f"[SIGNAL] {sym}: margem excede 80% do saldo")
-            return False
-
-        used = self._get_used_margin()
-        free_margin = self.balance - used - margin_required
-        min_free_pct = get_min_free_margin_pct(self.balance)
-        if free_margin < self.balance * min_free_pct:
-            log(f"[SIGNAL] {sym}: margem livre insuficiente")
-            return False
-
-        ok, msg = self._check_margin_safety(margin_required)
-        if not ok:
-            log(f"[SIGNAL] {sym}: {msg}")
-            return False
-
-        ok_acc, msg_acc = self.account_can_trade(account_id, margin_required)
-        if not ok_acc:
-            log(f"[SIGNAL] {sym}: {msg_acc}")
-            return False
-
-        # ── Spread + Slippage (simulação realista de execução) ────────────────
+        # ── Spread + Slippage (execução simulada, sem relação com capital) ─────
         entry_simulated = pend["entry"]
         if Config.USE_SPREAD_MODEL or Config.USE_SLIPPAGE_MODEL:
             import random
             pf = 0.01 if is_jpy_pair(sym) or sym == "XAUUSD" else 0.0001
             spread_cost = 0.0
-            slip_cost   = 0.0
+            slip_cost = 0.0
             if Config.USE_SPREAD_MODEL:
-                spread_pips = Config.SPREAD_PIPS.get(sym, 1.0)
-                spread_cost = spread_pips * pf
+                spread_cost = random.uniform(Config.MIN_SPREAD_PIPS, Config.MAX_SPREAD_PIPS) * pf
             if Config.USE_SLIPPAGE_MODEL:
-                slip_pips = Config.SLIPPAGE_PIPS.get(sym, 0.3)
-                # Slippage aleatório entre 0 e slip_pips (sempre contra a posição)
-                slip_cost = random.uniform(0, slip_pips) * pf
-            total_cost = spread_cost + slip_cost
-            # Para BUY: entrada efetiva é maior; para SELL: menor
-            if pend.get("dir") == "BUY":
-                entry_simulated = round(pend["entry"] + total_cost, 5)
+                slip_cost = random.uniform(0, Config.SLIPPAGE_MAX_PIPS) * pf
+            if direction == "BUY":
+                entry_simulated += (spread_cost / 2.0) + slip_cost
             else:
-                entry_simulated = round(pend["entry"] - total_cost, 5)
+                entry_simulated -= (spread_cost / 2.0) + slip_cost
+            pend["spread_cost"] = round(spread_cost / pf, 2) if pf > 0 else 0
+            pend["slippage_cost"] = round(slip_cost / pf, 2) if pf > 0 else 0
+
+        score = float(pend.get("score", 0) or 0)
+        max_score = float(pend.get("max_score", 0) or 0)
+        quality_10 = max(1, min(10, int(round((score / max_score) * 10)))) if max_score > 0 else 1
 
         trade = {
             **pend,
-            "entry":              entry_simulated,
-            "lot":                round(lot, 2),
-            "margin_required":    round(margin_required, 2),
-            "commission":         round(commission, 2),
-            "opened_at":          pend["created_at"],
-            "wallet_before":      self.balance,
+            "entry": entry_simulated,
+            "lot": round(lot, 2),
+            "margin_required": 0.0,
+            "commission": 0.0,
+            "opened_at": pend["created_at"],
+            "wallet_before": 0.0,
             "trailing_activated": False,
-            "effective_leverage": eff_lev,
-            "ai_approved":        pend.get("ai_approved", True),
-            "ai_confidence":      pend.get("ai_confidence", 0),
-            "account_id":         account_id,
-            "account_name":       pend.get("account_name", account_id),
-            "account_risk_pct":   round(account_risk, 2),
+            "effective_leverage": Config.DEFAULT_LEVERAGE,
+            "ai_approved": pend.get("ai_approved", True),
+            "ai_confidence": pend.get("ai_confidence", 0),
+            "account_id": "signal_only",
+            "account_name": "Signal Desk",
+            "account_risk_pct": 0.0,
+            "signal_only": True,
+            "quality_10": quality_10,
         }
-        self.account_reserve(account_id, margin_required)
-        self.active_trades.append(trade)
 
+        # Cooldown do par/direção para evitar spam e melhorar a filtragem.
+        cooldown = int(getattr(Config, "SIGNAL_COOLDOWN_SECONDS", Config.ASSET_COOLDOWN))
+        self.asset_cooldown[sym] = time.time() + cooldown
+        self.signal_cooldown[f"{sym}|{direction}"] = time.time() + cooldown
+
+        self.active_trades.append(trade)
         self.send_signal_notification(trade)
         save_state(self)
         return True
@@ -296,24 +233,24 @@ class TradingBot:
             checks_lines.append(icon + " " + c["name"])
         checks_str = chr(10).join(checks_lines)
 
-        kz        = trade.get("kill_zone")
-        bias      = trade.get("daily_bias", "NEUTRO")
-        ote       = trade.get("ote_active", False)
-        kz_str    = f"⚡ Kill Zone: {kz}" if kz else "💤 Fora da Kill Zone"
-        bias_str  = f"📅 Daily Bias: {bias}"
-        ote_str   = "🎯 OTE: ✅ Retrace ideal (62–79%)" if ote else "🎯 OTE: ⬜ Fora da zona"
+        kz = trade.get("kill_zone")
+        bias = trade.get("daily_bias", "NEUTRO")
+        ote = trade.get("ote_active", False)
+        kz_str = f"⚡ Kill Zone: {kz}" if kz else "💤 Fora da Kill Zone"
+        bias_str = f"📅 Daily Bias: {bias}"
+        ote_str = "🎯 OTE: ✅ Retrace ideal (62–79%)" if ote else "🎯 OTE: ⬜ Fora da zona"
 
         direction = trade.get("dir", "—")
-        sl_pips   = trade.get("sl_pips", "—")
-        tp_pips   = trade.get("tp_pips", "—")
-        sl_dir    = "−" if direction == "BUY" else "+"
-        tp_dir    = "+" if direction == "BUY" else "−"
+        sl_pips = trade.get("sl_pips", "—")
+        tp_pips = trade.get("tp_pips", "—")
+        sl_dir = "−" if direction == "BUY" else "+"
+        tp_dir = "+" if direction == "BUY" else "−"
 
-        ai_conf   = trade.get("ai_confidence", 0)
+        ai_conf = trade.get("ai_confidence", 0)
         ai_reason = trade.get("ai_reason", "—")
-        regime    = trade.get("market_regime", "neutral").upper()
-        setup     = trade.get("setup_type", "—").upper()
-        conf_bar  = "🟩" * ai_conf + "⬜" * (10 - ai_conf)
+        regime = trade.get("market_regime", "neutral").upper()
+        setup = trade.get("setup_type", "—").upper()
+        conf_bar = "🟩" * ai_conf + "⬜" * (10 - ai_conf)
 
         lines = [
             "🎯 NOVO SINAL — " + trade["symbol"] + " (" + trade["name"] + ")",
@@ -324,6 +261,7 @@ class TradingBot:
             "🎯 TP:       " + fmt(trade["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
             "📊 RR: 1:" + str(trade["rr"]) + " | Score: " + str(trade["score"]) + "/" + str(trade["max_score"]),
             "🔄 Regime: " + regime + " | Setup: " + setup,
+            "🧮 Qualidade: " + str(trade.get("quality_10", 1)) + "/10",
             "——————————————————",
             kz_str,
             bias_str,
@@ -331,13 +269,9 @@ class TradingBot:
             "🤖 IA: " + conf_bar + " " + str(ai_conf) + "/10",
             "   " + ai_reason,
             "——————————————————",
-            "💸 Risco: $" + str(round(trade.get("suggested_risk_usd", 0), 2))
-                + " (" + str(round(trade.get("suggested_risk_pct", 0), 1)) + "%)",
-            "📦 Lote: " + str(trade.get("lot", "—")),
-            "——————————————————",
             checks_str,
             "——————————————————",
-            "🔔 Monitorando SL/TP automaticamente...",
+            "🚦 Monitorando SL/TP automaticamente...",
         ]
         self.send(chr(10).join(lines))
 
@@ -410,11 +344,10 @@ class TradingBot:
     def close_trade(self, trade, exit_price, result):
         from utils import get_dynamic_cooldown
 
-        margin = trade["margin_required"]
-        lot    = trade["lot"]
-        entry  = trade["entry"]
+        lot = trade.get("lot", Config.MIN_LOT)
+        entry = trade["entry"]
         symbol = trade["symbol"]
-        cs     = contract_size_for(symbol)
+        cs = contract_size_for(symbol)
 
         if trade["dir"] == "BUY":
             profit_raw = (exit_price - entry) * cs * lot - trade.get("commission", 0)
@@ -428,11 +361,7 @@ class TradingBot:
         else:
             profit = profit_raw
 
-        account_id = trade.get("account_id", "core")
-        self.account_release(account_id, margin, profit, result)
-        self.balance = round(total_equity(self.accounts), 2)
-
-        # Salva no histórico — usado pelo aprendizado da IA
+        # Histórico usado pelo relatório e aprendizado do bot.
         self.history.append({
             "symbol":        symbol,
             "dir":           trade["dir"],
@@ -443,8 +372,9 @@ class TradingBot:
             "adx":           trade.get("adx", 0),
             "ai_approved":   trade.get("ai_approved", True),
             "ai_confidence": trade.get("ai_confidence", 0),
-            "account_id":    account_id,
-            "account_name":  trade.get("account_name", account_id),
+            "score":         trade.get("score", 0),
+            "score_total":   trade.get("max_score", 0),
+            "quality_10":    trade.get("quality_10", 1),
         })
 
         if result == "WIN":
@@ -453,15 +383,16 @@ class TradingBot:
         else:
             self.losses += 1
             self.consecutive_losses += 1
-            cooldown = get_dynamic_cooldown(self.balance)
+            cooldown = get_dynamic_cooldown(None)
             self.asset_cooldown[symbol] = time.time() + cooldown
+            self.signal_cooldown[f"{symbol}|{trade['dir']}"] = time.time() + cooldown
             if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                 self.paused_until = time.time() + Config.PAUSE_DURATION
                 self.send("CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
         self.active_trades.remove(trade)
 
-        total   = self.wins + self.losses
-        new_wr  = round(self.wins / total * 100, 1) if total > 0 else 0
+        total = self.wins + self.losses
+        new_wr = round(self.wins / total * 100, 1) if total > 0 else 0
 
         pip_factor = 0.01 if (is_jpy_pair(symbol) or symbol == "XAUUSD") else 0.0001
         pips = round((exit_price - entry) / pip_factor if trade["dir"] == "BUY"
@@ -472,18 +403,15 @@ class TradingBot:
             opened_str = trade.get("opened_at", "")
             if opened_str:
                 opened_dt = datetime.strptime(opened_str, "%d/%m %H:%M").replace(year=datetime.now().year)
-                delta     = datetime.now() - opened_dt
-                h, m      = divmod(int(delta.total_seconds() // 60), 60)
+                delta = datetime.now() - opened_dt
+                h, m = divmod(int(delta.total_seconds() // 60), 60)
                 duration_str = f"{h}h {m}min" if h > 0 else f"{m}min"
         except Exception:
             pass
 
-        pnl_sign  = "+" if profit >= 0 else ""
-        pips_sign = "+" if pips >= 0 else ""
-        emoji     = "✅" if result == "WIN" else "❌"
-        wr_emoji  = "📈" if new_wr >= 55 else "📊"
+        emoji = "✅" if result == "WIN" else "❌"
+        wr_emoji = "📈" if new_wr >= 55 else "📊"
 
-        # Feedback IA vs resultado — alimenta aprendizado visual
         ai_conf = trade.get("ai_confidence", 0)
         ai_feedback = ""
         if ai_conf > 0:
@@ -505,12 +433,9 @@ class TradingBot:
                     f"{emoji} RESULTADO — {symbol} {trade['dir']}",
                     "——————————————————",
                     f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}",
-                    f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)",
+                    f"📉 Resultado: {result} | {pips:+.1f} pips",
                     f"⏱ Duração: {duration_str}",
-                    f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}",
-                    f"🏛 Conta: {trade.get('account_name', trade.get('account_id', 'core'))}",
-                    "——————————————————",
-                    f"🏦 Saldo: ${round(self.balance, 2)}",
+                    f"🏷 Qualidade: {trade.get('quality_10', 1)}/10",
                     f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L){ai_feedback}",
                 ])
                 self.send(msg)
@@ -520,12 +445,9 @@ class TradingBot:
                 f"{emoji} RESULTADO — {symbol} {trade['dir']}",
                 "——————————————————",
                 f"📍 Entrada: {fmt(entry)} → Saída: {fmt(exit_price)}",
-                f"💰 P&L: {pnl_sign}${round(profit, 2)} ({pips_sign}{pips} pips)",
+                f"📉 Resultado: {result} | {pips:+.1f} pips",
                 f"⏱ Duração: {duration_str}",
-                f"💼 Lote: {lot} | Margem liberada: ${round(margin, 2)}",
-                f"🏛 Conta: {trade.get('account_name', trade.get('account_id', 'core'))}",
-                "——————————————————",
-                f"🏦 Saldo: ${round(self.balance, 2)}",
+                f"🏷 Qualidade: {trade.get('quality_10', 1)}/10",
                 f"{wr_emoji} Win Rate: {new_wr}% ({self.wins}W / {self.losses}L){ai_feedback}",
             ])
             self.send(msg)
