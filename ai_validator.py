@@ -532,7 +532,7 @@ def weekly_learning(bot) -> dict | None:
     user_msg = f"""
 === RELATÓRIO SEMANAL ===
 
-Performance geral: WR {wr}% ({bot.wins}W/{bot.losses}L) | P&L ${total_pnl} | Saldo ${round(bot.balance, 2)}
+Performance geral: WR {wr}% ({bot.wins}W/{bot.losses}L) | P&L ${total_pnl}
 WR últimos 30 trades: {recent_wr}%
 
 Por par:
@@ -656,7 +656,7 @@ def monthly_deep_analysis(bot) -> dict | None:
     user_msg = f"""
 === ANÁLISE ESTRATÉGICA MENSAL ===
 
-Geral: {total} trades | WR {wr}% | P&L ${total_pnl} | Saldo ${round(bot.balance, 2)}
+Geral: {total} trades | WR {wr}% | P&L ${total_pnl}
 BUY WR: {buy_wr}% ({len(buy_trades)} trades) | SELL WR: {sell_wr}% ({len(sell_trades)} trades)
 
 Evolução temporal:

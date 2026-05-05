@@ -275,7 +275,6 @@ def format_startup(bot) -> str:
         f"<b>Modo:</b> SIGNAL_ONLY",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W / {bot.losses}L)",
         f"<b>Sinais em monitoramento:</b> {len(bot.active_trades)}",
-        f"<b>Leverage interno:</b> {bot.get_current_leverage()}x",
         "—" * 18,
         f"<b>Profile:</b> {esc(strategy.get('profile', 'hedge_fund'))}",
         f"<b>Min confluence:</b> {strategy.get('min_confluence')}",
@@ -347,7 +346,6 @@ def format_report(bot) -> str:
         f"<b>Profit factor:</b> {pf}",
         f"<b>Expectancy:</b> {_format_money(metrics.get('expectancy', 0))}",
         f"<b>Max DD:</b> {dd}%",
-        f"<b>P&L total:</b> {_format_money(metrics.get('total_pnl', 0))}",
     ])
 
 
@@ -355,7 +353,7 @@ def format_portfolio(bot) -> str:
     lines = [
         "🏦 <b>SIGNAL MODE</b>",
         f"<b>Horário:</b> {_now_utc()}",
-        "<b>Gestão de saldo desativada no Telegram.</b>",
+        "<b>Gestão financeira desativada no Telegram.</b>",
         "<b>Este bot envia sinais e monitora o resultado.</b>",
         "—" * 18,
         f"<b>Sinais ativos:</b> {len(getattr(bot, 'active_trades', []))}",
@@ -415,7 +413,6 @@ def format_result(trade: dict, bot, result: str) -> str:
         f"<b>Ativo:</b> {esc(trade.get('symbol','?'))}",
         f"<b>Direção:</b> {esc(trade.get('dir','—'))}",
         f"<b>Resultado:</b> {result}",
-        f"<b>P&L:</b> {_format_money(trade.get('pnl', 0))}",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W/{bot.losses}L)",
         f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
     ])

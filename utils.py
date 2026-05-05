@@ -91,60 +91,23 @@ def get_selected_symbols() -> list[str]:
     return load_asset_settings()["selected_symbols"]
 
 TRADE_SETTINGS_FILE = "trade_settings.json"
-MAX_MANUAL_ACTIVE_TRADES = 10
 
 
 def load_trade_settings() -> dict:
-    defaults = {
-        "max_active_trades": None,  # None = modo Auto
+    # Modo signal-only: não há limite de sinais por capital.
+    return {
+        "max_active_trades": None,
         "updated_at": None,
     }
-    if not os.path.exists(TRADE_SETTINGS_FILE):
-        return defaults
-    try:
-        with open(TRADE_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            stored = json.load(f)
-        raw = stored.get("max_active_trades")
-        if raw in (None, "", "auto", "AUTO"):
-            max_active = None
-        else:
-            try:
-                max_active = int(raw)
-            except (TypeError, ValueError):
-                max_active = None
-        if max_active is not None:
-            max_active = max(1, min(max_active, MAX_MANUAL_ACTIVE_TRADES))
-        return {**defaults, **stored, "max_active_trades": max_active}
-    except Exception as e:
-        log(f"[TRADES] Erro ao carregar trade_settings.json: {e}")
-        return defaults
 
 
 def save_trade_settings(max_active_trades) -> dict:
-    if max_active_trades in (None, "", "auto", "AUTO"):
-        cleaned = None
-    else:
-        try:
-            cleaned = int(max_active_trades)
-        except (TypeError, ValueError):
-            cleaned = None
-
-    if cleaned is not None:
-        cleaned = max(1, min(cleaned, MAX_MANUAL_ACTIVE_TRADES))
-
-    data = {
-        "max_active_trades": cleaned,
-        "updated_at": datetime.utcnow().isoformat(),
-    }
-    tmp = TRADE_SETTINGS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, TRADE_SETTINGS_FILE)
-    return data
+    # Mantido apenas por compatibilidade com o dashboard/API.
+    return load_trade_settings()
 
 
 def get_trade_limit_override():
-    return load_trade_settings()["max_active_trades"]
+    return None
 
 
 STRATEGY_SETTINGS_FILE = "strategy_settings.json"
@@ -275,57 +238,27 @@ def get_sl_tp_atr(entry, atr, direction, atr_sl_mult=1.5, atr_tp_mult=2.5):
 # NOVAS FUNÇÕES: SEGURANÇA DINÂMICA
 # ═══════════════════════════════════════════════════════════
 
-def get_dynamic_leverage(balance):
-    """
-    Retorna alavancagem baseada no capital atual.
-    Se USE_DYNAMIC_LEVERAGE=False, retorna DEFAULT_LEVERAGE.
-    """
-    if not Config.USE_DYNAMIC_LEVERAGE:
-        return Config.DEFAULT_LEVERAGE
-
-    for threshold, lev in sorted(Config.DYNAMIC_LEVERAGE_TABLE.items()):
-        if balance <= threshold:
-            return lev
+def get_dynamic_leverage(balance=None):
+    # No modo signal-only a alavancagem não é usada na execução.
     return Config.DEFAULT_LEVERAGE
 
-def get_dynamic_max_trades(balance):
-    """Modo signal-only: sem limite prático de sinais simultâneos."""
-    override = get_trade_limit_override()
-    if override is not None:
-        return int(override)
-
-    if getattr(Config, "BOT_IS_SIGNAL_ONLY", False):
-        return 999
-
-    for threshold, max_t in sorted(Config.DYNAMIC_MAX_TRADES.items()):
-        if balance <= threshold:
-            return max_t
+def get_dynamic_max_trades(balance=None):
+    # Sem teto por capital no modo signal-only.
     return Config.MAX_TRADES
 
 def get_allowed_symbols(balance=None):
-    """Retorna a lista de símbolos selecionados para o bot de sinais."""
+    # Todos os símbolos selecionados ficam liberados independentemente de capital.
     selected = [s for s in get_selected_symbols() if s in Config.FXGOLD_ASSETS]
     return selected or _default_selected_symbols()
 
-def get_max_risk_absolute(balance):
-    """Retorna risco máximo absoluto (USD) permitido por trade."""
-    for threshold, risk in sorted(Config.MAX_RISK_ABSOLUTE_USD.items()):
-        if balance <= threshold:
-            return risk
+def get_max_risk_absolute(balance=None):
     return 100.0
 
-def get_min_free_margin_pct(balance):
-    """Retorna % mínima de margem livre obrigatória."""
-    for threshold, pct in sorted(Config.MIN_FREE_MARGIN_PCT.items()):
-        if balance <= threshold:
-            return pct
-    return 0.15
+def get_min_free_margin_pct(balance=None):
+    return 0.0
 
-def get_dynamic_cooldown(balance):
-    """Retorna cooldown em segundos após loss, baseado no capital."""
-    for threshold, cd in sorted(Config.DYNAMIC_COOLDOWN.items()):
-        if balance <= threshold:
-            return cd
+def get_dynamic_cooldown(balance=None):
+    # Cooldown fixo, sem escalonamento por capital.
     return Config.ASSET_COOLDOWN
 
 def is_weekend_gap_risk():
@@ -347,9 +280,7 @@ def is_weekend_gap_risk():
     return False
 
 def is_symbol_allowed(symbol, balance=None):
-    """Verifica se o símbolo está habilitado na seleção do bot."""
-    allowed = get_allowed_symbols(balance)
-    return symbol in allowed
+    return symbol in get_allowed_symbols(balance)
 
 
 # ═══════════════════════════════════════════════════════════
