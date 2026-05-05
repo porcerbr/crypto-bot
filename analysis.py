@@ -28,8 +28,15 @@ def _log_invalid_candle(symbol: str):
 
 _cache: dict = {}
 _cache_lock = threading.Lock()
+_cache_meta: dict = {}
 _CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
 _last_refresh: float = 0.0
+_refresh_lock = threading.Lock()
+_refresh_in_progress = threading.Event()
+_feed_worker_started = False
+_feed_worker_lock = threading.Lock()
+_BACKGROUND_REFRESH_GRACE = 90  # segundos após TTL antes de bloquear o uso do cache
+_BATCH_SIZE = 6                 # mais conservador que o máximo para reduzir falhas
 
 # ── Yahoo Finance fallback ────────────────────────────────────
 _yahoo_cache: dict = {}
@@ -53,6 +60,245 @@ def _fetch_twelvedata_batch(symbols_str: str, params: dict) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def _normalize_td_symbol(symbol: str) -> str:
+    """Normaliza símbolo para uso no Twelve Data e no cache interno."""
+    return symbol.replace(" ", "").upper().strip()
+
+
+def _build_df_from_values(values: list[dict]) -> pd.DataFrame | None:
+    """Cria um DataFrame OHLC robusto a partir do payload do Twelve Data."""
+    if not values:
+        return None
+
+    df = pd.DataFrame(values)
+    if df.empty:
+        return None
+
+    dt_col = None
+    for candidate in ("datetime", "timestamp", "date", "time"):
+        if candidate in df.columns:
+            dt_col = candidate
+            break
+    if dt_col is None:
+        return None
+
+    df[dt_col] = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[dt_col])
+    if df.empty:
+        return None
+    df = df.set_index(dt_col).sort_index()
+
+    rename_map = {}
+    for c in df.columns:
+        lc = str(c).lower()
+        if lc == "open": rename_map[c] = "Open"
+        elif lc == "high": rename_map[c] = "High"
+        elif lc == "low": rename_map[c] = "Low"
+        elif lc == "close": rename_map[c] = "Close"
+        elif lc == "volume": rename_map[c] = "Volume"
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    required = ["Open", "High", "Low", "Close"]
+    if not all(col in df.columns for col in required):
+        return None
+
+    for col in required:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "Volume" in df.columns:
+        df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+    else:
+        df["Volume"] = 0.0
+
+    df = df.dropna(subset=required)
+    if len(df) < 15:
+        return None
+    return df
+
+
+def _extract_symbol_payload(payload: dict, symbol_td: str) -> dict | None:
+    """Extrai a sub-resposta de um símbolo em respostas batch ou single."""
+    if not isinstance(payload, dict):
+        return None
+
+    if payload.get("status") == "error":
+        return payload
+
+    # Resposta single-symbol: contém values/meta diretamente
+    if isinstance(payload.get("values"), list):
+        return payload
+
+    # Resposta batch: chave é o próprio símbolo (ou versão sem barra)
+    for key in (symbol_td, symbol_td.replace("/", ""), symbol_td.replace("/", "_") ):
+        sub = payload.get(key)
+        if isinstance(sub, dict):
+            return sub
+
+    # Fallback: pega o primeiro subobjeto que pareça time-series
+    for sub in payload.values():
+        if isinstance(sub, dict) and ("values" in sub or "meta" in sub):
+            return sub
+
+    return None
+
+
+def _upsert_cache(symbol_internal: str, df: pd.DataFrame, source: str, now: float | None = None):
+    now = now or time.time()
+    with _cache_lock:
+        _cache[symbol_internal] = (now, df)
+        _cache_meta[symbol_internal] = {
+            "source": source,
+            "last_ok": now,
+            "rows": len(df),
+        }
+
+
+def _single_symbol_refresh(symbol_internal: str, symbol_td: str, now: float) -> bool:
+    """Fallback em símbolo único quando o batch vem vazio ou incompleto."""
+    params = {
+        "symbol": symbol_td,
+        "interval": "1h",
+        "outputsize": 800,
+        "apikey": Config.TWELVE_DATA_API_KEY,
+        "format": "JSON",
+        "timezone": "UTC",
+    }
+    try:
+        data = _fetch_twelvedata_batch(symbol_td, params)
+        sym_data = _extract_symbol_payload(data, symbol_td)
+        if not sym_data or sym_data.get("status") == "error":
+            msg = sym_data.get("message", "sem payload") if isinstance(sym_data, dict) else "sem payload"
+            log(f"[TWELVEDATA] {symbol_td}: fallback individual falhou ({msg})")
+            return False
+        values = sym_data.get("values", [])
+        df = _build_df_from_values(values)
+        if df is None:
+            log(f"[TWELVEDATA] {symbol_td}: fallback individual sem candles válidos")
+            return False
+        _upsert_cache(symbol_internal, df, "twelvedata-single", now)
+        log(f"[TWELVEDATA] {symbol_td}: recuperado via fallback individual ({len(df)} candles)")
+        return True
+    except Exception as e:
+        log(f"[TWELVEDATA] {symbol_td}: erro no fallback individual — {e}")
+        return False
+
+
+def _normalize_td_symbol(symbol: str) -> str:
+    """Normaliza o símbolo interno para uso consistente no feed."""
+    return symbol.replace(" ", "").upper().strip()
+
+
+def _build_df_from_values(values: list[dict]) -> pd.DataFrame | None:
+    """Cria um DataFrame OHLC robusto a partir do payload do Twelve Data."""
+    if not values:
+        return None
+
+    df = pd.DataFrame(values)
+    if df.empty:
+        return None
+
+    dt_col = next((c for c in ("datetime", "timestamp", "date", "time") if c in df.columns), None)
+    if dt_col is None:
+        return None
+
+    df[dt_col] = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[dt_col])
+    if df.empty:
+        return None
+
+    df = df.set_index(dt_col).sort_index()
+
+    rename_map = {}
+    for c in df.columns:
+        lc = str(c).lower()
+        if lc == "open":
+            rename_map[c] = "Open"
+        elif lc == "high":
+            rename_map[c] = "High"
+        elif lc == "low":
+            rename_map[c] = "Low"
+        elif lc == "close":
+            rename_map[c] = "Close"
+        elif lc == "volume":
+            rename_map[c] = "Volume"
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    required = ["Open", "High", "Low", "Close"]
+    if not all(col in df.columns for col in required):
+        return None
+
+    for col in required:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0) if "Volume" in df.columns else 0.0
+    df = df.dropna(subset=required)
+    if len(df) < 15:
+        return None
+    return df
+
+
+def _extract_symbol_payload(payload: dict, symbol_td: str) -> dict | None:
+    """Extrai a sub-resposta de um símbolo em respostas batch ou single."""
+    if not isinstance(payload, dict):
+        return None
+
+    if payload.get("status") == "error":
+        return payload
+
+    if isinstance(payload.get("values"), list):
+        return payload
+
+    candidates = (symbol_td, symbol_td.replace("/", ""), symbol_td.replace("/", "_"))
+    for key in candidates:
+        sub = payload.get(key)
+        if isinstance(sub, dict):
+            return sub
+
+    for sub in payload.values():
+        if isinstance(sub, dict) and ("values" in sub or "meta" in sub):
+            return sub
+
+    return None
+
+
+def _upsert_cache(symbol_internal: str, df: pd.DataFrame, source: str, now: float | None = None):
+    now = now or time.time()
+    with _cache_lock:
+        _cache[symbol_internal] = (now, df)
+        _cache_meta[symbol_internal] = {
+            "source": source,
+            "last_ok": now,
+            "rows": len(df),
+        }
+
+
+def _single_symbol_refresh(symbol_internal: str, symbol_td: str, now: float) -> bool:
+    """Fallback em símbolo único quando o batch vem vazio ou incompleto."""
+    params = {
+        "symbol": symbol_td,
+        "interval": "1h",
+        "outputsize": 800,
+        "apikey": Config.TWELVE_DATA_API_KEY,
+        "format": "JSON",
+        "timezone": "UTC",
+    }
+    try:
+        data = _fetch_twelvedata_batch(symbol_td, params)
+        sym_data = _extract_symbol_payload(data, symbol_td)
+        values = (sym_data or {}).get("values", []) if isinstance(sym_data, dict) else []
+        df = _build_df_from_values(values)
+        if df is None:
+            msg = sym_data.get("message", "sem candles válidos") if isinstance(sym_data, dict) else "sem payload"
+            log(f"[TWELVEDATA] {symbol_td}: fallback individual falhou ({msg})")
+            return False
+        _upsert_cache(symbol_internal, df, "twelvedata-single", now)
+        log(f"[TWELVEDATA] {symbol_td}: recuperado via fallback individual ({len(df)} candles)")
+        return True
+    except Exception as e:
+        log(f"[TWELVEDATA] {symbol_td}: erro no fallback individual — {e}")
+        return False
 
 
 def _refresh_cache_from_yahoo(symbols: list[str]) -> int:
@@ -79,23 +325,16 @@ def _refresh_cache_from_yahoo(symbols: list[str]) -> int:
         if not yf_sym:
             continue
         try:
-            df = yf.download(yf_sym, period="60d", interval="1h",
-                             progress=False, auto_adjust=True)
+            df = yf.download(yf_sym, period="60d", interval="1h", progress=False, auto_adjust=True)
             if df is None or len(df) < 50:
                 continue
             df.index = pd.to_datetime(df.index, utc=True)
-            df = df.rename(columns={
-                "Open": "Open", "High": "High",
-                "Low":  "Low",  "Close": "Close",
-            })
+            df = df.rename(columns={"Open": "Open", "High": "High", "Low": "Low", "Close": "Close"})
             for col in ["Open", "High", "Low", "Close"]:
                 df[col] = df[col].astype(float)
             df["Volume"] = df.get("Volume", 0).astype(float)
 
-            with _cache_lock:
-                _cache[sym] = (now, df)
-            with _yahoo_cache_lock:
-                _yahoo_cache[sym] = now
+            _upsert_cache(sym, df, "yahoo", now)
             ok += 1
         except Exception as e:
             log(f"[YAHOO] Erro ao buscar {sym}: {e}")
@@ -107,10 +346,11 @@ def _refresh_cache_from_yahoo(symbols: list[str]) -> int:
 
 def _refresh_cache():
     """
-    Busca todos os 11 pares em UMA chamada batch.
-    Custo: 11 créditos por refresh.
-    Com TTL de 20 min: ~72 refreshes/dia, dentro do free tier de 800/dia.
-    Em caso de falha, aciona fallback Yahoo Finance automaticamente.
+    Refresh profissional do feed:
+      1) tenta Twelve Data em batch conservador
+      2) faz fallback individual nos símbolos que vierem vazios
+      3) mantém cache antigo se a fonte falhar
+      4) usa Yahoo apenas como última camada de segurança
     """
     global _last_refresh
 
@@ -120,15 +360,14 @@ def _refresh_cache():
         _last_refresh = time.time()
         return
 
-    # Free tier: 8 créditos/minuto, 1 crédito por símbolo.
-    # 11 símbolos em 1 chamada = 11 créditos → excede o limite.
-    # Solução: 2 batches (8 + 3) com 61s de intervalo.
-    items    = list(TD_SYMBOLS.items())
-    batches  = [items[:8], items[8:]]   # [8 pares, 3 pares]
-    now      = time.time()
+    now = time.time()
+    items = list(TD_SYMBOLS.items())
+    batches = [items[i:i + _BATCH_SIZE] for i in range(0, len(items), _BATCH_SIZE)]
     ok_count = 0
-    merged   = {}
     failed_symbols: list[str] = []
+    source_stats = {"batch": 0, "single": 0, "yahoo": 0, "stale": 0}
+
+    log(f"[FEED] Refresh profissional iniciado ({len(items)} símbolos | batch={_BATCH_SIZE})")
 
     for batch_idx, batch in enumerate(batches):
         if batch_idx > 0:
@@ -137,94 +376,139 @@ def _refresh_cache():
 
         symbols_str = ",".join(sym_td for _, sym_td in batch)
         params = {
-            "symbol":     symbols_str,
-            "interval":   "1h",
+            "symbol": symbols_str,
+            "interval": "1h",
             "outputsize": 800,
-            "apikey":     Config.TWELVE_DATA_API_KEY,
-            "format":     "JSON",
-            "timezone":   "UTC",
+            "apikey": Config.TWELVE_DATA_API_KEY,
+            "format": "JSON",
+            "timezone": "UTC",
         }
 
         try:
-            data = _fetch_twelvedata_batch(symbols_str, params)
-            merged.update(data)
-            log(f"[TWELVEDATA] Batch {batch_idx+1}/2 recebido ({len(batch)} pares)")
+            payload = _fetch_twelvedata_batch(symbols_str, params)
+            log(f"[TWELVEDATA] Batch {batch_idx + 1}/{len(batches)} recebido ({len(batch)} pares)")
         except Exception as e:
-            log(f"[TWELVEDATA] Erro no batch {batch_idx+1} após retries: {e}")
-            failed_symbols.extend(sym for sym, _ in batch)
+            log(f"[TWELVEDATA] Erro no batch {batch_idx + 1}: {e}")
+            failed_symbols.extend(sym_internal for sym_internal, _ in batch)
             continue
 
-    for sym_internal, sym_td in TD_SYMBOLS.items():
-        sym_data = merged.get(sym_td, {})
+        for sym_internal, sym_td in batch:
+            sym_data = _extract_symbol_payload(payload, sym_td)
+            values = (sym_data or {}).get("values", []) if isinstance(sym_data, dict) else []
+            df = _build_df_from_values(values)
+            if df is not None and len(df) >= 50:
+                _upsert_cache(sym_internal, df, "twelvedata-batch", now)
+                ok_count += 1
+                source_stats["batch"] += 1
+                continue
 
-        if sym_data.get("status") == "error":
-            log(f"[TWELVEDATA] {sym_td}: {sym_data.get('message', 'erro')}")
-            continue
+            if _single_symbol_refresh(sym_internal, sym_td, now):
+                ok_count += 1
+                source_stats["single"] += 1
+            else:
+                failed_symbols.append(sym_internal)
 
-        values = sym_data.get("values", [])
-        if not values or len(values) < 50:
-            log(f"[TWELVEDATA] {sym_td}: dados insuficientes ({len(values)} candles)")
-            continue
+    if failed_symbols:
+        yahoo_ok = _refresh_cache_from_yahoo(failed_symbols)
+        source_stats["yahoo"] += yahoo_ok
+        still_failed = [s for s in failed_symbols if s not in _cache]
+    else:
+        still_failed = []
 
-        try:
-            df = pd.DataFrame(values)
-            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-            df = df.set_index("datetime").sort_index()
-            df = df.rename(columns={
-                "open": "Open", "high": "High",
-                "low":  "Low",  "close": "Close",
-            })
-            for col in ["Open", "High", "Low", "Close"]:
-                df[col] = df[col].astype(float)
-            df["Volume"] = df["volume"].astype(float) if "volume" in df.columns else 0.0
-
-            _cache[sym_internal] = (now, df)
-            ok_count += 1
-
-        except Exception as e:
-            log(f"[TWELVEDATA] Erro ao processar {sym_td}: {e}")
+    for sym in still_failed:
+        if sym in _cache:
+            source_stats["stale"] += 1
+            log(f"[FEED] {sym}: usando cache antigo (stale-safe)")
+        else:
+            log(f"[FEED] {sym}: sem dados válidos em nenhuma fonte")
 
     _last_refresh = now
-    log(f"[TWELVEDATA] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} pares OK")
+    log(
+        f"[FEED] Cache atualizado — {ok_count}/{len(TD_SYMBOLS)} símbolos válidos | "
+        f"batch={source_stats['batch']} | single={source_stats['single']} | yahoo={source_stats['yahoo']} | stale={source_stats['stale']}"
+    )
 
-    # Aciona fallback Yahoo para os pares que falharam no Twelve Data
-    if failed_symbols:
-        log(f"[TWELVEDATA] Acionando Yahoo fallback para: {', '.join(failed_symbols)}")
-        _refresh_cache_from_yahoo(failed_symbols)
+
+def _refresh_cache_async():
+    try:
+        _refresh_cache()
+    finally:
+        _refresh_in_progress.clear()
+
+
+def _ensure_background_refresh(force: bool = False):
+    age = time.time() - _last_refresh
+    if not force and age < _CACHE_TTL and _cache:
+        return False
+    if _refresh_in_progress.is_set():
+        return False
+    _refresh_in_progress.set()
+    threading.Thread(target=_refresh_cache_async, daemon=True, name="market-feed-refresh").start()
+    return True
+
+
+def _start_feed_worker():
+    """Worker em background que renova o cache sem travar o loop principal."""
+    while True:
+        try:
+            age = time.time() - _last_refresh
+            if age >= _CACHE_TTL:
+                _ensure_background_refresh(force=True)
+                time.sleep(5)
+            else:
+                time.sleep(max(10, min(60, _CACHE_TTL - age)))
+        except Exception as e:
+            log(f"[FEED] Worker background erro: {e}")
+            time.sleep(10)
+
+
+def start_professional_feed():
+    """Inicializa o worker de refresh apenas uma vez."""
+    global _feed_worker_started
+    with _feed_worker_lock:
+        if _feed_worker_started:
+            return
+        _feed_worker_started = True
+    threading.Thread(target=_start_feed_worker, daemon=True, name="market-feed-worker").start()
+    log("[FEED] Worker profissional iniciado")
 
 
 def force_initial_refresh(blocking: bool = True):
     """
     Força um refresh imediato do cache de análise no startup.
-
-    Quando blocking=True (padrão) a chamada é síncrona — o bot só
-    continua após o cache estar populado.  Se blocking=False o refresh
-    é disparado em uma thread separada para não travar o startup.
     """
     if blocking:
         _refresh_cache()
     else:
-        import threading
-        threading.Thread(target=_refresh_cache, daemon=True).start()
+        _ensure_background_refresh(force=True)
 
 
 def _get_df(symbol: str):
     """
     Retorna o DataFrame do cache para o símbolo.
-    Dispara refresh batch se o cache estiver vencido.
-    Se o refresh falhar, usa cache antigo como fallback.
+    - Não bloqueia o loop principal quando o cache vencer.
+    - Dispara refresh em background e entrega o último cache bom.
     """
     now = time.time()
-    if (now - _last_refresh) >= _CACHE_TTL:
-        _refresh_cache()
+    age = now - _last_refresh
+
+    if age >= _CACHE_TTL:
+        _ensure_background_refresh()
 
     if symbol not in _cache:
         return None
 
     _, df = _cache[symbol]
+    if df is None or df.empty:
+        return None
+
+    if age >= (_CACHE_TTL + _BACKGROUND_REFRESH_GRACE):
+        meta = _cache_meta.get(symbol, {})
+        log(f"[FEED] {symbol}: cache stale-safe ({int(age)}s | source={meta.get('source', 'unknown')})")
+
     return df.copy()
 
-
+# ── Helpers internos ─────────────────────────────────────────
 # ── Helpers internos ─────────────────────────────────────────
 
 def _resample_to_4h(df: pd.DataFrame) -> pd.DataFrame:
