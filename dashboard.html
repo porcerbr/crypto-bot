@@ -189,7 +189,7 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
       </div>
       <div class="pill" id="connectionPill">LIVE • ONLINE</div>
     </div><div class="status-grid">
-  <div class="kpi"><div class="label">Sinais</div><div class="value" id="saldoTop">0</div><div class="sub">Modo signal-only</div></div>
+  <div class="kpi"><div class="label">Saldo</div><div class="value" id="saldoTop">R$ 0</div><div class="sub">Conta principal</div></div>
   <div class="kpi"><div class="label">Win Rate</div><div class="value" id="winrateTop">0%</div><div class="sub">Últimos testes</div></div>
   <div class="kpi"><div class="label">PF</div><div class="value" id="pfTop">0.00</div><div class="sub">Profit factor</div></div>
 </div>
@@ -223,9 +223,9 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
 </div>
 
 <div class="card">
-  <div class="card-header"><div><h2>Signal desk</h2><div class="hint">Parâmetros atuais</div></div><span class="badge gold">SIGNAL</span></div>
+  <div class="card-header"><div><h2>Risk desk</h2><div class="hint">Parâmetros atuais</div></div><span class="badge gold">RISK</span></div>
   <div class="grid-3">
-    <div class="metric"><div class="m-label">Qualidade</div><div class="m-value" id="riskPct">1-10</div><div class="m-foot">por sinal</div></div>
+    <div class="metric"><div class="m-label">Risk %</div><div class="m-value" id="riskPct">2.0%</div><div class="m-foot">por operação</div></div>
     <div class="metric"><div class="m-label">ADX min</div><div class="m-value" id="adxMin">18</div><div class="m-foot">força de tendência</div></div>
     <div class="metric"><div class="m-label">Confluência</div><div class="m-value" id="conf">5</div><div class="m-foot">filtros mínimos</div></div>
   </div>
@@ -238,7 +238,7 @@ button.secondary{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,
       <label>ADX minimum<input id="adx_min" type="number" step="0.1" placeholder="18" /></label>
       <label>ATR SL multiplier<input id="atr_sl_mult" type="number" step="0.1" placeholder="1.5" /></label>
       <label>ATR TP multiplier<input id="atr_tp_mult" type="number" step="0.1" placeholder="3.5" /></label>
-      <label>Qualidade mínima<input id="risk_pct" type="number" step="1" placeholder="6" /></label>
+      <label>Risk %<input id="risk_pct" type="number" step="0.1" placeholder="2.0" /></label>
       <label>Pull range
         <div class="grid-2">
           <input id="pull_min" type="number" step="0.1" placeholder="-1.0" />
@@ -318,7 +318,7 @@ function parseResult(data) {
     winrate: Number(r.winrate ?? r.win_rate ?? r.winRate ?? 0),
     pf: Number(r.profit_factor ?? r.pf ?? r.profitFactor ?? 0),
     trades: Number(r.trades ?? r.total_trades ?? r.totalTrades ?? 0),
-    balance: Number(r.active_signals ?? r.active ?? r.trades ?? 0),
+    balance: Number(r.balance ?? r.equity ?? r.initial_balance ?? 0),
     raw: r
   };
 }
@@ -329,7 +329,7 @@ function updateUIFromResult(data) {
   document.getElementById('winrateTop').innerText = r.winrate.toFixed(1) + '%';
   document.getElementById('pfTop').innerText = r.pf.toFixed(2);
   document.getElementById('trades').innerText = String(r.trades);
-  document.getElementById('saldoTop').innerText = String(r.balance);
+  document.getElementById('saldoTop').innerText = 'R$ ' + r.balance.toFixed(2);
   document.getElementById('result').value = JSON.stringify(r.raw, null, 2);
   document.getElementById('lastUpdate').innerText = new Date().toLocaleString('pt-BR');
   document.getElementById('progressBar').style.width = Math.max(10, Math.min(100, (r.pf || 0) * 20)) + '%';
@@ -355,7 +355,7 @@ async function loadConfig() {
     const pr = cfg.pull_range ?? DEFAULT_CONFIG.pull_range;
     document.getElementById('pull_min').value = pr[0];
     document.getElementById('pull_max').value = pr[1];
-    document.getElementById('riskPct').innerText = String(cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence) + ' pts';
+    document.getElementById('riskPct').innerText = (cfg.risk_pct ?? DEFAULT_CONFIG.risk_pct).toFixed(1) + '%';
     document.getElementById('adxMin').innerText = cfg.adx_min ?? DEFAULT_CONFIG.adx_min;
     document.getElementById('conf').innerText = cfg.min_confluence ?? DEFAULT_CONFIG.min_confluence;
     setConnection(true);

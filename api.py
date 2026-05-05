@@ -279,17 +279,38 @@ def create_api(bot):
     @app.route("/api/trade-settings", methods=["GET", "POST"])
     @require_auth
     def trade_settings():
-        settings = {
-            "max_active_trades": None,
-            "updated_at": None,
-        }
+        if request.method == "GET":
+            settings = load_trade_settings()
+            return jsonify({
+                "ok": True,
+                "settings": settings,
+                "max_active_trades": settings.get("max_active_trades"),
+                "mode": "auto" if settings.get("max_active_trades") is None else "manual",
+                "default_max_active_trades": Config.MAX_TRADES,
+                "max_manual_active_trades": 10,
+            })
+
+        data = request.get_json(force=True) or {}
+        raw = data.get("max_active_trades", data.get("trade_limit"))
+
+        if raw in (None, "", "auto", "AUTO"):
+            saved = save_trade_settings(None)
+        else:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "message": "max_active_trades inválido"}), 400
+            saved = save_trade_settings(value)
+
+        current = saved.get("max_active_trades")
         return jsonify({
             "ok": True,
-            "settings": settings,
-            "max_active_trades": None,
-            "mode": "signal_only",
+            "message": "Limite de trades atualizado",
+            "settings": saved,
+            "max_active_trades": current,
+            "mode": "auto" if current is None else "manual",
             "default_max_active_trades": Config.MAX_TRADES,
-            "max_manual_active_trades": 999,
+            "max_manual_active_trades": 10,
         })
 
     @app.route("/api/pending")
@@ -474,6 +495,9 @@ def create_api(bot):
         try:
             from signals import get_confluence_snapshot
             snapshot = get_confluence_snapshot()
+            allowed  = get_allowed_symbols(bot.balance)
+            for item in snapshot:
+                item["locked"] = item["symbol"] not in allowed
             return jsonify(snapshot)
         except Exception as e:
             return jsonify({"ok": False, "error": str(e), "confluence": []})
@@ -484,11 +508,11 @@ def create_api(bot):
         """Endpoint leve para Railway health-check."""
         return jsonify({
             "ok":          True,
+            "balance":     round(bot.balance, 2),
             "active":      len(bot.active_trades),
             "pending":     len(bot.pending_trades),
             "paused":      bot.is_paused(),
             "signal_only": Config.BOT_IS_SIGNAL_ONLY,
-            "mode":        "signal_only",
         })
 
     @app.route("/api/backtest/upload", methods=["POST"])

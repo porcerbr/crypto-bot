@@ -60,15 +60,17 @@ def send_startup_notification(bot):
     msg = (
         "🚀 SNIPER BOT INICIADO\n"
         "------------------------------\n"
+        f"💰 Saldo simulado: ${round(bot.balance, 2)}\n"
         f"📊 Win Rate: {wr}% ({bot.wins}W / {bot.losses}L)\n"
-        f"📡 Sinais ativos: {len(bot.active_trades)}\n"
-        f"🔁 Modo: SIGNAL_ONLY\n"
+        f"📈 Trades ativos: {len(bot.active_trades)}\n"
+        f"⏳ Pendentes: {len(bot.pending_trades)}\n"
+        f"⚡ Alavancagem: {bot.get_current_leverage()}x\n"
     )
     if bot.is_paused():
         msg += "🚫 Status: PAUSADO (circuit breaker)\n"
     else:
         msg += "✅ Status: OPERANDO\n"
-
+    
     msg += f"🕐 Iniciado: {datetime.now().strftime('%d/%m %H:%M UTC')}"
 
     if getattr(bot, 'telegram_desk', None):
@@ -78,7 +80,8 @@ def send_startup_notification(bot):
             bot.send(msg)
     else:
         bot.send(msg)
-    append_log("startup", {"winrate": wr, "mode": "signal_only"})
+    append_log("startup", {"balance": bot.balance, "winrate": wr})
+
 
 def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None = None):
     """
@@ -108,10 +111,9 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
         "💓 HEARTBEAT — Bot operando\n"
         "------------------------------\n"
         f"📊 WR: {wr}% | {bot.wins}W / {bot.losses}L\n"
-        f"📡 Sinais ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\n"
+        f"📈 Sinais ativos: {len(bot.active_trades)} | Pendentes: {len(bot.pending_trades)}\n"
         f"{emoji} Regime: {live_regime}{regime_status} (ADX={avg_adx})\n"
-        f"🎯 Confluência mínima efetiva: {eff_conf} pts\n"
-        f"🔁 Modo: SIGNAL_ONLY"
+        f"🎯 Confluência mínima efetiva: {eff_conf} pts"
     )
     if getattr(bot, 'telegram_desk', None):
         try:
@@ -126,7 +128,6 @@ def send_heartbeat(bot, regime_info: dict | None = None, ai_params: dict | None 
         "regime": live_regime,
         "adx": avg_adx,
         "confluence": eff_conf,
-        "mode": "signal_only",
     })
 
 
@@ -157,11 +158,10 @@ def send_daily_report(bot):
         f"📊 RELATÓRIO DIÁRIO — {now.strftime('%d/%m/%Y')}\n"
         "------------------------------\n"
         "📈 Hoje:\n"
-        f"   Trades: {day_trades} ({day_wins}W / {day_losses}L)\n"
+        f"   Sinais: {day_trades} ({day_wins}W / {day_losses}L)\n"
         f"   P&L: ${round(day_pnl, 2)}\n"
         "\n"
-        "💡 Geral:\n"
-        f"   Modo: SIGNAL_ONLY\n"
+        "💠 Geral:\n"
         f"   Total trades: {metrics['total_trades']}\n"
         f"   WR: {metrics['winrate']}%\n"
         f"   Profit Factor: {metrics['profit_factor']}\n"
@@ -177,6 +177,7 @@ def send_daily_report(bot):
         bot.send(msg)
     save_metrics(metrics)
     append_log("daily_report", metrics)
+
 
 def send_error_notification(bot, error_msg: str, traceback_str: str = ""):
     """Notificação de erro/crash — tolerante a falhas do próprio send."""
@@ -208,10 +209,11 @@ def _send_confluence_report(bot):
     else:
         bot.send("⏳ Calculando confluência...")
     try:
-        snapshot        = get_confluence_snapshot()
-        ai_params       = load_ai_params()
-        min_conf        = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
-        live_regime     = ai_params.get("live_regime", "neutral")
+        snapshot    = get_confluence_snapshot()
+        ai_params   = load_ai_params()
+        min_conf    = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
+        live_regime = ai_params.get("live_regime", "neutral")
+
         lines = [
             f"📊 CONFLUÊNCIA — {datetime.now(timezone.utc).strftime('%d/%m %H:%M')} UTC",
             f"Regime: {live_regime.upper()} | Mínimo: {min_conf} pts",
@@ -219,12 +221,13 @@ def _send_confluence_report(bot):
         ]
 
         for item in snapshot:
-            score  = item["best_score"]
-            total  = item["total"]
+            score     = int(item["best_score"])
+            total     = int(item["total"])
             direction = item.get("best_dir", "—")
-            sym    = item["symbol"]
-            bar    = "🟢" * min(score, 10) + "⚪" * max(0, min(total, 10) - score)
-            h4     = "✅" if item["h4_aligned"] else "❌"
+            sym       = item["symbol"]
+            quality   = max(1, min(10, round((score / max(total, 1)) * 10)))
+            bar       = "🟢" * quality + "⚪" * (10 - quality)
+            h4        = "✅" if item["h4_aligned"] else "❌"
 
             if score >= min_conf:
                 status = "🔥 SINAL"
@@ -236,13 +239,13 @@ def _send_confluence_report(bot):
                 status = "😴"
 
             lines.append(
-                f"{status} {sym} {direction} {score}/{total}\n"
+                f"{status} {sym} {direction} {score}/{total} | Qualidade {quality}/10\n"
                 f"  {bar}\n"
                 f"  RSI:{item['rsi']} ADX:{item['adx']} H4:{h4}"
             )
 
         lines.append("─────────────────────────────────")
-        lines.append("Sinais classificados apenas por confluência, sem bloqueios por regras internas.")
+        lines.append("Sinais classificados apenas por confluência.")
         lines.append("Use /confluencia para atualizar.")
         if getattr(bot, 'telegram_desk', None):
             bot.telegram_desk.send("\n".join(lines))
@@ -283,7 +286,7 @@ def _schedule_weekly_learning(bot):
                     f"Min confluence: {result['min_confluence']} | "
                     f"Min ADX: {result['min_adx']} | "
                     f"Min RR: {result['min_rr']}\n"
-                    f"Pares desativados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
+                    f"Pares bloqueados: {', '.join(result['blocked_pairs']) or 'nenhum'}"
                 )
                 log("[LAYER2] Aprendizado concluído")
         except Exception as e:
@@ -372,17 +375,9 @@ def bot_loop(bot):
     """Loop leve: heartbeat e relatórios, sem bloquear análise nem Telegram."""
     last_heartbeat = 0.0
     last_daily_report = None
-    last_trade_monitor = 0.0
 
     while True:
         now = datetime.now(timezone.utc)
-
-        if time.time() - last_trade_monitor >= 2:
-            try:
-                bot.monitor_trades()
-            except Exception as e:
-                log(f"[MONITOR] Erro: {e}")
-            last_trade_monitor = time.time()
 
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:
@@ -417,6 +412,10 @@ def main():
     
     bot = TradingBot()
     bot.telegram_desk = TelegramDesk(Config.BOT_TOKEN, Config.CHAT_ID)
+    try:
+        bot.telegram_desk.bootstrap()
+    except Exception as e:
+        log(f"[TELEGRAM] Falha ao limpar webhook: {e}")
 
     # 1. Carrega estado persistido
     state_loaded = load_state(bot)
@@ -440,7 +439,9 @@ def main():
             log(f"[STARTUP] Erro ao enviar notificação: {e}")
 
     append_log("init", {
+        "balance":      bot.balance,
         "state_loaded": state_loaded,
+        "leverage":     bot.get_current_leverage(),
         "signal_only":  Config.BOT_IS_SIGNAL_ONLY,
     })
 

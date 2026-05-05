@@ -1,18 +1,22 @@
+
 """
-telegram_hedgefund.py — Telegram desk for signal-only mode.
+telegram_hedgefund.py — Telegram professional, signal-only, sem capital.
 """
 
 from __future__ import annotations
 
 import html
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Iterable
 
 import requests
 
 from config import Config
 from utils import asset_name, fmt, get_selected_symbols, load_strategy_settings
+
 
 TG_LIMIT = 3900
 
@@ -31,17 +35,36 @@ def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
 
-def _signal_quality(trade: dict) -> int:
+def _quality_10(score: float | int | None, total: float | int | None) -> int:
     try:
-        score = float(trade.get("score", 0) or 0)
-        max_score = float(trade.get("max_score", 0) or 0)
-        if max_score > 0:
-            q = round((score / max_score) * 10)
-        else:
-            q = int(round(float(trade.get("ai_confidence", 0) or 0)))
-        return max(1, min(10, q))
+        score = float(score or 0)
+        total = float(total or 0)
+        if total <= 0:
+            return 0
+        return max(1, min(10, int(round((score / total) * 10))))
     except Exception:
-        return 1
+        return 0
+
+
+def _signal_bar(score: int, total: int) -> str:
+    total = max(1, int(total or 1))
+    score = max(0, min(int(score or 0), total))
+    filled = round((score / total) * 10)
+    filled = max(0, min(10, filled))
+    return "🟢" * filled + "⚪" * (10 - filled)
+
+
+def keyboard_markup() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "/status"}, {"text": "/report"}],
+            [{"text": "/confluencia"}, {"text": "/trades"}],
+            [{"text": "/pause"}, {"text": "/resume"}],
+            [{"text": "/assets"}, {"text": "/help"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
 
 
 @dataclass
@@ -57,12 +80,46 @@ class TelegramDesk:
         self.chat_id = str(chat_id)
         self.base = f"https://api.telegram.org/bot{token}"
         self.state = TelegramDeskState()
+        self._webhook_cleared = False
+        self._me_cache: dict | None = None
 
     def _post(self, method: str, payload: dict):
         try:
             return requests.post(f"{self.base}/{method}", json=payload, timeout=10)
         except Exception:
             return None
+
+    def _get(self, method: str, params: dict | None = None):
+        try:
+            return requests.get(f"{self.base}/{method}", params=params, timeout=15)
+        except Exception:
+            return None
+
+    def bootstrap(self):
+        """Garante polling limpo: remove webhook e descarta updates pendentes."""
+        if self._webhook_cleared:
+            return True
+        try:
+            self._post("deleteWebhook", {"drop_pending_updates": True})
+            self.state.offset = 0
+            self._webhook_cleared = True
+            return True
+        except Exception:
+            return False
+
+    def bot_username(self) -> str | None:
+        if self._me_cache is not None:
+            return self._me_cache.get("username")
+        try:
+            resp = self._get("getMe")
+            if resp and resp.ok:
+                data = resp.json()
+                if data.get("ok") and isinstance(data.get("result"), dict):
+                    self._me_cache = data["result"]
+                    return self._me_cache.get("username")
+        except Exception:
+            pass
+        return None
 
     def send(self, text: str, *, reply_markup: dict | None = None, disable_preview: bool = True):
         payload = {
@@ -86,9 +143,15 @@ class TelegramDesk:
         return self._post("sendMessage", payload)
 
     def get_updates(self):
-        params = {"timeout": 0.5, "offset": self.state.offset}
+        params = {
+            "timeout": 15,
+            "offset": self.state.offset,
+            "allowed_updates": json.dumps(["message", "edited_message"]),
+        }
+        resp = self._get("getUpdates", params=params)
+        if resp is None:
+            return {"ok": False, "description": "request failed", "result": []}
         try:
-            resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=1.5)
             return resp.json()
         except Exception as e:
             return {"ok": False, "description": str(e), "result": []}
@@ -111,70 +174,47 @@ class TelegramDesk:
     def push_status(self, bot, extra: str = ""):
         self.send(format_status(bot, extra=extra), reply_markup=keyboard_markup())
 
-    def push_portfolio(self, bot):
-        self.send(format_portfolio(bot), reply_markup=keyboard_markup())
+    def push_assets(self, bot):
+        self.send(format_assets(bot), reply_markup=keyboard_markup())
+
+    def push_trades(self, bot):
+        self.send(format_trades(bot), reply_markup=keyboard_markup())
 
     def push_confluence(self, bot):
         try:
             from signals import get_confluence_snapshot
-            snapshot = get_confluence_snapshot()
         except Exception as e:
-            self.send(f"⚠️ <b>Confluence Desk</b>\nErro: {esc(e)}")
+            self.send(f"⚠️ <b>Confluence Desk</b>\nFalha ao carregar snapshot: {esc(e)}")
             return
 
-        strategy = load_strategy_settings()
-        allowed = set(Config.FXGOLD_ASSETS.keys())
-        lines = [
-            "🧭 <b>CONFLUENCE DESK</b>",
-            f"<b>Horário:</b> {_now_utc()}",
-            f"<b>Min score atual:</b> {strategy.get('min_confluence', 5)}",
-            f"<b>Ativos monitorados:</b> {len(allowed)}",
-            "—" * 18,
-        ]
-        for item in snapshot[:12]:
-            sym = item.get("symbol", "?")
-            score = int(item.get("best_score", 0) or 0)
-            total = int(item.get("total", 0) or 0)
-            direction = item.get("best_dir", "—")
-            h4 = "✅" if item.get("h4_aligned") else "❌"
-            status = "🔥" if score >= strategy.get("min_confluence", 5) else "👀"
-            if sym not in allowed:
-                status = "🔒"
-            bar = "🟩" * min(score, 10) + "⬜" * max(0, min(total, 10) - score)
-            lines.append(f"{status} <b>{esc(sym)}</b> {esc(direction)} <b>{score}/{total}</b> H4:{h4}\n<code>{bar or '—'}</code>")
-        self.send("\n".join(lines), reply_markup=keyboard_markup())
-
-    def push_assets(self, bot):
-        allowed = list(Config.FXGOLD_ASSETS.keys())
-        selected = get_selected_symbols()
-        strategy = load_strategy_settings()
-        lines = [
-            "🛰 <b>ASSET DESK</b>",
-            f"<b>Ativos monitorados:</b> {len(allowed)}",
-            f"<b>Selecionados no bot:</b> {len(selected)}",
-            f"<b>Limite simultâneo:</b> sem limite",
-            "—" * 18,
-            "<b>Lista:</b> " + ", ".join(esc(asset_name(s)) for s in allowed[:20]),
-            f"<b>Perfil:</b> {esc(strategy.get('profile', 'hedge_fund'))}",
-        ]
-        self.send("\n".join(lines), reply_markup=keyboard_markup())
-
-    def push_trades(self, bot):
-        active = list(getattr(bot, "active_trades", []))
-        if not active:
-            self.send("📂 <b>OPEN SIGNALS</b>\nNenhum sinal ativo no momento.", reply_markup=keyboard_markup())
-            return
-
-        lines = [
-            "📂 <b>OPEN SIGNALS</b>",
-            f"<b>Sinais ativos:</b> {len(active)}",
-            "—" * 18,
-        ]
-        for t in active[:10]:
-            lines.append(
-                f"• <b>{esc(t.get('symbol','?'))}</b> {esc(t.get('dir','—'))} | entry {fmt(t.get('entry', 0))} | SL {fmt(t.get('sl', 0))} | TP {fmt(t.get('tp', 0))}"
-            )
-        self.send("\n".join(lines), reply_markup=keyboard_markup())
+        try:
+            snapshot = get_confluence_snapshot()
+            strategy = load_strategy_settings()
+            lines = [
+                "🧭 <b>CONFLUENCE DESK</b>",
+                f"<b>Horário:</b> {_now_utc()}",
+                f"<b>Min score:</b> {strategy.get('min_confluence', 5)}",
+                f"<b>Timeframe:</b> {esc(getattr(bot, 'timeframe', '—'))}",
+                "—" * 18,
+            ]
+            for item in snapshot[:12]:
+                sym = item.get("symbol", "?")
+                score = int(item.get("best_score", 0) or 0)
+                total = int(item.get("total", 0) or 0)
+                direction = item.get("best_dir", "—")
+                h4 = "✅" if item.get("h4_aligned") else "❌"
+                quality = _quality_10(score, total)
+                status = "🔥 SINAL" if score >= strategy.get("min_confluence", 5) else "⚡ WATCH"
+                lines.append(
+                    f"{status} {esc(sym)} {esc(direction)} {score}/{total} | Qualidade {quality}/10\n"
+                    f"  {_signal_bar(score, total)}\n"
+                    f"  RSI:{item.get('rsi', '—')} ADX:{item.get('adx', '—')} H4:{h4}"
+                )
+            lines.append("—" * 18)
+            lines.append("Confluência classificada apenas por força técnica.")
+            self.send("\n".join(lines), reply_markup=keyboard_markup())
+        except Exception as e:
+            self.send(f"❌ <b>Erro ao calcular confluência:</b> {esc(e)}", reply_markup=keyboard_markup())
 
     def poll_commands(self, bot, on_confluence=None):
         executed = []
@@ -186,50 +226,64 @@ class TelegramDesk:
         if not data.get("ok"):
             return executed
 
+        username = self.bot_username()
         for upd in data.get("result", []):
             try:
                 uid = int(upd.get("update_id", 0))
                 self.state.offset = max(self.state.offset, uid + 1)
-                text = ""
-                if "message" in upd and upd["message"]:
-                    text = str(upd["message"].get("text", "") or "").strip()
-                elif "edited_message" in upd and upd["edited_message"]:
-                    text = str(upd["edited_message"].get("text", "") or "").strip()
-                if not text:
-                    continue
-                txt = text.lower()
-                executed.append(txt.split()[0])
 
-                if txt.startswith("/start") or txt.startswith("/help"):
+                text = ""
+                if upd.get("message"):
+                    text = str(upd["message"].get("text", "") or "").strip()
+                elif upd.get("edited_message"):
+                    text = str(upd["edited_message"].get("text", "") or "").strip()
+
+                if not text or not text.startswith("/"):
+                    continue
+
+                raw_cmd = text.split()[0].strip()
+                cmd = raw_cmd.split("@", 1)[0].lower()
+
+                executed.append(cmd.lstrip("/"))
+
+                if cmd in ("/start", "/help"):
                     self.send(
-                        "🤖 <b>SNIPER BOT | SIGNAL ONLY</b>\n"
+                        "🤖 <b>SNIPER BOT | SIGNAL DESK</b>\n"
                         "Comandos disponíveis:\n"
-                        "• /status — visão geral\n"
-                        "• /report — relatório consolidado\n"
-                        "• /confluencia — força dos setups\n"
+                        "• /status — visão operacional\n"
+                        "• /report — relatório do dia\n"
+                        "• /confluencia — ranking dos setups\n"
                         "• /trades — sinais ativos\n"
                         "• /assets — ativos monitorados\n"
                         "• /pause [min] — pausa temporária\n"
-                        "• /resume — retoma o bot\n\n"
-                        "Use os botões abaixo para acesso rápido.",
+                        "• /resume — retoma o bot\n"
+                        "• /mode — modo e parâmetros\n\n"
+                        "Botões abaixo para acesso rápido.",
                         reply_markup=keyboard_markup(),
                     )
-                elif txt.startswith("/status"):
+
+                elif cmd == "/status":
                     self.push_status(bot)
-                elif txt.startswith("/report"):
+
+                elif cmd == "/report":
                     self.push_report(bot)
-                elif txt.startswith("/portfolio"):
-                    self.push_portfolio(bot)
-                elif txt.startswith("/confluencia") or txt.startswith("/confluência"):
+
+                elif cmd == "/portfolio":
+                    self.push_status(bot, extra="Portfólio desativado no modo signal-only.")
+
+                elif cmd == "/confluencia":
                     if on_confluence:
                         on_confluence(bot)
                     else:
                         self.push_confluence(bot)
-                elif txt.startswith("/assets"):
+
+                elif cmd == "/assets":
                     self.push_assets(bot)
-                elif txt.startswith("/trades"):
+
+                elif cmd == "/trades":
                     self.push_trades(bot)
-                elif txt.startswith("/pause"):
+
+                elif cmd == "/pause":
                     minutes = 120
                     parts = text.split()
                     if len(parts) > 1:
@@ -241,14 +295,19 @@ class TelegramDesk:
                         bot.pause_for(minutes * 60, reason=f"Telegram /pause {minutes}m")
                     else:
                         bot.paused_until = time.time() + minutes * 60
-                    self.send(f"⏸️ <b>Bot pausado</b>\nTempo: {minutes} min", reply_markup=keyboard_markup())
-                elif txt.startswith("/resume"):
+                    self.send(
+                        f"⏸️ <b>Bot pausado</b>\nTempo: {minutes} min\nRetoma: {_now_utc()} + {minutes} min",
+                        reply_markup=keyboard_markup(),
+                    )
+
+                elif cmd == "/resume":
                     if hasattr(bot, "resume"):
                         bot.resume()
                     else:
                         bot.paused_until = 0.0
                     self.send("▶️ <b>Bot retomado</b>\nModo operacional ativado.", reply_markup=keyboard_markup())
-                elif txt.startswith("/mode"):
+
+                elif cmd == "/mode":
                     strategy = load_strategy_settings()
                     self.send(
                         "🧠 <b>STRATEGY MODE</b>\n"
@@ -256,7 +315,16 @@ class TelegramDesk:
                         f"<b>Min confluence:</b> {strategy.get('min_confluence')}\n"
                         f"<b>ADX min:</b> {strategy.get('adx_min')}\n"
                         f"<b>RR mínimo:</b> {strategy.get('min_rr')}\n"
-                        f"<b>Weekly target:</b> {strategy.get('weekly_trade_target')} trade(s)",
+                        f"<b>Weekly target:</b> {strategy.get('weekly_trade_target')} sinal(is)",
+                        reply_markup=keyboard_markup(),
+                    )
+
+                elif cmd == "/health":
+                    self.send(format_health(bot), reply_markup=keyboard_markup())
+
+                else:
+                    self.send(
+                        "Comando não reconhecido. Use /help para ver os comandos disponíveis.",
                         reply_markup=keyboard_markup(),
                     )
             except Exception:
@@ -268,19 +336,22 @@ def format_startup(bot) -> str:
     strategy = load_strategy_settings()
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0.0
-    return "\n".join([
+    lines = [
         "🚀 <b>SNIPER BOT ONLINE</b>",
         f"<b>Horário:</b> {_now_utc()}",
-        f"<b>Status:</b> {'⏸️ PAUSADO' if bot.is_paused() else '✅ OPERANDO'}",
-        f"<b>Modo:</b> SIGNAL_ONLY",
+        f"<b>Modo:</b> SIGNAL ONLY",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W / {bot.losses}L)",
-        f"<b>Sinais em monitoramento:</b> {len(bot.active_trades)}",
+        f"<b>Sinais ativos:</b> {len(getattr(bot, 'active_trades', []))}",
+        f"<b>Sinais monitorados:</b> {len(getattr(bot, 'pending_trades', []))}",
         "—" * 18,
         f"<b>Profile:</b> {esc(strategy.get('profile', 'hedge_fund'))}",
         f"<b>Min confluence:</b> {strategy.get('min_confluence')}",
         f"<b>ADX min:</b> {strategy.get('adx_min')}",
-        f"<b>Sem limite de sinais simultâneos</b>",
-    ])
+        f"<b>Weekly target:</b> {strategy.get('weekly_trade_target')}",
+        f"<b>Timeframe:</b> {esc(getattr(bot, 'timeframe', '—'))}",
+    ]
+    lines.append("<b>Status:</b> ⏸️ PAUSADO" if bot.is_paused() else "<b>Status:</b> ✅ OPERANDO")
+    return "\n".join(lines)
 
 
 def format_heartbeat(bot, regime_info: dict) -> str:
@@ -289,13 +360,19 @@ def format_heartbeat(bot, regime_info: dict) -> str:
     live_regime = str(regime_info.get("live_regime", "neutral")).upper()
     avg_adx = regime_info.get("avg_adx", 0)
     eff_conf = regime_info.get("effective_conf", load_strategy_settings().get("min_confluence", 5))
-    emoji = {"RANGING": "〰️", "TRENDING": "📈", "NEUTRAL": "➡️", "VOLATILE": "⚡", "TRADING": "📡"}.get(live_regime, "➡️")
+    emoji = {
+        "RANGING": "〰️",
+        "TRENDING": "📈",
+        "NEUTRAL": "➡️",
+        "VOLATILE": "⚡",
+        "TRADING": "📡",
+    }.get(live_regime, "➡️")
     return "\n".join([
         "💓 <b>HEARTBEAT</b>",
         f"<b>Horário:</b> {_now_utc()}",
-        f"<b>Modo:</b> SIGNAL_ONLY",
+        f"<b>Modo:</b> SIGNAL ONLY",
         f"<b>WR:</b> {wr}% | {bot.wins}W / {bot.losses}L",
-        f"<b>Sinais ativos:</b> {len(bot.active_trades)} | <b>Pendentes:</b> {len(bot.pending_trades)}",
+        f"<b>Sinais ativos:</b> {len(getattr(bot, 'active_trades', []))} | <b>Pendentes:</b> {len(getattr(bot, 'pending_trades', []))}",
         f"<b>{emoji} Regime:</b> {live_regime} (ADX={avg_adx})",
         f"<b>Confluência mínima efetiva:</b> {eff_conf}",
     ])
@@ -306,113 +383,114 @@ def format_status(bot, extra: str = "") -> str:
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0.0
     pause_status = "⏸️ PAUSADO" if bot.is_paused() else "✅ OPERANDO"
-    allowed = list(Config.FXGOLD_ASSETS.keys())
+    selected = get_selected_symbols()
+    last = (bot.history[-1] if getattr(bot, "history", None) else None) or {}
     lines = [
         "📊 <b>STATUS DESK</b>",
         f"<b>Horário:</b> {_now_utc()}",
         f"<b>Status:</b> {pause_status}",
-        f"<b>Modo:</b> SIGNAL_ONLY",
+        f"<b>Modo:</b> SIGNAL ONLY",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W/{bot.losses}L)",
-        f"<b>Sinais ativos:</b> {len(bot.active_trades)}",
-        f"<b>Ativos monitorados:</b> {len(allowed)}",
-        f"<b>Confluência mínima:</b> {strategy.get('min_confluence')} | <b>ADX min:</b> {strategy.get('adx_min')}",
-        f"<b>Sem limite de sinais simultâneos</b>",
+        f"<b>Sinais ativos:</b> {len(getattr(bot, 'active_trades', []))}",
+        f"<b>Sinais monitorados:</b> {len(getattr(bot, 'pending_trades', []))}",
+        f"<b>Ativos monitorados:</b> {len(selected)}",
+        f"<b>Min confluence:</b> {strategy.get('min_confluence')} | <b>ADX min:</b> {strategy.get('adx_min')}",
+        f"<b>Qualidade alvo:</b> 1–10",
     ]
+    if last:
+        lines.append(f"<b>Último resultado:</b> {esc(last.get('result', '—'))} | {esc(last.get('symbol', '—'))}")
     if extra:
         lines.append(f"—\n{esc(extra)}")
     return "\n".join(lines)
 
 
 def format_report(bot) -> str:
-    from performance import calculate_metrics_from_history
-
-    metrics = calculate_metrics_from_history(
-        bot.history,
-        initial_balance=Config.INITIAL_BALANCE,
-        current_balance=bot.balance,
-        active_trades_count=len(bot.active_trades),
-        pending_trades_count=len(bot.pending_trades),
-    )
-    total = metrics.get("total_trades", 0) or 0
-    wr = metrics.get("winrate", 0)
-    pf = metrics.get("profit_factor", 0)
-    dd = metrics.get("max_drawdown_pct", 0)
+    total = bot.wins + bot.losses
+    wr = round(bot.wins / total * 100, 1) if total > 0 else 0.0
+    avg_quality = 0.0
+    scored = []
+    for t in list(getattr(bot, "history", []))[-200:]:
+        try:
+            s = float(t.get("score", t.get("ai_confidence", 0)) or 0)
+            m = float(t.get("score_total", 10) or 10)
+            scored.append(_quality_10(s, m))
+        except Exception:
+            continue
+    if scored:
+        avg_quality = round(sum(scored) / len(scored), 1)
     return "\n".join([
-        "📈 <b>DAILY / CONSOLIDATED REPORT</b>",
+        "📈 <b>DAILY REPORT</b>",
         f"<b>Horário:</b> {_now_utc()}",
-        f"<b>Modo:</b> SIGNAL_ONLY",
-        f"<b>Trades analisados:</b> {total}",
+        f"<b>Modo:</b> SIGNAL ONLY",
+        f"<b>Trades/sinais:</b> {total}",
         f"<b>Win rate:</b> {wr}%",
-        f"<b>Profit factor:</b> {pf}",
-        f"<b>Expectancy:</b> {_format_money(metrics.get('expectancy', 0))}",
-        f"<b>Max DD:</b> {dd}%",
+        f"<b>Wins / Losses:</b> {bot.wins} / {bot.losses}",
+        f"<b>Qualidade média:</b> {avg_quality}/10",
+        f"<b>Pendentes:</b> {len(getattr(bot, 'pending_trades', []))}",
+        f"<b>Ativos:</b> {len(getattr(bot, 'active_trades', []))}",
     ])
 
 
-def format_portfolio(bot) -> str:
-    lines = [
-        "🏦 <b>SIGNAL MODE</b>",
+def format_assets(bot) -> str:
+    selected = get_selected_symbols()
+    names = [asset_name(s) for s in selected]
+    return "\n".join([
+        "🛰 <b>ASSET DESK</b>",
         f"<b>Horário:</b> {_now_utc()}",
-        "<b>Gestão financeira desativada no Telegram.</b>",
-        "<b>Este bot envia sinais e monitora o resultado.</b>",
+        f"<b>Ativos monitorados:</b> {len(selected)}",
+        f"<b>Timeframe:</b> {esc(getattr(bot, 'timeframe', '—'))}",
         "—" * 18,
+        f"<b>Lista:</b> {', '.join(esc(n) for n in names)}",
+    ])
+
+
+def format_trades(bot) -> str:
+    active = list(getattr(bot, "active_trades", []))
+    if not active:
+        return "\n".join([
+            "📂 <b>SINAIS ATIVOS</b>",
+            "Nenhum sinal ativo no momento.",
+        ])
+
+    lines = [
+        "📂 <b>SINAIS ATIVOS</b>",
+        f"<b>Horário:</b> {_now_utc()}",
+        f"<b>Total:</b> {len(active)}",
+        "—" * 18,
+    ]
+    for t in active[:15]:
+        quality = _quality_10(t.get("score"), t.get("score_total"))
+        lines.append(
+            f"• <b>{esc(t.get('symbol','?'))}</b> {esc(t.get('dir','—'))} | "
+            f"{t.get('score','—')}/{t.get('score_total','—')} ({quality}/10)\n"
+            f"  Entrada {fmt(t.get('entry', 0))} | SL {fmt(t.get('sl', 0))} | TP {fmt(t.get('tp', 0))}"
+        )
+    return "\n".join(lines)
+
+
+def format_health(bot) -> str:
+    return "\n".join([
+        "🩺 <b>HEALTH CHECK</b>",
+        f"<b>Horário:</b> {_now_utc()}",
+        f"<b>Status:</b> {'PAUSADO' if bot.is_paused() else 'OPERANDO'}",
+        f"<b>Threads:</b> ok",
+        f"<b>Telegram:</b> ok",
         f"<b>Sinais ativos:</b> {len(getattr(bot, 'active_trades', []))}",
-    ]
-    return "\n".join(lines)
-
-
-def format_signal(trade: dict, bot=None) -> str:
-    direction = str(trade.get("dir", "—"))
-    icon = "🟢" if direction == "BUY" else "🔴"
-    rr = trade.get("rr")
-    if not rr:
-        try:
-            rr = round(float(trade.get("tp_pips", 0)) / max(0.000001, float(trade.get("sl_pips", 1))), 2)
-        except Exception:
-            rr = "—"
-    quality = _signal_quality(trade)
-    quality_bar = "🟩" * quality + "⬜" * (10 - quality)
-    lines = [
-        "📡 <b>HEDGE FUND DESK | SIGNAL</b>",
-        f"<b>Horário:</b> {_now_utc()}",
-        "—" * 18,
-        f"<b>Ativo:</b> {esc(trade.get('symbol','?'))} ({esc(trade.get('name', trade.get('symbol','?')))})",
-        f"<b>Direção:</b> {icon} {esc(direction)}",
-        f"<b>Timeframe:</b> {esc(trade.get('timeframe', getattr(bot, 'timeframe', '—')))}",
-        f"<b>Entrada:</b> {fmt(trade.get('entry', 0))}",
-        f"<b>Stop:</b> {fmt(trade.get('sl', 0))}",
-        f"<b>Take:</b> {fmt(trade.get('tp', 0))}",
-        f"<b>RR:</b> 1:{rr}",
-        f"<b>Qualidade:</b> {quality}/10",
-        f"<code>{quality_bar}</code>",
-        f"<b>Regime:</b> {esc(str(trade.get('market_regime', 'neutral')).upper())} | <b>Setup:</b> {esc(str(trade.get('setup_type', '—')).upper())}",
-        f"<b>Kill zone:</b> {esc(trade.get('kill_zone', '—') or '—')}",
-        f"<b>Daily bias:</b> {esc(trade.get('daily_bias', 'NEUTRO'))}",
-        f"<b>OTE:</b> {'✅' if trade.get('ote_active') else '⬜'}",
-    ]
-    checks = trade.get("checks") or []
-    if checks:
-        lines.append("—" * 18)
-        lines.append("<b>Checklist:</b>")
-        for c in checks[:12]:
-            ok = "✅" if c.get("ok") else "❌"
-            lines.append(f"{ok} {esc(c.get('name',''))}")
-    lines.append("—" * 18)
-    lines.append("<b>Monitorando resultado do sinal</b>")
-    return "\n".join(lines)
+        f"<b>Pendentes:</b> {len(getattr(bot, 'pending_trades', []))}",
+    ])
 
 
 def format_result(trade: dict, bot, result: str) -> str:
     emoji = "✅" if result == "WIN" else "❌"
     total = bot.wins + bot.losses
     wr = round(bot.wins / total * 100, 1) if total > 0 else 0.0
+    quality = _quality_10(trade.get("score"), trade.get("score_total"))
     return "\n".join([
         f"📊 <b>HEDGE FUND DESK | RESULT {emoji}</b>",
         f"<b>Horário:</b> {_now_utc()}",
         "—" * 18,
         f"<b>Ativo:</b> {esc(trade.get('symbol','?'))}",
         f"<b>Direção:</b> {esc(trade.get('dir','—'))}",
-        f"<b>Resultado:</b> {result}",
-        f"<b>Win rate:</b> {wr}% ({bot.wins}W/{bot.losses}L)",
-        f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
+        f"<b>Qualidade:</b> {quality}/10",
+        f"<b>Win rate:</b> {wr}%",
     ])

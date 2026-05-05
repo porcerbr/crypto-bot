@@ -274,7 +274,7 @@ class Config:
     }
     MAX_CORRELATED_RISK_PCT = 7.0
 
-    MAX_TRADES             = 999
+    MAX_TRADES             = 3
     ASSET_COOLDOWN         = 3600
     SCAN_INTERVAL          = 60
     PAUSE_DURATION         = 3600
@@ -310,9 +310,9 @@ class Config:
 
     # Máximo de trades ativos por nível de banca
     DYNAMIC_MAX_TRADES = {
-        500:          999,
-        1500:         999,
-        float('inf'): 999,
+        500:          1,
+        1500:         2,
+        float('inf'): 3,
     }
 
     # Tier system de ativos

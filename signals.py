@@ -6,7 +6,7 @@ from utils import (log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair,
                    is_good_session, get_kill_zone, is_price_in_ote,
                    get_allowed_symbols, load_strategy_settings)
 from analysis import get_multi_timeframe
-from risk import contract_size_for
+from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
 
 # Cache do snapshot de confluência
@@ -20,21 +20,32 @@ def _is_safe_to_trade(bot, symbol):
     Verificações de segurança consolidadas.
     Retorna (True, "") se seguro, ou (False, "motivo") se bloqueado.
     """
-    from utils import is_symbol_allowed, is_weekend_gap_risk, get_dynamic_cooldown
+    from utils import (
+        is_weekend_gap_risk,
+        get_allowed_symbols,
+        get_dynamic_cooldown,
+        is_symbol_allowed,
+    )
 
+    # 1. Verifica se o ativo está no universo monitorado
     if not is_symbol_allowed(symbol):
-        return False, "Ativo não selecionado"
+        allowed = get_allowed_symbols()
+        return False, f"Ativo fora da lista monitorada. Monitorados: {', '.join(allowed)}"
 
+    # 3. Proteção de fim de semana / gap
     if is_weekend_gap_risk():
         return False, "Proteção de fim de semana/gap ativa"
 
-    cooldown = get_dynamic_cooldown()
+    # 3. Cooldown dinâmico
+    cooldown = get_dynamic_cooldown(getattr(bot, 'balance', None))
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
+    # 4. Filtro de sessão — só opera na janela de liquidez do par
     if not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
+    # 5. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
     avoid_hours = load_ai_params().get("avoid_hours_utc", [])
     if avoid_hours and datetime.utcnow().hour in avoid_hours:
@@ -311,6 +322,9 @@ def scan(bot):
                 log(f"[SAFETY] {sym}: {reason}")
             continue
 
+        if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
+            continue
+
         mtf = get_multi_timeframe(sym)
         if not mtf or not mtf["h1"]:
             continue
@@ -366,7 +380,34 @@ def scan(bot):
         sl_pips = round(abs(entry - sl) / pip_factor)
         tp_pips = round(abs(tp  - entry) / pip_factor)
 
+        from utils import get_dynamic_leverage
+        eff_lev = get_dynamic_leverage(bot.balance)
+
+        # Carrega a estratégia antes de usar qualquer parâmetro dela
         strategy = load_strategy_settings()
+
+        suggested_lot, suggested_risk_usd, suggested_risk_pct = calc_lot_for_risk(
+            sym, entry, sl, bot.balance,
+            risk_pct=float(strategy.get("risk_pct", Config.ATR_RISK_PCT)),
+            atr=atr,
+            atr_mult=Config.ATR_MULT_FOR_RISK
+        )
+
+        min_lot_margin = calc_margin(sym, entry, eff_lev, Config.MIN_LOT)
+        dist_sl = abs(entry - sl)
+        cs_val  = contract_size_for(sym)
+
+        if is_jpy_pair(sym) and entry > 0:
+            risk_001_lot = (dist_sl * cs_val * 0.01) / entry
+        else:
+            risk_001_lot = dist_sl * cs_val * 0.01
+        risk_pct_001 = (risk_001_lot / bot.balance) * 100 if bot.balance > 0 else 0
+
+        est_risk_usd = suggested_risk_usd
+        ok_corr, msg_corr = bot.check_correlation_exposure(sym, est_risk_usd)
+        if not ok_corr:
+            log(f"[CORR] {sym}: {msg_corr} — sinal descartado")
+            continue
 
         from ai_validator import load_ai_params, validate_signal
         ai_params  = load_ai_params()
@@ -442,6 +483,12 @@ def scan(bot):
             "score": sc,
             "max_score": tot_c,
             "checks": [{"name": nm, "ok": ok} for nm, ok in checks],
+            "min_lot_margin": round(min_lot_margin, 2),
+            "risk_001_lot": round(risk_001_lot, 2),
+            "risk_pct_001": round(risk_pct_001, 2),
+            "suggested_lot": suggested_lot,
+            "suggested_risk_usd": suggested_risk_usd,
+            "suggested_risk_pct": suggested_risk_pct,
             "created_at": datetime.now().strftime("%d/%m %H:%M"),
             "created_ts": time.time(),
             "atr": atr,
@@ -456,7 +503,7 @@ def scan(bot):
             "setup_type": setup_type,
         }
 
-        # IA pontua o sinal — informativo apenas.
+        # ── IA: pontua o sinal (NÃO bloqueia — apenas informa) ──
         _, ai_reason = validate_signal(pend, mtf, bot)
 
         # Extrai score numérico do texto retornado pela IA (ex: "7/10: ...")
@@ -472,13 +519,6 @@ def scan(bot):
         pend["ai_reason"]     = ai_reason
         pend["ai_approved"]   = True
         pend["ai_confidence"] = ai_confidence
-
-        score_ratio = sc / max(1, tot_c)
-        base_quality = max(1, min(10, round(score_ratio * 10)))
-        if ai_confidence > 0:
-            pend["signal_quality"] = max(1, min(10, round((base_quality * 0.7) + (ai_confidence * 0.3))))
-        else:
-            pend["signal_quality"] = base_quality
 
         # Executa sinal automaticamente — sem confirmação manual
         ok = bot.execute_signal(pend)
@@ -544,10 +584,12 @@ def get_confluence_snapshot() -> list[dict]:
 
 def check_near_signals(bot) -> None:
     """
-    Verifica se algum par selecionado está com score próximo do mínimo.
-    Só envia alertas informativos.
+    Verifica se algum par PERMITIDO está com score próximo do mínimo.
+    Só alerta pares que o bot pode realmente operar com o saldo atual.
     """
     from ai_validator import load_ai_params
+    from utils import get_allowed_symbols
+
     ai_params      = load_ai_params()
     effective_conf = ai_params.get("live_confluence", Config.MIN_CONFLUENCE)
     NEAR_THRESHOLD = effective_conf - 2
@@ -555,6 +597,8 @@ def check_near_signals(bot) -> None:
     if not hasattr(bot, "_near_signal_cooldown"):
         bot._near_signal_cooldown = {}
 
+    # Universo monitorado (sem tiers de capital)
+    allowed_symbols = set(get_allowed_symbols())
     now             = time.time()
     snapshot        = get_confluence_snapshot()
 
@@ -563,6 +607,9 @@ def check_near_signals(bot) -> None:
         score = item["best_score"]
         total = item["total"]
         direction = item.get("best_dir") or item.get("direction") or item.get("dir") or "—"
+
+        if sym not in allowed_symbols:
+            continue
 
         if score < NEAR_THRESHOLD or score >= effective_conf:
             continue
