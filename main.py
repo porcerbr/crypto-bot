@@ -383,9 +383,17 @@ def bot_loop(bot):
     """Loop leve: heartbeat e relatórios, sem bloquear análise nem Telegram."""
     last_heartbeat = 0.0
     last_daily_report = None
+    last_trade_monitor = 0.0
 
     while True:
         now = datetime.now(timezone.utc)
+
+        if time.time() - last_trade_monitor >= 2:
+            try:
+                bot.monitor_trades()
+            except Exception as e:
+                log(f"[MONITOR] Erro: {e}")
+            last_trade_monitor = time.time()
 
         if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
             try:

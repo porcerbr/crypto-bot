@@ -155,141 +155,40 @@ class TradingBot:
 
     def execute_signal(self, pend: dict) -> bool:
         """
-        Executa um sinal diretamente, sem confirmacao manual.
-        Adiciona a lista de trades ativos para monitoramento automatico de WIN/LOSS.
-        Retorna True se executado com sucesso.
+        Registra e envia um sinal, sem abrir operação simulada.
+        Em modo signal-only, nenhum saldo, margem ou conta virtual é consumido.
+        Retorna True se o sinal foi enviado com sucesso.
         """
-        from utils import (
-            get_dynamic_leverage, get_dynamic_max_trades, get_max_risk_absolute,
-            get_min_free_margin_pct, is_symbol_allowed, is_weekend_gap_risk,
-        )
+        sym = pend.get("symbol", "?")
+        pend = {**pend}
+        pend["mode"] = "signal_only"
+        pend.setdefault("signal_quality", pend.get("signal_quality", 0))
+        pend.setdefault("created_at", datetime.now().strftime("%d/%m %H:%M"))
+        pend.setdefault("opened_at", pend.get("created_at", ""))
+        pend.setdefault("status", "SENT")
 
-        sym = pend["symbol"]
+        self.signals_feed.append({
+            "symbol": pend.get("symbol"),
+            "dir": pend.get("dir"),
+            "entry": pend.get("entry"),
+            "sl": pend.get("sl"),
+            "tp": pend.get("tp"),
+            "score": pend.get("score"),
+            "max_score": pend.get("max_score"),
+            "signal_quality": pend.get("signal_quality", 0),
+            "ai_confidence": pend.get("ai_confidence", 0),
+            "created_at": pend.get("created_at"),
+            "market_regime": pend.get("market_regime"),
+            "setup_type": pend.get("setup_type"),
+            "kill_zone": pend.get("kill_zone"),
+            "daily_bias": pend.get("daily_bias"),
+            "ote_active": pend.get("ote_active", False),
+            "checks": pend.get("checks", []),
+        })
 
-        # Seleciona a conta virtual antes de qualquer sizing
-        account_id = pend.get("account_id") or self.choose_account_for_signal(pend)
-        pend["account_id"] = account_id
-        pend["account_name"] = self.sync_accounts().get(account_id, {}).get("name", account_id)
-
-        if is_weekend_gap_risk():
-            log(f"[SIGNAL] {sym}: protecao de fim de semana ativa")
-            return False
-
-        max_trades = get_dynamic_max_trades(self.balance)
-        if len(self.active_trades) >= max_trades:
-            log(f"[SIGNAL] {sym}: limite de {max_trades} trades atingido")
-            return False
-
-        if not is_symbol_allowed(sym, self.balance):
-            log(f"[SIGNAL] {sym}: ativo bloqueado para banca atual")
-            return False
-
-        est_risk = pend.get("suggested_risk_usd", 0)
-        ok_corr, msg_corr = self.check_correlation_exposure(sym, est_risk)
-        if not ok_corr:
-            log(f"[SIGNAL] {sym}: correlacao — {msg_corr}")
-            return False
-
-        eff_lev = get_dynamic_leverage(self.balance)
-        self._current_leverage = eff_lev
-
-        max_risk_usd = get_max_risk_absolute(self.balance)
-        if pend.get("suggested_risk_usd", 0) > max_risk_usd:
-            log(f"[SIGNAL] {sym}: risco excede limite de ${round(max_risk_usd, 2)}")
-            return False
-
-        # Usa o lote sugerido pelo motor técnico, mas também respeita a carteira virtual.
-        lot = float(pend.get("suggested_lot", Config.MIN_LOT) or Config.MIN_LOT)
-        if lot < Config.MIN_LOT:
-            lot = Config.MIN_LOT
-
-        account_risk = self.account_risk_pct(account_id, pend)
-        from risk import calc_lot_for_risk
-        capped_lot, capped_risk_usd, capped_risk_pct = calc_lot_for_risk(
-            sym,
-            pend["entry"],
-            pend["sl"],
-            self.balance,
-            risk_pct=account_risk,
-            atr=pend.get("atr"),
-            atr_mult=Config.ATR_MULT_FOR_RISK,
-        )
-        if capped_lot > 0:
-            lot = min(lot, capped_lot)
-
-        margin_required = calc_margin(sym, pend["entry"], eff_lev, lot)
-        try:
-            from risk import commission_for
-            commission = commission_for(sym, lot)
-        except Exception:
-            commission = 0
-
-        if margin_required <= 0:
-            log(f"[SIGNAL] {sym}: margem calculada inválida")
-            return False
-        if margin_required > self.balance * 0.8:
-            log(f"[SIGNAL] {sym}: margem excede 80% do saldo")
-            return False
-
-        used = self._get_used_margin()
-        free_margin = self.balance - used - margin_required
-        min_free_pct = get_min_free_margin_pct(self.balance)
-        if free_margin < self.balance * min_free_pct:
-            log(f"[SIGNAL] {sym}: margem livre insuficiente")
-            return False
-
-        ok, msg = self._check_margin_safety(margin_required)
-        if not ok:
-            log(f"[SIGNAL] {sym}: {msg}")
-            return False
-
-        ok_acc, msg_acc = self.account_can_trade(account_id, margin_required)
-        if not ok_acc:
-            log(f"[SIGNAL] {sym}: {msg_acc}")
-            return False
-
-        # ── Spread + Slippage (simulação realista de execução) ────────────────
-        entry_simulated = pend["entry"]
-        if Config.USE_SPREAD_MODEL or Config.USE_SLIPPAGE_MODEL:
-            import random
-            pf = 0.01 if is_jpy_pair(sym) or sym == "XAUUSD" else 0.0001
-            spread_cost = 0.0
-            slip_cost   = 0.0
-            if Config.USE_SPREAD_MODEL:
-                spread_pips = Config.SPREAD_PIPS.get(sym, 1.0)
-                spread_cost = spread_pips * pf
-            if Config.USE_SLIPPAGE_MODEL:
-                slip_pips = Config.SLIPPAGE_PIPS.get(sym, 0.3)
-                # Slippage aleatório entre 0 e slip_pips (sempre contra a posição)
-                slip_cost = random.uniform(0, slip_pips) * pf
-            total_cost = spread_cost + slip_cost
-            # Para BUY: entrada efetiva é maior; para SELL: menor
-            if pend.get("dir") == "BUY":
-                entry_simulated = round(pend["entry"] + total_cost, 5)
-            else:
-                entry_simulated = round(pend["entry"] - total_cost, 5)
-
-        trade = {
-            **pend,
-            "entry":              entry_simulated,
-            "lot":                round(lot, 2),
-            "margin_required":    round(margin_required, 2),
-            "commission":         round(commission, 2),
-            "opened_at":          pend["created_at"],
-            "wallet_before":      self.balance,
-            "trailing_activated": False,
-            "effective_leverage": eff_lev,
-            "ai_approved":        pend.get("ai_approved", True),
-            "ai_confidence":      pend.get("ai_confidence", 0),
-            "account_id":         account_id,
-            "account_name":       pend.get("account_name", account_id),
-            "account_risk_pct":   round(account_risk, 2),
-        }
-        self.account_reserve(account_id, margin_required)
-        self.active_trades.append(trade)
-
-        self.send_signal_notification(trade)
+        self.send_signal_notification(pend)
         save_state(self)
+        log(f"[SIGNAL_ONLY] {sym}: sinal enviado sem abrir operação simulada")
         return True
 
     def send_signal_notification(self, trade: dict):
@@ -327,6 +226,9 @@ class TradingBot:
         setup     = trade.get("setup_type", "—").upper()
         conf_bar  = "🟩" * ai_conf + "⬜" * (10 - ai_conf)
 
+        signal_quality = int(trade.get("signal_quality", 0) or 0)
+        quality_bar = "🟩" * signal_quality + "⬜" * (10 - signal_quality)
+
         lines = [
             "🎯 NOVO SINAL — " + trade["symbol"] + " (" + trade["name"] + ")",
             "——————————————————",
@@ -335,6 +237,8 @@ class TradingBot:
             "🛑 SL:       " + fmt(trade["sl"]) + "  (" + sl_dir + str(sl_pips) + " pips)",
             "🎯 TP:       " + fmt(trade["tp"]) + "  (" + tp_dir + str(tp_pips) + " pips)",
             "📊 RR: 1:" + str(trade["rr"]) + " | Score: " + str(trade["score"]) + "/" + str(trade["max_score"]),
+            "⭐ Qualidade: " + str(signal_quality) + "/10",
+            "   " + quality_bar,
             "🔄 Regime: " + regime + " | Setup: " + setup,
             "——————————————————",
             kz_str,
@@ -343,13 +247,9 @@ class TradingBot:
             "🤖 IA: " + conf_bar + " " + str(ai_conf) + "/10",
             "   " + ai_reason,
             "——————————————————",
-            "💸 Risco: $" + str(round(trade.get("suggested_risk_usd", 0), 2))
-                + " (" + str(round(trade.get("suggested_risk_pct", 0), 1)) + "%)",
-            "📦 Lote: " + str(trade.get("lot", "—")),
-            "——————————————————",
             checks_str,
             "——————————————————",
-            "🔔 Monitorando SL/TP automaticamente...",
+            "📣 Bot em modo signal-only",
         ]
         self.send(chr(10).join(lines))
 

@@ -443,13 +443,11 @@ def format_signal(trade: dict, bot=None) -> str:
         f"<b>Stop:</b> {fmt(trade.get('sl', 0))}",
         f"<b>Take:</b> {fmt(trade.get('tp', 0))}",
         f"<b>RR:</b> 1:{rr} | <b>Score:</b> {trade.get('score', '—')}/{trade.get('max_score', '—')}",
+        f"<b>Qualidade:</b> {trade.get('signal_quality', 0)}/10",
         f"<b>Regime:</b> {esc(str(trade.get('market_regime', 'neutral')).upper())} | <b>Setup:</b> {esc(str(trade.get('setup_type', '—')).upper())}",
         f"<b>Kill zone:</b> {esc(trade.get('kill_zone', '—') or '—')}",
         f"<b>Daily bias:</b> {esc(trade.get('daily_bias', 'NEUTRO'))}",
         f"<b>OTE:</b> {'✅' if trade.get('ote_active') else '⬜'}",
-        f"<b>Risk:</b> {_format_money(trade.get('suggested_risk_usd', 0))} ({trade.get('suggested_risk_pct', 0)}%)",
-        f"<b>Conta:</b> {esc(trade.get('account_name', trade.get('account_id', 'core')))}",
-        f"<b>Lote:</b> {esc(trade.get('lot','—'))}",
         f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
     ]
     checks = trade.get("checks") or []
@@ -460,7 +458,7 @@ def format_signal(trade: dict, bot=None) -> str:
             ok = "✅" if c.get("ok") else "❌"
             lines.append(f"{ok} {esc(c.get('name',''))}")
     lines.append("—" * 18)
-    lines.append("<b>Monitorando SL/TP automaticamente</b>")
+    lines.append("<b>Modo signal-only</b>")
     return "\n".join(lines)
 
 
@@ -475,9 +473,6 @@ def format_result(trade: dict, bot, result: str) -> str:
         f"<b>Ativo:</b> {esc(trade.get('symbol','?'))}",
         f"<b>Direção:</b> {esc(trade.get('dir','—'))}",
         f"<b>P&L:</b> {_format_money(trade.get('pnl', 0))}",
-        f"<b>Saldo:</b> {_format_money(bot.balance)}",
         f"<b>Win rate:</b> {wr}% ({bot.wins}W/{bot.losses}L)",
-        f"<b>Margem liberada:</b> {_format_money(trade.get('margin_required', 0))}",
-        f"<b>Conta:</b> {esc(trade.get('account_name', trade.get('account_id', 'core')))}",
         f"<b>IA:</b> {trade.get('ai_confidence', 0)}/10",
     ])

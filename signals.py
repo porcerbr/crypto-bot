@@ -25,30 +25,25 @@ def _is_safe_to_trade(bot, symbol):
         get_allowed_symbols, get_dynamic_cooldown
     )
 
-    # 1. Verifica limite de trades ativos por banca
-    max_trades = get_dynamic_max_trades(bot.balance)
-    if len(bot.active_trades) >= max_trades:
-        return False, f"Limite de {max_trades} trade(s) ativo(s)"
-
-    # 2. Verifica se ativo é permitido para banca atual
+    # 1. Verifica se ativo está habilitado na seleção do bot
     if not is_symbol_allowed(symbol, bot.balance):
         allowed = get_allowed_symbols(bot.balance)
         return False, f"Ativo bloqueado. Permitidos: {', '.join(allowed)}"
 
-    # 3. Proteção de fim de semana / gap
+    # 2. Proteção de fim de semana / gap
     if is_weekend_gap_risk():
         return False, "Proteção de fim de semana/gap ativa"
 
-    # 4. Cooldown dinâmico
+    # 3. Cooldown dinâmico
     cooldown = get_dynamic_cooldown(bot.balance)
     if time.time() - bot.asset_cooldown.get(symbol, 0) < cooldown:
         return False, f"Cooldown ativo ({cooldown//60}min)"
 
-    # 5. Filtro de sessão — só opera na janela de liquidez do par
+    # 4. Filtro de sessão — só opera na janela de liquidez do par
     if not is_good_session(symbol):
         return False, "Fora da sessão principal"
 
-    # 6. Horas a evitar definidas pelo Opus (aprendizado mensal)
+    # 5. Horas a evitar definidas pelo Opus (aprendizado mensal)
     from ai_validator import load_ai_params
     avoid_hours = load_ai_params().get("avoid_hours_utc", [])
     if avoid_hours and datetime.utcnow().hour in avoid_hours:
@@ -311,11 +306,6 @@ def scan(bot):
     if bot.is_paused():
         return
 
-    from utils import get_dynamic_max_trades
-    max_trades = get_dynamic_max_trades(bot.balance)
-    if len(bot.active_trades) >= max_trades:
-        return
-
     weekend = is_weekend()
     if weekend:
         return
@@ -328,9 +318,6 @@ def scan(bot):
         if not safe:
             if reason and "Cooldown" not in reason:
                 log(f"[SAFETY] {sym}: {reason}")
-            continue
-
-        if any(t["symbol"] == sym for t in bot.active_trades + bot.pending_trades):
             continue
 
         mtf = get_multi_timeframe(sym)
@@ -527,6 +514,13 @@ def scan(bot):
         pend["ai_reason"]     = ai_reason
         pend["ai_approved"]   = True
         pend["ai_confidence"] = ai_confidence
+
+        score_ratio = sc / max(1, tot_c)
+        base_quality = max(1, min(10, round(score_ratio * 10)))
+        if ai_confidence > 0:
+            pend["signal_quality"] = max(1, min(10, round((base_quality * 0.7) + (ai_confidence * 0.3))))
+        else:
+            pend["signal_quality"] = base_quality
 
         # Executa sinal automaticamente — sem confirmação manual
         ok = bot.execute_signal(pend)

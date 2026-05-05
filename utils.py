@@ -299,17 +299,10 @@ def get_dynamic_max_trades(balance):
             return max_t
     return Config.MAX_TRADES
 
-def get_allowed_symbols(balance):
-    """Retorna lista de símbolos permitidos para o capital atual."""
-    allowed = []
-    for tier in sorted(Config.ASSET_TIERS.keys()):
-        if balance >= Config.ASSET_TIERS[tier]["min_balance"]:
-            allowed = Config.ASSET_TIERS[tier]["symbols"]
-
-    selected = set(get_selected_symbols())
-    if selected:
-        allowed = [sym for sym in allowed if sym in selected]
-    return allowed
+def get_allowed_symbols(balance=None):
+    """Retorna a lista de símbolos selecionados para o bot de sinais."""
+    selected = [s for s in get_selected_symbols() if s in Config.FXGOLD_ASSETS]
+    return selected or _default_selected_symbols()
 
 def get_max_risk_absolute(balance):
     """Retorna risco máximo absoluto (USD) permitido por trade."""
@@ -350,8 +343,8 @@ def is_weekend_gap_risk():
         return True
     return False
 
-def is_symbol_allowed(symbol, balance):
-    """Verifica se o símbolo é permitido para o capital atual."""
+def is_symbol_allowed(symbol, balance=None):
+    """Verifica se o símbolo está habilitado na seleção do bot."""
     allowed = get_allowed_symbols(balance)
     return symbol in allowed
 
