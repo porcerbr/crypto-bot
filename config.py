@@ -153,43 +153,41 @@ class Config:
     ATR_TP_MULT = 3.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
-    # SISTEMA DE PESOS PARA CONFLUÊNCIA
-    # Total máximo: 20 pontos (vs 13 checks com peso 1 antigo)
-    # Um setup "clássico" (EMAs + MACD + RSI) bate ~7 pontos.
-    # Um setup SMC completo (FVG + OB + sweep + H4) bate ~11 pontos.
+    # SISTEMA DE PESOS PARA CONFLUÊNCIA — INDICADORES ESSENCIAIS
+    # Total máximo: 16 pontos
+    # Indicadores removidos (redundantes): EMA9/21, Bandas de Bollinger,
+    #   padrão de candle, estrutura e MTF EMA200.
+    # Mantidos: EMA200, ADX, RSI, MACD (base técnica) +
+    #           FVG, OB, Sweep, MTF Aligned (SMC/confluência).
     # ═══════════════════════════════════════════════════════════════════════════════
     CONFLUENCE_WEIGHTS = {
-        # Tendência (base técnica)
-        "ema200":          2,  # preço > EMA200 (ou <)
-        "ema9_21":         1,  # EMA9 > EMA21
-        "macd":            1,  # MACD na direção
-        "rsi":             1,  # RSI em zona favorável
-        "adx":             2,  # ADX > 25 (força de tendência)
-        "bands":           1,  # preço perto da banda oposta
-        "candle":          1,  # candle de força (body >= 50% range)
-        # SMC (setup propriamente)
-        "fvg":             3,  # FVG ativo na direção
-        "ob":              3,  # OB ativo na direção
-        "sweep":           2,  # liquidity sweep confirmado
-        "structure":       1,  # estrutura intacta
-        # Multi-timeframe
-        "mtf_aligned":     2,  # H4 na mesma direção
-        "mtf_ema200":      1,  # H4 > EMA200 (ou <)
+        # ── Base técnica (indicadores principais) ──────────────────
+        "ema200":          2,  # preço > EMA200 — define o lado do mercado
+        "adx":             2,  # ADX > 25 — confirma força da tendência
+        "rsi":             1,  # RSI — momentum / zona de preço favorável
+        "macd":            1,  # MACD — confirmação direcional
+        # ── SMC — estrutura de mercado institucional ────────────────
+        "fvg":             3,  # Fair Value Gap ativo na direção
+        "ob":              3,  # Order Block ativo na direção
+        "sweep":           2,  # Liquidity Sweep confirmado
+        # ── Multi-timeframe (H4) ───────────────────────────────────
+        "mtf_aligned":     2,  # H4 alinhado com H1
     }
-    CONFLUENCE_MAX_SCORE = 21  # soma dos pesos acima
-    MIN_CONFLUENCE_WEIGHTED = 10  # score mínimo para gerar sinal (default, pode ser ajustado pela IA)
+    CONFLUENCE_MAX_SCORE = 16  # soma dos pesos acima
+    MIN_CONFLUENCE_WEIGHTED = 8  # score mínimo para gerar sinal (~50% do total)
 
     # Legado — mantido para compatibilidade
-    MIN_CONFLUENCE = 7
+    MIN_CONFLUENCE = 5
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # PERFIL PROFISSIONAL DE EXECUÇÃO
     # ═══════════════════════════════════════════════════════════════════════════════
+    # Ajustado proporcionalmente ao novo CONFLUENCE_MAX_SCORE = 16
     REGIME_MIN_CONFLUENCE = {
-        "trend": 11,
-        "range": 9,
-        "transition": 10,
-        "neutral": 10,
+        "trend": 9,       # ~56% do total (antes 11/21 ≈ 52%)
+        "range": 7,       # ~44% do total (antes  9/21 ≈ 43%)
+        "transition": 8,  # ~50% do total (antes 10/21 ≈ 48%)
+        "neutral": 8,     # ~50% do total (antes 10/21 ≈ 48%)
     }
     REGIME_MIN_RR = {
         "trend": 2.0,
