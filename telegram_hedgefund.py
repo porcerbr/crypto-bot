@@ -723,6 +723,57 @@ def format_health(bot) -> str:
     ])
 
 
+def format_signal(trade: dict, bot=None) -> str:
+    direction = trade.get("dir", "—")
+    sl_pips   = trade.get("sl_pips", "—")
+    tp_pips   = trade.get("tp_pips", "—")
+    sl_dir    = "−" if direction == "BUY" else "+"
+    tp_dir    = "+" if direction == "BUY" else "−"
+    regime    = trade.get("market_regime", "neutral").upper()
+    setup     = trade.get("setup_type", "—").upper()
+    ai_conf   = trade.get("ai_confidence", 0)
+    ai_reason = trade.get("ai_reason", "—")
+    conf_bar  = "🟩" * ai_conf + "⬜" * (10 - ai_conf)
+    quality   = _quality_10(trade.get("score"), trade.get("score_total") or trade.get("max_score"))
+    kz        = trade.get("kill_zone")
+    bias      = trade.get("daily_bias", "NEUTRO")
+    ote       = trade.get("ote_active", False)
+    kz_str    = f"⚡ Kill Zone: {esc(kz)}" if kz else "💤 Fora da Kill Zone"
+    bias_str  = f"📅 Daily Bias: {esc(bias)}"
+    ote_str   = "🎯 OTE: ✅ Retrace ideal (62–79%)" if ote else "🎯 OTE: ⬜ Fora da zona"
+
+    checks_lines = []
+    for c in trade.get("checks", []):
+        icon = "✅" if c.get("ok") else "❌"
+        checks_lines.append(f"{icon} {esc(c.get('name', ''))}")
+    checks_str = "\n".join(checks_lines) if checks_lines else "—"
+
+    score_str = f"{trade.get('score','?')}/{trade.get('max_score', trade.get('score_total','?'))}"
+
+    return "\n".join([
+        f"🎯 <b>NOVO SINAL — {esc(trade.get('symbol','?'))} ({esc(trade.get('name','?'))})</b>",
+        f"<b>Horário:</b> {_now_utc()}",
+        "—" * 18,
+        f"<b>Direção:</b> {esc(direction)}",
+        f"<b>Entrada:</b>  {esc(fmt(trade.get('entry', 0)))}",
+        f"<b>SL:</b>       {esc(fmt(trade.get('sl', 0)))}  ({sl_dir}{esc(str(sl_pips))} pips)",
+        f"<b>TP:</b>       {esc(fmt(trade.get('tp', 0)))}  ({tp_dir}{esc(str(tp_pips))} pips)",
+        f"<b>RR:</b> 1:{esc(str(trade.get('rr','—')))} | Score: {esc(score_str)}",
+        f"<b>Regime:</b> {esc(regime)} | Setup: {esc(setup)}",
+        f"<b>Qualidade:</b> {quality}/10",
+        "—" * 18,
+        kz_str,
+        bias_str,
+        ote_str,
+        f"🤖 IA: {conf_bar} {ai_conf}/10",
+        f"   {esc(ai_reason)}",
+        "—" * 18,
+        checks_str,
+        "—" * 18,
+        "🚦 Monitorando SL/TP automaticamente...",
+    ])
+
+
 def format_result(trade: dict, bot, result: str) -> str:
     emoji = "✅" if result == "WIN" else "❌"
     total = bot.wins + bot.losses
