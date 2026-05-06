@@ -174,11 +174,9 @@ class TradingBot:
             spread_cost = 0.0
             slip_cost = 0.0
             if Config.USE_SPREAD_MODEL:
-                spread_pips = Config.SPREAD_PIPS.get(sym, 1.0)
-                spread_cost = spread_pips * pf
+                spread_cost = random.uniform(Config.MIN_SPREAD_PIPS, Config.MAX_SPREAD_PIPS) * pf
             if Config.USE_SLIPPAGE_MODEL:
-                slip_max_pips = Config.SLIPPAGE_PIPS.get(sym, 0.3)
-                slip_cost = random.uniform(0, slip_max_pips) * pf
+                slip_cost = random.uniform(0, Config.SLIPPAGE_MAX_PIPS) * pf
             if direction == "BUY":
                 entry_simulated += (spread_cost / 2.0) + slip_cost
             else:
@@ -298,6 +296,61 @@ class TradingBot:
     # MONITORAMENTO E FECHAMENTO (WIN/LOSS)
     # ═══════════════════════════════════════════════════════
 
+    def _partial_close(self, trade: dict, cur_price: float):
+        """Fecha 50% da posição no TP1 e move SL para breakeven com TP2 = 2× distância original."""
+        entry     = trade["entry"]
+        direction = trade["dir"]
+        lot       = trade.get("lot", Config.MIN_LOT)
+        symbol    = trade["symbol"]
+
+        # Lote da saída parcial (50%)
+        half_lot = max(Config.MIN_LOT, round(lot * 0.5, 2))
+
+        # P&L do parcial
+        cs = contract_size_for(symbol)
+        if direction == "BUY":
+            profit_raw = (cur_price - entry) * cs * half_lot
+        else:
+            profit_raw = (entry - cur_price) * cs * half_lot
+        profit = jpy_to_usd(profit_raw, self._usdjpy_price) if is_jpy_pair(symbol) else profit_raw
+
+        # Registra histórico do parcial
+        self.history.append({
+            "symbol": symbol, "dir": direction, "result": "WIN",
+            "pnl": round(profit, 2), "partial": True,
+            "closed_at": datetime.now().strftime("%d/%m %H:%M"),
+            "opened_at": trade.get("opened_at", ""),
+        })
+        self.wins += 1
+        self.consecutive_losses = 0
+
+        # Atualiza o trade: reduz lote, move SL para breakeven, estende TP para TP2
+        tp1 = trade["tp"]
+        tp1_dist = abs(tp1 - entry)
+        tp2 = round(entry + 2 * tp1_dist, 5) if direction == "BUY" else round(entry - 2 * tp1_dist, 5)
+
+        trade["lot"]            = round(lot - half_lot, 2)
+        trade["sl"]             = entry                  # breakeven
+        trade["tp"]             = tp2                    # TP2 = 2× distância original
+        trade["partial_closed"] = True
+        trade["partial_pnl"]    = round(profit, 2)
+        trade["tp1_hit"]        = round(cur_price, 5)
+
+        pip_f = 0.01 if (is_jpy_pair(symbol) or symbol == "XAUUSD") else 0.0001
+        pips  = round(abs(cur_price - entry) / pip_f, 1)
+
+        msg = "\n".join([
+            f"🔰 <b>SAÍDA PARCIAL — {symbol} {direction}</b>",
+            f"<b>Fechado:</b> 50% do lote ({half_lot}) no TP1",
+            f"<b>Preço:</b> {fmt(cur_price)} | <b>+{pips} pips</b>",
+            f"<b>P&L parcial:</b> ${profit:+.2f}",
+            f"<b>Restante:</b> {trade['lot']} lote(s)",
+            f"<b>SL →</b> Breakeven ({fmt(entry)})",
+            f"<b>TP2 →</b> {fmt(tp2)} (2× objetivo original)",
+        ])
+        self.send(msg)
+        save_state(self)
+
     def monitor_trades(self):
         for t in self.active_trades[:]:
             try:
@@ -335,11 +388,21 @@ class TradingBot:
                             self.send("Trailing Stop ajustado: " + fmt(new_sl))
 
                 if direction == "BUY":
-                    if cur <= t["sl"] or cur >= tp:
-                        self.close_trade(t, cur, "WIN" if cur >= tp else "LOSS")
+                    hit_tp = cur >= tp
+                    hit_sl = cur <= t["sl"]
+                    if hit_tp and not t.get("partial_closed", False):
+                        self._partial_close(t, cur)
+                        continue
+                    if hit_tp or hit_sl:
+                        self.close_trade(t, cur, "WIN" if hit_tp else "LOSS")
                 else:
-                    if cur >= t["sl"] or cur <= tp:
-                        self.close_trade(t, cur, "WIN" if cur <= tp else "LOSS")
+                    hit_tp = cur <= tp
+                    hit_sl = cur >= t["sl"]
+                    if hit_tp and not t.get("partial_closed", False):
+                        self._partial_close(t, cur)
+                        continue
+                    if hit_tp or hit_sl:
+                        self.close_trade(t, cur, "WIN" if hit_tp else "LOSS")
             except Exception as e:
                 log("Erro monitor: " + str(e))
 
