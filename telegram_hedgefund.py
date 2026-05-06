@@ -84,6 +84,7 @@ class TelegramDesk:
         self._me_cache: dict | None = None
         # Estado: aguardando CSV para otimização ("EURUSD") ou None
         self._pending_optimize: str | None = None
+        self._pending_genetic:  str | None = None
 
     def _post(self, method: str, payload: dict):
         try:
@@ -271,18 +272,28 @@ class TelegramDesk:
                         caption_optimize = caption_parts and caption_parts[0] == "OPTIMIZE"
                         if self._pending_optimize:
                             is_optimize = True
+                            is_genetic  = False
                             symbol = self._pending_optimize
-                            self._pending_optimize = None  # consome o estado
+                            self._pending_optimize = None
+                        elif getattr(self, "_pending_genetic", None):
+                            is_optimize = False
+                            is_genetic  = True
+                            symbol = self._pending_genetic
+                            self._pending_genetic = None
                         elif caption_optimize:
                             is_optimize = True
+                            is_genetic  = False
                             symbol = caption_parts[1] if len(caption_parts) > 1 else "EURUSD"
                         else:
                             is_optimize = False
+                            is_genetic  = False
                             symbol = caption if caption else "EURUSD"
 
                         self.send(
                             f"📂 <b>CSV recebido:</b> {fname}\n"
-                            + (f"🔬 Iniciando otimização para <b>{symbol}</b> (2 304 combinações)...\n⏳ Aguarde ~30 segundos."
+                            + (f"🧬 Iniciando otimização genética para <b>{symbol}</b> (20 gerações)...\n⏳ Aguarde 2–5 minutos."
+                               if is_genetic else
+                               f"🔬 Iniciando otimização para <b>{symbol}</b> (2 304 combinações)...\n⏳ Aguarde ~30 segundos."
                                if is_optimize else
                                f"⏳ Rodando backtest para <b>{symbol}</b>..."),
                             reply_markup=keyboard_markup(),
@@ -305,6 +316,12 @@ class TelegramDesk:
                                             f"⚠️ CSV com apenas {len(bars)} candles. Mínimo recomendado: 60.",
                                             reply_markup=keyboard_markup(),
                                         )
+                                    elif is_genetic:
+                                        from genetic_optimizer import run_evolution, save_best_genome
+                                        results = run_evolution(bars, symbol=symbol, balance=Config.INITIAL_BALANCE, generations=20)
+                                        best = max(results, key=lambda r: r.best_fitness)
+                                        save_best_genome(best)
+                                        self.send(_format_genetic_result(symbol, best), reply_markup=keyboard_markup())
                                     elif is_optimize:
                                         from optimizer import run_grid
                                         top = run_grid(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
@@ -348,8 +365,9 @@ class TelegramDesk:
                         "• /pause [min] — pausa temporária\n"
                         "• /resume — retoma o bot\n"
                         "• /mode — modo e parâmetros\n"
-                        "• /backtest [PAR] — backtest do par (ex: /backtest EURUSD)\n"
-                        "• /optimize — otimiza parâmetros via CSV (envie o CSV com caption \"optimize EURUSD\")\n\n"
+                        "• /backtest [PAR] — backtest do par\n"
+                        "• /optimize — grid search via CSV\n"
+                        "• /genetic [PAR] — otimização robusta walk-forward via CSV\n\n"
                         "Botões abaixo para acesso rápido.",
                         reply_markup=keyboard_markup(),
                     )
@@ -436,6 +454,18 @@ class TelegramDesk:
                         reply_markup=keyboard_markup(),
                     )
 
+                elif cmd == "/genetic":
+                    parts = text.split()
+                    symbol = parts[1].upper() if len(parts) > 1 else "EURUSD"
+                    self._pending_genetic = symbol
+                    self.send(
+                        f"🧬 <b>OTIMIZADOR GENÉTICO — {esc(symbol)}</b>\n"
+                        "Algoritmo com <b>walk-forward validation</b> — mais robusto que grid search.\n\n"
+                        "Envie o arquivo <b>.csv</b> com os dados históricos.\n"
+                        "⏳ Tempo estimado: 2–5 minutos (20 gerações).",
+                        reply_markup=keyboard_markup(),
+                    )
+
                 else:
                     self.send(
                         "Comando não reconhecido. Use /help para ver os comandos disponíveis.",
@@ -444,6 +474,40 @@ class TelegramDesk:
             except Exception:
                 continue
         return executed
+
+
+def _format_genetic_result(symbol: str, best) -> str:
+    """Formata o resultado do otimizador genético para Telegram."""
+    g  = best.best_genome
+    tm = best.best_train_metrics
+    vm = best.best_test_metrics   # out-of-sample (validação real)
+    sep = "—" * 20
+    lines = [
+        f"🧬 <b>OTIMIZAÇÃO GENÉTICA — {esc(symbol)}</b>",
+        f"<b>Walk-forward:</b> treino 70% | validação 30%",
+        sep,
+        f"🥇 <b>MELHOR GENOMA (geração {best.generation})</b>",
+        f"  Confluence mín.: {g.get('MIN_CONFLUENCE')}",
+        f"  ADX mín.:        {g.get('ADX_MIN')}",
+        f"  SL mult:         {g.get('ATR_MULT_SL')}×",
+        f"  TP mult:         {g.get('ATR_MULT_TP')}×",
+        f"  Risco/trade:     {g.get('RISK_PCT')}%",
+        f"  Max barras:      {g.get('MAX_BARS_IN_TRADE')}",
+        sep,
+        "📊 <b>VALIDAÇÃO (out-of-sample — sem overfitting)</b>",
+        f"  Trades: {vm.get('total_trades', 0)}  |  WR: {vm.get('winrate', 0)}%",
+        f"  PF: {vm.get('profit_factor', 0)}  |  DD: {vm.get('max_drawdown_pct', 0)}%",
+        f"  Sharpe: {vm.get('sharpe_ratio', 0)}  |  P&L: ${vm.get('total_pnl', 0):+.2f}",
+        sep,
+        "📈 <b>TREINO (referência)</b>",
+        f"  Trades: {tm.get('total_trades', 0)}  |  WR: {tm.get('winrate', 0)}%",
+        f"  PF: {tm.get('profit_factor', 0)}  |  P&L: ${tm.get('total_pnl', 0):+.2f}",
+        sep,
+        f"  Fitness: {best.best_fitness:.4f}",
+        "💡 Configuração salva em <b>best_genome.json</b>",
+        "Use /mode para confirmar os parâmetros ativos.",
+    ]
+    return "\n".join(lines)
 
 
 def _format_backtest_result(symbol: str, r, total_bars: int) -> str:
