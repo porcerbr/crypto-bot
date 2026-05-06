@@ -351,14 +351,20 @@ def _score_combo(
     # - RR mínimo 1.5× (TP >= 1.5 × SL) — abaixo disso não é viável com WR ~50%
     # - Exige PF > 1.05, P&L positivo, DD < 35%
     # - Premia retorno anual * Sharpe / DD
+    # ── FILTROS MÍNIMOS — ajuste aqui ──────────────────────
+    MIN_WR  = 38.0   # Win Rate mínimo aceitável (%)
+    MAX_DD  = 25.0   # Drawdown máximo aceitável (%)
+    MIN_PF  = 1.10   # Profit Factor mínimo
+    # ───────────────────────────────────────────────────────
     rr_ok   = (atr_tp_mult / max(atr_sl_mult, 0.01)) >= 1.5
-    viable  = (n_trades >= 10 and pf > 1.05 and pnl_total > 0
-               and dd < 35 and rr_ok and annual_return_pct > 0)
+    viable  = (n_trades >= 10 and pf >= MIN_PF and pnl_total > 0
+               and dd <= MAX_DD and wr >= MIN_WR
+               and rr_ok and annual_return_pct > 0)
     if viable:
         sharpe_bonus      = min(max(sharpe, 0), 3.0)
         dd_penalty        = 1 - dd / 100
-        freq_factor       = min(n_trades / 50, 2.0)          # premia frequência até 50 trades
-        annual_norm       = min(annual_return_pct / 50, 2.0) # normaliza retorno anual (50% = 1.0)
+        freq_factor       = min(n_trades / 50, 2.0)
+        annual_norm       = min(annual_return_pct / 50, 2.0)
         score = annual_norm * dd_penalty * (1 + sharpe_bonus) * freq_factor
     else:
         score = 0.0
