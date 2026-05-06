@@ -96,6 +96,7 @@ class Config:
     MAX_CORRELATED_SIGNALS_PER_GROUP = 2
     PAIR_PERFORMANCE_LOOKBACK = 12
     MIN_RECENT_PAIR_WR = 0.40
+    MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
     SIGNAL_COOLDOWN_SECONDS = 1800
 
     FXGOLD_ASSETS = {
