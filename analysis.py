@@ -29,7 +29,7 @@ def _log_invalid_candle(symbol: str):
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _cache_meta: dict = {}
-_CACHE_TTL = 20 * 60   # 20 min → máx ~72 refreshes/dia (< 800 créditos free tier)
+_CACHE_TTL = 45 * 60   # 45 min → máx ~32 refreshes/dia × 11 pares = ~352 créditos/dia (free tier ok)
 _last_refresh: float = 0.0
 _refresh_lock = threading.Lock()
 _refresh_in_progress = threading.Event()
@@ -160,7 +160,7 @@ def _single_symbol_refresh(symbol_internal: str, symbol_td: str, now: float) -> 
     params = {
         "symbol": symbol_td,
         "interval": "1h",
-        "outputsize": 800,
+        "outputsize": 200,
         "apikey": Config.TWELVE_DATA_API_KEY,
         "format": "JSON",
         "timezone": "UTC",
@@ -171,6 +171,9 @@ def _single_symbol_refresh(symbol_internal: str, symbol_td: str, now: float) -> 
         if not sym_data or sym_data.get("status") == "error":
             msg = sym_data.get("message", "sem payload") if isinstance(sym_data, dict) else "sem payload"
             log(f"[TWELVEDATA] {symbol_td}: fallback individual falhou ({msg})")
+            # Se créditos esgotados, não tenta mais Twelve Data
+            if "run out of API credits" in msg or "credits" in msg.lower():
+                log(f"[TWELVEDATA] Créditos esgotados — pulando para Yahoo Finance")
             return False
         values = sym_data.get("values", [])
         df = _build_df_from_values(values)
@@ -279,7 +282,7 @@ def _single_symbol_refresh(symbol_internal: str, symbol_td: str, now: float) -> 
     params = {
         "symbol": symbol_td,
         "interval": "1h",
-        "outputsize": 800,
+        "outputsize": 200,
         "apikey": Config.TWELVE_DATA_API_KEY,
         "format": "JSON",
         "timezone": "UTC",
@@ -378,7 +381,7 @@ def _refresh_cache():
         params = {
             "symbol": symbols_str,
             "interval": "1h",
-            "outputsize": 800,
+            "outputsize": 200,
             "apikey": Config.TWELVE_DATA_API_KEY,
             "format": "JSON",
             "timezone": "UTC",
@@ -387,6 +390,24 @@ def _refresh_cache():
         try:
             payload = _fetch_twelvedata_batch(symbols_str, params)
             log(f"[TWELVEDATA] Batch {batch_idx + 1}/{len(batches)} recebido ({len(batch)} pares)")
+
+            # ── Detecta crédito esgotado dentro do payload ───────────────────
+            # Quando o free tier está esgotado, o batch retorna com status de erro
+            # em cada símbolo individualmente — detectamos e acionamos Yahoo direto.
+            if isinstance(payload, dict):
+                first_val = next(iter(payload.values()), {}) if payload else {}
+                err_msg = ""
+                if isinstance(first_val, dict):
+                    err_msg = str(first_val.get("message", "") or first_val.get("status", ""))
+                if not err_msg and "message" in payload:
+                    err_msg = str(payload.get("message", ""))
+                if "run out of API credits" in err_msg or "credits" in err_msg.lower():
+                    log(f"[TWELVEDATA] ⚠️  Créditos esgotados — ativando Yahoo Finance para todos os pares")
+                    failed_symbols.extend(sym_internal for sym_internal, _ in batch)
+                    # adiciona todos os batches restantes direto como falhos
+                    for future_batch in batches[batch_idx + 1:]:
+                        failed_symbols.extend(sym_internal for sym_internal, _ in future_batch)
+                    break  # sai do loop de batches e vai direto para Yahoo
         except Exception as e:
             log(f"[TWELVEDATA] Erro no batch {batch_idx + 1}: {e}")
             failed_symbols.extend(sym_internal for sym_internal, _ in batch)
