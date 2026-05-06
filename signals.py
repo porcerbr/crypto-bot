@@ -473,8 +473,14 @@ def scan(bot):
         except Exception:
             pass
 
+        # ── Filtro de qualidade IA: descarta sinais com nota < 5 ──────────────
+        MIN_AI_CONFIDENCE = int(getattr(Config, "MIN_AI_CONFIDENCE", 5))
+        if ai_confidence > 0 and ai_confidence < MIN_AI_CONFIDENCE:
+            log(f"[AI] {sym} {direction}: confiança IA {ai_confidence}/10 abaixo do mínimo ({MIN_AI_CONFIDENCE}) — descartado")
+            continue
+
         pend["ai_reason"]   = ai_reason
-        pend["ai_approved"] = True
+        pend["ai_approved"] = ai_confidence >= MIN_AI_CONFIDENCE or ai_confidence == 0
         pend["ai_confidence"] = ai_confidence
 
         ok = bot.execute_signal(pend)
