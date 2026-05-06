@@ -63,7 +63,39 @@ def detect_timeframe(bars: list[Bar]) -> str:
         return "W1"
     if avg_seconds >= 23 * 3600:
         return "D1"
-    return "H1"
+    if avg_seconds >= 3600:
+        return "H1"
+    if avg_seconds >= 900:
+        return "M15"
+    if avg_seconds >= 300:
+        return "M5"
+    return "M1"
+
+
+def resample_to_h1(bars: list[Bar]) -> list[Bar]:
+    """Agrega candles de timeframe curto (M1/M5/M15) em H1."""
+    if not bars:
+        return bars
+    import pandas as pd
+
+    df = bars_to_dataframe(bars)
+    h1 = df.resample("1h").agg({
+        "Open":  "first",
+        "High":  "max",
+        "Low":   "min",
+        "Close": "last",
+    }).dropna()
+
+    result: list[Bar] = []
+    for ts, row in h1.iterrows():
+        result.append(Bar(
+            timestamp=ts.to_pydatetime(),
+            open=float(row["Open"]),
+            high=float(row["High"]),
+            low=float(row["Low"]),
+            close=float(row["Close"]),
+        ))
+    return result
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -497,6 +529,11 @@ def run_backtest(
 ) -> BacktestResult:
     if not bars:
         return BacktestResult(metrics=calculate_metrics_from_history([], initial_balance=initial_balance), trades=[], equity_curve=[], params={"symbol": symbol})
+
+    # Resample automático: M1/M5/M15 → H1 para performance e compatibilidade da estratégia
+    raw_tf = detect_timeframe(bars)
+    if raw_tf in ("M1", "M5", "M15"):
+        bars = resample_to_h1(bars)
 
     tf = detect_timeframe(bars)
     initial_balance = float(initial_balance if initial_balance is not None else Config.INITIAL_BALANCE)
