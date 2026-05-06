@@ -156,13 +156,15 @@ def _score_combo(
     risk_pct: float,
     weekly_trade_target: float,
     max_bars_in_trade: int,
+    pull_hi: float = 2.0,
     warmup: int = 80,
 ) -> dict:
     """Backtest sobre arrays pré-computados — sem recalcular indicadores."""
 
     REGIME_ADX_RANGING  = getattr(Config, "REGIME_ADX_RANGING",  18)
     REGIME_ADX_TRENDING = getattr(Config, "REGIME_ADX_TRENDING", 25)
-    pull_lo, pull_hi = -1.0, 2.0  # pull-range H1 padrão
+    pull_lo = -1.0
+    # pull_hi passado como parâmetro — permite testar pullbacks mais profundos
 
     balance = initial_balance
     active  = None
@@ -260,14 +262,16 @@ def _score_combo(
                     direction = "SELL"
 
         if direction is None and regime in ("range",):
-            dist_bu = float(p["dist_bb_up"][i])
-            dist_bd = float(p["dist_bb_dn"][i])
-            if dist_bu > 0.3 and cbull and (macd_xup or rsi_bup) and rsi_v < 65:
-                score = sum([dist_bu > 0.3, cbull, macd_xup or rsi_bup, rsi_v < 65])
+            dist_bu = float(p["dist_bb_up"][i])   # distância até banda superior
+            dist_bd = float(p["dist_bb_dn"][i])   # distância até banda inferior
+            # BUY: preço perto da banda INFERIOR (dist_bb_dn pequeno = está na borda baixa)
+            if dist_bd <= 1.0 and rsi_v <= 40 and cbull and (macd_xup or rsi_bup):
+                score = sum([dist_bd <= 1.0, rsi_v <= 40, cbull, macd_xup or rsi_bup])
                 if score >= min(min_confluence, 3):
                     direction = "BUY"
-            if direction is None and dist_bd > 0.3 and cbear and (macd_xdn or rsi_bdn) and rsi_v > 35:
-                score = sum([dist_bd > 0.3, cbear, macd_xdn or rsi_bdn, rsi_v > 35])
+            # SELL: preço perto da banda SUPERIOR (dist_bb_up pequeno = está na borda alta)
+            if direction is None and dist_bu <= 1.0 and rsi_v >= 60 and cbear and (macd_xdn or rsi_bdn):
+                score = sum([dist_bu <= 1.0, rsi_v >= 60, cbear, macd_xdn or rsi_bdn])
                 if score >= min(min_confluence, 3):
                     direction = "SELL"
 
@@ -327,21 +331,35 @@ def _score_combo(
     m = calculate_metrics_from_history(trades, initial_balance=initial_balance, current_balance=balance)
     pnl_total  = balance - initial_balance
     pf         = float(m.get("profit_factor", 0) or 0)
-    wr         = float(m.get("winrate", 0) or 0)  # chave correta da performance.py
+    wr         = float(m.get("winrate", 0) or 0)
     dd         = float(m.get("max_drawdown_pct", 0) or 0)
     sharpe     = float(m.get("sharpe_ratio", 0) or 0)
     n_trades   = len(trades)
 
-    # Score composto:
-    # - Exige PF > 1 e P&L positivo (configs com lucro negativo = score 0)
-    # - Exige RR >= 1 (TP >= SL), senão matematicamente inviável a longo prazo
-    # - Penaliza drawdown alto e premia Sharpe positivo
-    rr_ok      = atr_tp_mult >= atr_sl_mult          # TP deve ser >= SL
-    viable     = n_trades >= 10 and pf > 1.0 and pnl_total > 0 and dd < 40 and rr_ok
+    # Calcula retorno anualizado real
+    annual_return_pct = 0.0
+    if n_trades >= 2 and trades:
+        try:
+            first_dt = datetime.fromisoformat(str(trades[0]["closed_at"]))
+            last_dt  = datetime.fromisoformat(str(trades[-1]["closed_at"]))
+            span_years = max(0.01, (last_dt - first_dt).total_seconds() / (365.25 * 86400))
+            annual_return_pct = (pnl_total / initial_balance) / span_years * 100
+        except Exception:
+            annual_return_pct = pnl_total / initial_balance * 100
+
+    # Score composto orientado a retorno anual:
+    # - RR mínimo 1.5× (TP >= 1.5 × SL) — abaixo disso não é viável com WR ~50%
+    # - Exige PF > 1.05, P&L positivo, DD < 35%
+    # - Premia retorno anual * Sharpe / DD
+    rr_ok   = (atr_tp_mult / max(atr_sl_mult, 0.01)) >= 1.5
+    viable  = (n_trades >= 10 and pf > 1.05 and pnl_total > 0
+               and dd < 35 and rr_ok and annual_return_pct > 0)
     if viable:
-        # Componentes: PF (qualidade), WR (consistência), DD (risco), Sharpe (risco ajustado)
-        sharpe_bonus = min(max(sharpe, 0), 3.0)
-        score = (pf - 1.0) * (wr / 100) * (1 - dd / 100) * (1 + sharpe_bonus)
+        sharpe_bonus      = min(max(sharpe, 0), 3.0)
+        dd_penalty        = 1 - dd / 100
+        freq_factor       = min(n_trades / 50, 2.0)          # premia frequência até 50 trades
+        annual_norm       = min(annual_return_pct / 50, 2.0) # normaliza retorno anual (50% = 1.0)
+        score = annual_norm * dd_penalty * (1 + sharpe_bonus) * freq_factor
     else:
         score = 0.0
 
@@ -352,12 +370,15 @@ def _score_combo(
         "atr_tp_mult":       atr_tp_mult,
         "risk_pct":          risk_pct,
         "weekly_trade_target": weekly_trade_target,
+        "pull_hi":           pull_hi,
+        "max_bars":          max_bars_in_trade,
         "n_trades":          n_trades,
         "win_rate":          wr,
         "profit_factor":     round(pf, 2),
         "max_drawdown":      round(dd, 1),
         "sharpe":            round(sharpe, 2),
         "pnl":               round(pnl_total, 2),
+        "annual_return_pct": round(annual_return_pct, 1),
         "score":             round(score, 4),
         "rr_ratio":          round(atr_tp_mult / atr_sl_mult, 2),
     }
@@ -368,12 +389,14 @@ def _score_combo(
 # ══════════════════════════════════════════════════════════════════════════════
 
 GRID = {
-    "min_confluence":      [3, 4, 5, 6],
-    "adx_min":             [15.0, 18.0, 22.0, 26.0],
-    "atr_sl_mult":         [1.0, 1.5, 2.0, 2.5],
-    "atr_tp_mult":         [2.0, 3.0, 4.0, 5.0],
+    "min_confluence":      [3, 4, 5],
+    "adx_min":             [15.0, 18.0, 22.0],
+    "atr_sl_mult":         [1.0, 1.5, 2.0],
+    "atr_tp_mult":         [2.5, 3.5, 5.0, 7.0],   # RR mínimo 1.5× garantido pelo score
     "risk_pct":            [1.0, 2.0, 3.0],
-    "weekly_trade_target": [2.0, 3.0, 5.0],
+    "weekly_trade_target": [3.0, 5.0],
+    "pull_hi":             [1.5, 2.5, 3.5],         # quão longe da EMA21 aceita pullback
+    "max_bars":            [40, 60, 100],            # janela máxima do trade em barras H1
 }
 
 def run_grid(
@@ -410,7 +433,8 @@ def run_grid(
             atr_tp_mult        = params["atr_tp_mult"],
             risk_pct           = params["risk_pct"],
             weekly_trade_target= params["weekly_trade_target"],
-            max_bars_in_trade  = 60,
+            pull_hi            = params["pull_hi"],
+            max_bars_in_trade  = params["max_bars"],
         )
         results.append(r)
 
@@ -446,30 +470,33 @@ def run_grid(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def print_report(top: list[dict], symbol: str, initial_balance: float) -> None:
-    sep = "═" * 72
+    sep = "═" * 80
 
     print(f"\n{sep}")
     print(f"  🏆  TOP {len(top)} CONFIGURAÇÕES — {symbol}  (saldo inicial: ${initial_balance:.2f})")
     print(sep)
-    header = f"{'#':>2}  {'Conf':>4}  {'ADX':>4}  {'SL×':>4}  {'TP×':>4}  {'Risk':>4}  {'Wkly':>4}  {'Trd':>4}  {'WR%':>5}  {'PF':>5}  {'DD%':>5}  {'Sharpe':>6}  {'P&L':>7}  Score"
+    header = (f"{'#':>2}  {'Cf':>2}  {'ADX':>4}  {'SL×':>4}  {'TP×':>4}  {'PH':>4}  "
+              f"{'MB':>3}  {'Rsk':>3}  {'Trd':>4}  {'WR%':>5}  {'PF':>5}  "
+              f"{'DD%':>5}  {'Shrp':>5}  {'Anl%':>6}  {'P&L':>7}  Score")
     print(header)
-    print("─" * 72)
+    print("─" * 80)
     for rank, r in enumerate(top, 1):
-        wr_icon = "✅" if r["win_rate"] >= 50 else "⚠️ "
-        pf_icon = "✅" if r["profit_factor"] >= 1.5 else "⚠️ "
+        pf_ok = "✅" if r["profit_factor"] >= 1.3 else "⚠️ "
         print(
             f"{rank:>2}  "
-            f"{r['min_confluence']:>4}  "
+            f"{r['min_confluence']:>2}  "
             f"{r['adx_min']:>4.0f}  "
             f"{r['atr_sl_mult']:>4.1f}  "
             f"{r['atr_tp_mult']:>4.1f}  "
-            f"{r['risk_pct']:>4.0f}%  "
-            f"{r['weekly_trade_target']:>4.0f}  "
+            f"{r.get('pull_hi', 2.0):>4.1f}  "
+            f"{r.get('max_bars', 60):>3}  "
+            f"{r['risk_pct']:>3.0f}%  "
             f"{r['n_trades']:>4}  "
             f"{r['win_rate']:>5.1f}  "
-            f"{r['profit_factor']:>5.2f}  "
+            f"{pf_ok}{r['profit_factor']:>4.2f}  "
             f"{r['max_drawdown']:>5.1f}  "
-            f"{r['sharpe']:>6.2f}  "
+            f"{r['sharpe']:>5.2f}  "
+            f"{r.get('annual_return_pct', 0):>+6.1f}%  "
             f"${r['pnl']:>+7.2f}  "
             f"{r['score']:.4f}"
         )
@@ -479,10 +506,14 @@ def print_report(top: list[dict], symbol: str, initial_balance: float) -> None:
     print(f"      min_confluence      = {best['min_confluence']}")
     print(f"      adx_min             = {best['adx_min']:.0f}")
     print(f"      atr_sl_mult         = {best['atr_sl_mult']}")
-    print(f"      atr_tp_mult         = {best['atr_tp_mult']}")
+    print(f"      atr_tp_mult         = {best['atr_tp_mult']}   → RR {best['rr_ratio']:.1f}×")
+    print(f"      pull_hi             = {best.get('pull_hi', 2.0)}")
+    print(f"      max_bars_in_trade   = {best.get('max_bars', 60)}")
     print(f"      risk_pct            = {best['risk_pct']:.0f}%")
     print(f"      weekly_trade_target = {best['weekly_trade_target']:.0f}")
-    print(f"\n      Resultado: {best['n_trades']} trades  |  WR {best['win_rate']:.1f}%  |  PF {best['profit_factor']:.2f}  |  DD {best['max_drawdown']:.1f}%  |  P&L ${best['pnl']:+.2f}")
+    print(f"\n      Resultado: {best['n_trades']} trades  |  WR {best['win_rate']:.1f}%  |"
+          f"  PF {best['profit_factor']:.2f}  |  DD {best['max_drawdown']:.1f}%  |"
+          f"  Retorno anual {best.get('annual_return_pct', 0):+.1f}%  |  P&L ${best['pnl']:+.2f}")
     print(sep)
 
 
