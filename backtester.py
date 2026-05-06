@@ -617,6 +617,17 @@ def run_backtest(
             t = active
             bars_open = i - t["bar_i"]
 
+            # ── Trailing stop: move SL para breakeven após 1× ATR a favor ──
+            if not t.get("be_done", False):
+                atr_at_entry = t.get("atr_entry", 0)
+                if atr_at_entry > 0:
+                    if t["dir"] == "BUY" and bar.high >= t["entry"] + atr_at_entry:
+                        t["sl"] = max(t["sl"], t["entry"])   # SL → breakeven
+                        t["be_done"] = True
+                    elif t["dir"] == "SELL" and bar.low <= t["entry"] - atr_at_entry:
+                        t["sl"] = min(t["sl"], t["entry"])   # SL → breakeven
+                        t["be_done"] = True
+
             if t["dir"] == "BUY":
                 hit_sl = bar.low <= t["sl"]
                 hit_tp = bar.high >= t["tp"]
@@ -721,6 +732,8 @@ def run_backtest(
             "bar_i": i,
             "opened_at": bar.timestamp,
             "adx": res["adx"],
+            "atr_entry": res["atr"],   # ATR no momento da entrada (para trailing stop)
+            "be_done": False,          # flag: breakeven já aplicado?
         }
 
     if active is not None:
