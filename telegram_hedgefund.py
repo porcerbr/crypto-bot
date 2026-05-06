@@ -82,6 +82,8 @@ class TelegramDesk:
         self.state = TelegramDeskState()
         self._webhook_cleared = False
         self._me_cache: dict | None = None
+        # Estado: aguardando CSV para otimização ("EURUSD") ou None
+        self._pending_optimize: str | None = None
 
     def _post(self, method: str, payload: dict):
         try:
@@ -264,12 +266,18 @@ class TelegramDesk:
                         file_id = doc.get("file_id")
                         # Lê o símbolo da caption (ex: "EURUSD") ou usa padrão
                         caption = str(msg.get("caption", "") or "").strip().upper()
-                        # Caption: "optimize EURUSD" → otimizador | qualquer outra → backtest
+                        # Modo otimização: via /optimize (estado pendente) OU caption "optimize PAR"
                         caption_parts = caption.split()
-                        is_optimize   = caption_parts and caption_parts[0] == "OPTIMIZE"
-                        if is_optimize:
+                        caption_optimize = caption_parts and caption_parts[0] == "OPTIMIZE"
+                        if self._pending_optimize:
+                            is_optimize = True
+                            symbol = self._pending_optimize
+                            self._pending_optimize = None  # consome o estado
+                        elif caption_optimize:
+                            is_optimize = True
                             symbol = caption_parts[1] if len(caption_parts) > 1 else "EURUSD"
                         else:
+                            is_optimize = False
                             symbol = caption if caption else "EURUSD"
 
                         self.send(
@@ -417,14 +425,14 @@ class TelegramDesk:
                     self.send(result_msg, reply_markup=keyboard_markup())
 
                 elif cmd == "/optimize":
+                    parts = text.split()
+                    symbol = parts[1].upper() if len(parts) > 1 else "EURUSD"
+                    self._pending_optimize = symbol
                     self.send(
-                        "🔬 <b>OTIMIZADOR DE PARÂMETROS</b>\n"
-                        "Envia o CSV com a caption <b>optimize EURUSD</b> (ou outro par).\n\n"
-                        "<b>Exemplo de uso:</b>\n"
-                        "1. Selecione seu arquivo CSV\n"
-                        "2. Na caption/legenda escreva: <code>optimize EURUSD</code>\n"
-                        "3. Envie — o bot testa 2 304 combinações e retorna o ranking\n\n"
-                        "⏳ Tempo estimado: 30–60 segundos.",
+                        f"🔬 <b>OTIMIZADOR — {esc(symbol)}</b>\n"
+                        "Agora envie o arquivo <b>.csv</b> com os dados históricos.\n"
+                        "Não precisa de legenda — o bot detecta automaticamente.\n\n"
+                        "⏳ Tempo estimado: 30–60 segundos após o envio.",
                         reply_markup=keyboard_markup(),
                     )
 
