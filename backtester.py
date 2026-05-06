@@ -72,6 +72,8 @@ def _parse_dt(value: str) -> datetime | None:
     raw = str(value).strip().replace("Z", "+00:00")
     for fmt in (
         None,
+        "%Y%m%d %H%M%S",   # HistData/Dukascopy ASCII: 20230101 170400
+        "%Y%m%d %H%M",     # variante sem segundos:     20230101 1704
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
         "%d/%m/%Y %H:%M:%S",
@@ -195,7 +197,31 @@ def load_bars_from_csv(path: str | Path) -> list[Bar]:
     except Exception:
         dialect = csv.get_dialect("excel")
 
-    reader = csv.DictReader(raw.splitlines(), dialect=dialect)
+    lines = [l for l in raw.splitlines() if l.strip()]
+    if not lines:
+        return []
+
+    # ── Detecção de formato sem cabeçalho (HistData/Dukascopy ASCII) ──────────
+    # Esses arquivos começam com uma linha de dados pura (ex: "20230101 170400;…")
+    # em vez de um cabeçalho textual. Se a primeira coluna começar com dígito,
+    # tratamos como headerless e mapeamos posicionalmente.
+    first_cols = next(csv.reader([lines[0]], dialect=dialect), [])
+    first_cell = first_cols[0].strip() if first_cols else ""
+    is_headerless = first_cell[:1].isdigit()
+
+    if is_headerless:
+        # Ordem esperada: DateTime, Open, High, Low, Close[, Volume, ...]
+        positional_keys = ["timestamp", "open", "high", "low", "close"]
+        rows: list[dict] = []
+        for line in lines:
+            parts = next(csv.reader([line], dialect=dialect), [])
+            if len(parts) < 5:
+                continue
+            row = {positional_keys[i]: parts[i].strip() for i in range(5)}
+            rows.append(row)
+        return _from_rows(rows)
+
+    reader = csv.DictReader(lines, dialect=dialect)
     return _from_rows(reader)
 
 
