@@ -111,6 +111,7 @@ def _parse_dt(value: str) -> datetime | None:
         "%d/%m/%Y %H:%M:%S",
         "%d/%m/%Y %H:%M",
         "%d/%m/%Y",
+        "%m/%d/%Y",  # formato US do Investing.com inglês
         "%Y-%m-%d",
     ):
         try:
@@ -240,6 +241,50 @@ def load_bars_from_csv(path: str | Path) -> list[Bar]:
     first_cols = next(csv.reader([lines[0]], dialect=dialect), [])
     first_cell = first_cols[0].strip() if first_cols else ""
     is_headerless = first_cell[:1].isdigit()
+
+    # ── Detecção formato Investing.com (PT/ES) ──────────────────────────────
+    # Cabeçalho em português: "Data,Preço,Abertura,Alta,Baixa,Var%"
+    # Decimal com vírgula: "1,1792" → 1.1792 | Data: DD/MM/YYYY
+    investing_headers = {"data", "preco", "preço", "abertura", "alta", "baixa"}
+    first_lower = {c.strip().lower().replace("\u00e7", "c") for c in first_cols}
+    is_investing = len(investing_headers & first_lower) >= 3
+
+    if is_investing:
+        def _fix_num(s: str) -> str:
+            """Converte número BR/ES (vírgula decimal) para float string."""
+            s = s.strip().replace("%", "").replace(" ", "")
+            # "1,1792" → "1.1792" | "1.179,20" → "1179.20"
+            if s.count(",") == 1 and s.count(".") == 0:
+                return s.replace(",", ".")
+            return s.replace(".", "").replace(",", ".")
+
+        reader_inv = csv.DictReader(lines, dialect=dialect)
+        col_map = {}  # mapeia header real → chave interna
+        header_aliases = {
+            "data": "timestamp", "date": "timestamp",
+            "preco": "close", "preço": "close", "price": "close", "último": "close", "ultimo": "close",
+            "abertura": "open", "open": "open",
+            "alta": "high",  "high": "high", "máx": "high", "max": "high",
+            "baixa": "low",  "low": "low",  "mín": "low",  "min": "low",
+        }
+        rows_inv: list[dict] = []
+        for raw_row in reader_inv:
+            row: dict[str, str] = {}
+            for raw_col, val in raw_row.items():
+                if raw_col is None:
+                    continue
+                key = header_aliases.get(raw_col.strip().lower().replace("\u00e7", "c").replace("\u00e9", "e").replace("\u00e1", "a").replace("\u00ed", "i"))
+                if key == "timestamp":
+                    row[key] = val.strip().strip('"').strip()
+                elif key in ("open", "high", "low", "close"):
+                    cleaned = val.strip().strip('"').strip()
+                    row[key] = _fix_num(cleaned)
+            # Linha de rodapé do Investing.com começa com "Abertura :"
+            if "timestamp" not in row or ":" in row.get("timestamp", ""):
+                continue
+            if len(row) >= 4:
+                rows_inv.append(row)
+        return _from_rows(rows_inv)
 
     if is_headerless:
         # Ordem esperada: DateTime, Open, High, Low, Close[, Volume, ...]
