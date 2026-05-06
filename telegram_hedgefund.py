@@ -264,10 +264,19 @@ class TelegramDesk:
                         file_id = doc.get("file_id")
                         # Lê o símbolo da caption (ex: "EURUSD") ou usa padrão
                         caption = str(msg.get("caption", "") or "").strip().upper()
-                        symbol = caption if caption else "EURUSD"
+                        # Caption: "optimize EURUSD" → otimizador | qualquer outra → backtest
+                        caption_parts = caption.split()
+                        is_optimize   = caption_parts and caption_parts[0] == "OPTIMIZE"
+                        if is_optimize:
+                            symbol = caption_parts[1] if len(caption_parts) > 1 else "EURUSD"
+                        else:
+                            symbol = caption if caption else "EURUSD"
+
                         self.send(
                             f"📂 <b>CSV recebido:</b> {fname}\n"
-                            f"⏳ Rodando backtest para <b>{symbol}</b>...",
+                            + (f"🔬 Iniciando otimização para <b>{symbol}</b> (2 304 combinações)...\n⏳ Aguarde ~30 segundos."
+                               if is_optimize else
+                               f"⏳ Rodando backtest para <b>{symbol}</b>..."),
                             reply_markup=keyboard_markup(),
                         )
                         try:
@@ -280,7 +289,7 @@ class TelegramDesk:
                                     tmp.write(content)
                                     tmp_path = tmp.name
                                 try:
-                                    from backtester import load_bars_from_csv, run_backtest
+                                    from backtester import load_bars_from_csv
                                     from config import Config
                                     bars = load_bars_from_csv(tmp_path)
                                     if len(bars) < 60:
@@ -288,7 +297,12 @@ class TelegramDesk:
                                             f"⚠️ CSV com apenas {len(bars)} candles. Mínimo recomendado: 60.",
                                             reply_markup=keyboard_markup(),
                                         )
+                                    elif is_optimize:
+                                        from optimizer import run_grid
+                                        top = run_grid(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
+                                        self.send(_format_optimize_result(symbol, top, len(bars)), reply_markup=keyboard_markup())
                                     else:
+                                        from backtester import run_backtest
                                         r = run_backtest(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
                                         self.send(_format_backtest_result(symbol, r, len(bars)), reply_markup=keyboard_markup())
                                 finally:
@@ -326,7 +340,8 @@ class TelegramDesk:
                         "• /pause [min] — pausa temporária\n"
                         "• /resume — retoma o bot\n"
                         "• /mode — modo e parâmetros\n"
-                        "• /backtest [PAR] — backtest do par (ex: /backtest EURUSD)\n\n"
+                        "• /backtest [PAR] — backtest do par (ex: /backtest EURUSD)\n"
+                        "• /optimize — otimiza parâmetros via CSV (envie o CSV com caption \"optimize EURUSD\")\n\n"
                         "Botões abaixo para acesso rápido.",
                         reply_markup=keyboard_markup(),
                     )
@@ -401,6 +416,18 @@ class TelegramDesk:
                         result_msg = f"❌ Erro no backtest: {exc}"
                     self.send(result_msg, reply_markup=keyboard_markup())
 
+                elif cmd == "/optimize":
+                    self.send(
+                        "🔬 <b>OTIMIZADOR DE PARÂMETROS</b>\n"
+                        "Envia o CSV com a caption <b>optimize EURUSD</b> (ou outro par).\n\n"
+                        "<b>Exemplo de uso:</b>\n"
+                        "1. Selecione seu arquivo CSV\n"
+                        "2. Na caption/legenda escreva: <code>optimize EURUSD</code>\n"
+                        "3. Envie — o bot testa 2 304 combinações e retorna o ranking\n\n"
+                        "⏳ Tempo estimado: 30–60 segundos.",
+                        reply_markup=keyboard_markup(),
+                    )
+
                 else:
                     self.send(
                         "Comando não reconhecido. Use /help para ver os comandos disponíveis.",
@@ -453,6 +480,50 @@ def _format_backtest_result(symbol: str, r, total_bars: int) -> str:
         lines.append("✅ <b>Veredicto:</b> Estratégia ACEITÁVEL. Monitore o drawdown.")
     else:
         lines.append("⚠️ <b>Veredicto:</b> Resultado FRACO. Ajuste os parâmetros.")
+    return "\n".join(lines)
+
+
+def _format_optimize_result(symbol: str, top: list[dict], total_bars: int) -> str:
+    """Formata o ranking de otimização para o Telegram."""
+    if not top:
+        return f"❌ <b>Otimização falhou</b> — nenhuma configuração gerou trades suficientes."
+
+    best = top[0]
+    lines = [
+        f"🔬 <b>OTIMIZAÇÃO — {esc(symbol)}</b>",
+        f"<b>Dados:</b> {total_bars:,} candles  |  2 304 combinações testadas",
+        "—" * 20,
+        "🥇 <b>MELHOR CONFIGURAÇÃO:</b>",
+        f"  • Confluence mín.: <b>{best['min_confluence']}</b>",
+        f"  • ADX mín.: <b>{best['adx_min']:.0f}</b>",
+        f"  • SL multiplicador: <b>{best['atr_sl_mult']}×</b>",
+        f"  • TP multiplicador: <b>{best['atr_tp_mult']}×</b>",
+        f"  • Risco por trade: <b>{best['risk_pct']:.0f}%</b>",
+        f"  • Trades/semana alvo: <b>{best['weekly_trade_target']:.0f}</b>",
+        "—" * 20,
+        f"📊 <b>Resultado da config #1:</b>",
+        f"  Trades: {best['n_trades']}  |  WR: {best['win_rate']:.1f}%",
+        f"  PF: {best['profit_factor']:.2f}  |  DD: {best['max_drawdown']:.1f}%",
+        f"  Sharpe: {best['sharpe']:.2f}  |  P&amp;L: ${best['pnl']:+.2f}",
+        "—" * 20,
+    ]
+
+    if len(top) > 1:
+        lines.append("📋 <b>TOP 5 CONFIGS:</b>")
+        for i, r in enumerate(top[:5], 1):
+            wr_tag  = "✅" if r["win_rate"]      >= 50  else "⚠️"
+            pf_tag  = "✅" if r["profit_factor"]  >= 1.5 else "⚠️"
+            lines.append(
+                f"  <b>#{i}</b>  Conf={r['min_confluence']} ADX={r['adx_min']:.0f} "
+                f"SL={r['atr_sl_mult']}× TP={r['atr_tp_mult']}× Risk={r['risk_pct']:.0f}% "
+                f"| {wr_tag}{r['win_rate']:.0f}% {pf_tag}PF {r['profit_factor']:.2f} "
+                f"DD {r['max_drawdown']:.0f}% P&amp;L ${r['pnl']:+.0f}"
+            )
+
+    lines += [
+        "—" * 20,
+        "💡 <b>Para aplicar:</b> edite <code>strategy_settings.json</code> com os valores acima.",
+    ]
     return "\n".join(lines)
 
 
