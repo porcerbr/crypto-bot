@@ -327,7 +327,7 @@ def _score_combo(
     m = calculate_metrics_from_history(trades, initial_balance=initial_balance, current_balance=balance)
     pnl_total  = balance - initial_balance
     pf         = float(m.get("profit_factor", 0) or 0)
-    wr         = float(m.get("win_rate", 0) or 0)
+    wr         = float(m.get("winrate", 0) or 0)  # chave correta da performance.py
     dd         = float(m.get("max_drawdown_pct", 0) or 0)
     sharpe     = float(m.get("sharpe_ratio", 0) or 0)
     n_trades   = len(trades)
@@ -412,8 +412,25 @@ def run_grid(
             best_pf  = max((x["profit_factor"] for x in results if x["n_trades"] >= 10), default=0)
             print(f"  [{idx}/{total}] {elapsed:.0f}s decorridos | ETA ~{eta:.0f}s | melhor PF até agora: {best_pf:.2f}")
 
+    # Ordena por score e remove duplicatas por resultado (n_trades+pnl+WR idênticos
+    # ocorrem quando weekly_trade_target não afeta o regime dos dados)
     results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:top_n]
+    seen_params  = set()
+    seen_results = set()
+    unique = []
+    for r in results:
+        param_key  = (r["min_confluence"], r["adx_min"], r["atr_sl_mult"],
+                      r["atr_tp_mult"], r["risk_pct"], r["weekly_trade_target"])
+        result_key = (r["n_trades"], round(r["win_rate"], 1),
+                      round(r["profit_factor"], 3), round(r["pnl"], 2))
+        if param_key in seen_params or result_key in seen_results:
+            continue
+        seen_params.add(param_key)
+        seen_results.add(result_key)
+        unique.append(r)
+        if len(unique) == top_n:
+            break
+    return unique
 
 
 # ══════════════════════════════════════════════════════════════════════════════
