@@ -156,7 +156,24 @@ class TelegramDesk:
         except Exception as e:
             return {"ok": False, "description": str(e), "result": []}
 
-    def push_startup(self, bot):
+    def download_file(self, file_id: str) -> bytes | None:
+        """Baixa um arquivo do Telegram pelo file_id e retorna os bytes."""
+        resp = self._get("getFile", params={"file_id": file_id})
+        if resp is None:
+            return None
+        data = resp.json()
+        if not data.get("ok"):
+            return None
+        file_path = data["result"]["file_path"]
+        url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            return r.content
+        except Exception:
+            return None
+
+
         self.send(format_startup(bot), reply_markup=keyboard_markup())
 
     def push_heartbeat(self, bot, regime_info: dict | None = None):
@@ -238,6 +255,57 @@ class TelegramDesk:
                 elif upd.get("edited_message"):
                     text = str(upd["edited_message"].get("text", "") or "").strip()
 
+                # ── Detecção de arquivo CSV enviado pelo usuário ───────────────
+                msg = upd.get("message", {})
+                doc = msg.get("document")
+                if doc:
+                    fname = doc.get("file_name", "")
+                    if fname.lower().endswith(".csv"):
+                        file_id = doc.get("file_id")
+                        # Lê o símbolo da caption (ex: "EURUSD") ou usa padrão
+                        caption = str(msg.get("caption", "") or "").strip().upper()
+                        symbol = caption if caption else "EURUSD"
+                        self.send(
+                            f"📂 <b>CSV recebido:</b> {fname}\n"
+                            f"⏳ Rodando backtest para <b>{symbol}</b>...",
+                            reply_markup=keyboard_markup(),
+                        )
+                        try:
+                            content = self.download_file(file_id)
+                            if not content:
+                                self.send("❌ Não foi possível baixar o arquivo.", reply_markup=keyboard_markup())
+                            else:
+                                import tempfile, os
+                                with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+                                    tmp.write(content)
+                                    tmp_path = tmp.name
+                                try:
+                                    from backtester import load_bars_from_csv, run_backtest
+                                    from config import Config
+                                    bars = load_bars_from_csv(tmp_path)
+                                    if len(bars) < 60:
+                                        self.send(
+                                            f"⚠️ CSV com apenas {len(bars)} candles. Mínimo recomendado: 60.",
+                                            reply_markup=keyboard_markup(),
+                                        )
+                                    else:
+                                        r = run_backtest(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
+                                        self.send(_format_backtest_result(symbol, r, len(bars)), reply_markup=keyboard_markup())
+                                finally:
+                                    try:
+                                        os.unlink(tmp_path)
+                                    except Exception:
+                                        pass
+                        except Exception as exc:
+                            self.send(f"❌ Erro ao processar CSV: {exc}", reply_markup=keyboard_markup())
+                    else:
+                        self.send(
+                            "⚠️ <b>Formato não suportado.</b>\nEnvie um arquivo <b>.csv</b> com candles OHLC.\n"
+                            "Fontes: Investing.com, Histdata.com ou MetaTrader.",
+                            reply_markup=keyboard_markup(),
+                        )
+                    continue
+
                 if not text or not text.startswith("/"):
                     continue
 
@@ -257,7 +325,8 @@ class TelegramDesk:
                         "• /assets — ativos monitorados\n"
                         "• /pause [min] — pausa temporária\n"
                         "• /resume — retoma o bot\n"
-                        "• /mode — modo e parâmetros\n\n"
+                        "• /mode — modo e parâmetros\n"
+                        "• /backtest [PAR] — backtest do par (ex: /backtest EURUSD)\n\n"
                         "Botões abaixo para acesso rápido.",
                         reply_markup=keyboard_markup(),
                     )
@@ -322,6 +391,16 @@ class TelegramDesk:
                 elif cmd == "/health":
                     self.send(format_health(bot), reply_markup=keyboard_markup())
 
+                elif cmd == "/backtest":
+                    parts = text.split()
+                    symbol = parts[1].upper() if len(parts) > 1 else "EURUSD"
+                    self.send(f"⏳ <b>Rodando backtest para {symbol}...</b>\nAguarde alguns segundos.", reply_markup=keyboard_markup())
+                    try:
+                        result_msg = _run_backtest_telegram(symbol)
+                    except Exception as exc:
+                        result_msg = f"❌ Erro no backtest: {exc}"
+                    self.send(result_msg, reply_markup=keyboard_markup())
+
                 else:
                     self.send(
                         "Comando não reconhecido. Use /help para ver os comandos disponíveis.",
@@ -330,6 +409,91 @@ class TelegramDesk:
             except Exception:
                 continue
         return executed
+
+
+def _format_backtest_result(symbol: str, r, total_bars: int) -> str:
+    """Formata o resultado do backtest para mensagem Telegram."""
+    m = r.metrics
+    tf = r.params.get("timeframe", "H1")
+
+    total  = int(m.get("total_trades", 0))
+    wins   = int(m.get("wins", 0))
+    losses = int(m.get("losses", 0))
+    wr     = float(m.get("winrate", 0))
+    pf     = float(m.get("profit_factor", 0))
+    dd     = float(m.get("max_drawdown_pct", 0))
+    sharpe = float(m.get("sharpe_ratio", 0))
+    pnl    = float(m.get("total_pnl", 0))
+    freq   = float(m.get("trade_frequency_per_week", 0))
+
+    def _icon(val, good, great):
+        if val >= great: return "🏆"
+        if val >= good:  return "✅"
+        return "⚠️"
+
+    period = f"~{total_bars//24}d" if tf == "H1" else f"{total_bars} barras"
+
+    from config import Config
+    lines = [
+        f"📊 <b>BACKTEST — {symbol} · {tf}</b>",
+        f"<b>Período:</b> {period} ({total_bars} candles)",
+        f"<b>Saldo inicial:</b> ${Config.INITIAL_BALANCE:,.2f}",
+        "—" * 20,
+        f"{'✅' if pnl > 0 else '❌'} <b>P&amp;L:</b> ${pnl:+,.2f}",
+        f"{_icon(wr, 45, 55)} <b>Win Rate:</b> {wr:.1f}%  ({wins}W / {losses}L / {total} trades)",
+        f"{_icon(pf, 1.5, 2.0)} <b>Profit Factor:</b> {pf:.2f}",
+        f"{'🏆' if dd < 10 else ('✅' if dd < 20 else '⚠️')} <b>Max Drawdown:</b> {dd:.1f}%",
+        f"{_icon(sharpe, 1.0, 2.0)} <b>Sharpe Ratio:</b> {sharpe:.2f}",
+        f"📅 <b>Trades/semana:</b> {freq:.1f}",
+        "—" * 20,
+    ]
+    if pf >= 1.5 and wr >= 45 and dd < 20:
+        lines.append("🏆 <b>Veredicto:</b> Estratégia SÓLIDA para este período.")
+    elif pf >= 1.2 and wr >= 40:
+        lines.append("✅ <b>Veredicto:</b> Estratégia ACEITÁVEL. Monitore o drawdown.")
+    else:
+        lines.append("⚠️ <b>Veredicto:</b> Resultado FRACO. Ajuste os parâmetros.")
+    return "\n".join(lines)
+
+
+def _run_backtest_telegram(symbol: str) -> str:
+    """Executa backtest usando os dados em cache e retorna mensagem formatada."""
+    from analysis import _cache, _cache_lock
+    from backtester import bars_from_dicts, run_backtest
+    from config import Config
+
+    with _cache_lock:
+        entry = _cache.get(symbol)
+
+    if entry is None:
+        return (
+            f"❌ <b>Sem dados em cache para {symbol}</b>\n"
+            "Aguarde o bot iniciar o feed ou verifique se o par está na lista monitorada.\n"
+            "Use /assets para ver os pares disponíveis.\n\n"
+            "💡 <b>Dica:</b> Para backtest com dados históricos longos, envie um arquivo <b>.csv</b> "
+            "diretamente neste chat (com a legenda sendo o par, ex: EURUSD)."
+        )
+
+    _, df = entry
+    if df is None or df.empty:
+        return f"❌ <b>DataFrame vazio para {symbol}.</b> Tente novamente em alguns minutos."
+
+    records = [
+        {"timestamp": ts, "open": float(row["Open"]), "high": float(row["High"]),
+         "low": float(row["Low"]), "close": float(row["Close"])}
+        for ts, row in df.iterrows()
+    ]
+    bars = bars_from_dicts(records)
+    if len(bars) < 60:
+        return (
+            f"⚠️ <b>Dados insuficientes para {symbol}</b>\n"
+            f"Apenas {len(bars)} candles em cache. Mínimo recomendado: 60.\n\n"
+            "💡 <b>Dica:</b> Envie um <b>.csv</b> com histórico longo diretamente neste chat."
+        )
+
+    r = run_backtest(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
+    return _format_backtest_result(symbol, r, len(bars)) + "\n\n<i>⚡ Dados: cache do feed (~800 candles H1 ≈ 33 dias)</i>"
+
 
 
 def format_startup(bot) -> str:
