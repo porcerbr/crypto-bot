@@ -332,9 +332,16 @@ def _score_combo(
     sharpe     = float(m.get("sharpe_ratio", 0) or 0)
     n_trades   = len(trades)
 
-    # Score composto: prioriza profit factor e drawdown controlado
-    if n_trades >= 10 and dd < 50:
-        score = pf * (wr / 100) * (1 - dd / 100) * min(sharpe, 3.0) if sharpe > 0 else pf * (wr / 100) * (1 - dd / 100)
+    # Score composto:
+    # - Exige PF > 1 e P&L positivo (configs com lucro negativo = score 0)
+    # - Exige RR >= 1 (TP >= SL), senão matematicamente inviável a longo prazo
+    # - Penaliza drawdown alto e premia Sharpe positivo
+    rr_ok      = atr_tp_mult >= atr_sl_mult          # TP deve ser >= SL
+    viable     = n_trades >= 10 and pf > 1.0 and pnl_total > 0 and dd < 40 and rr_ok
+    if viable:
+        # Componentes: PF (qualidade), WR (consistência), DD (risco), Sharpe (risco ajustado)
+        sharpe_bonus = min(max(sharpe, 0), 3.0)
+        score = (pf - 1.0) * (wr / 100) * (1 - dd / 100) * (1 + sharpe_bonus)
     else:
         score = 0.0
 
@@ -352,6 +359,7 @@ def _score_combo(
         "sharpe":            round(sharpe, 2),
         "pnl":               round(pnl_total, 2),
         "score":             round(score, 4),
+        "rr_ratio":          round(atr_tp_mult / atr_sl_mult, 2),
     }
 
 

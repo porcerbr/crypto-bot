@@ -511,8 +511,8 @@ def _format_optimize_result(symbol: str, top: list[dict], total_bars: int) -> st
         "—" * 20,
         f"📊 <b>Resultado da config #1:</b>",
         f"  Trades: {best['n_trades']}  |  WR: {best['win_rate']:.1f}%",
-        f"  PF: {best['profit_factor']:.2f}  |  DD: {best['max_drawdown']:.1f}%  |  Sharpe: {best['sharpe']:.2f}",
-        f"  P&amp;L: ${best['pnl']:+.2f}",
+        f"  PF: {best['profit_factor']:.2f}  |  RR: {best.get('rr_ratio', best['atr_tp_mult']/best['atr_sl_mult']):.1f}×  |  DD: {best['max_drawdown']:.1f}%",
+        f"  Sharpe: {best['sharpe']:.2f}  |  P&amp;L: ${best['pnl']:+.2f}",
         "—" * 20,
     ]
 
@@ -523,7 +523,7 @@ def _format_optimize_result(symbol: str, top: list[dict], total_bars: int) -> st
             pf_tag  = "✅" if r["profit_factor"]  >= 1.5 else "⚠️"
             lines.append(
                 f"  <b>#{i}</b>  Conf={r['min_confluence']} ADX={r['adx_min']:.0f} "
-                f"SL={r['atr_sl_mult']}× TP={r['atr_tp_mult']}× Risk={r['risk_pct']:.0f}%\n"
+                f"SL={r['atr_sl_mult']}× TP={r['atr_tp_mult']}× RR={r.get('rr_ratio', r['atr_tp_mult']/r['atr_sl_mult']):.1f}× Risk={r['risk_pct']:.0f}%\n"
                 f"       {wr_tag} WR {r['win_rate']:.0f}%  {pf_tag} PF {r['profit_factor']:.2f}  "
                 f"DD {r['max_drawdown']:.0f}%  P&amp;L ${r['pnl']:+.0f}"
             )
