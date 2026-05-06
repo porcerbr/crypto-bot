@@ -245,18 +245,34 @@ def load_bars_from_csv(path: str | Path) -> list[Bar]:
     # ── Detecção formato Investing.com (PT/ES) ──────────────────────────────
     # Cabeçalho em português: "Data,Preço,Abertura,Alta,Baixa,Var%"
     # Decimal com vírgula: "1,1792" → 1.1792 | Data: DD/MM/YYYY
-    investing_headers = {"data", "preco", "preço", "abertura", "alta", "baixa"}
-    first_lower = {c.strip().lower().replace("\u00e7", "c") for c in first_cols}
-    is_investing = len(investing_headers & first_lower) >= 3
+    investing_headers_pt = {"data", "preco", "preço", "abertura", "alta", "baixa"}
+    investing_headers_en = {"date", "price", "open", "high", "low"}
+    first_lower = {c.strip().lower().replace("\u00e7", "c").strip('"') for c in first_cols}
+    is_investing = (len(investing_headers_pt & first_lower) >= 3
+                    or len(investing_headers_en & first_lower) >= 4)
 
     if is_investing:
         def _fix_num(s: str) -> str:
-            """Converte número BR/ES (vírgula decimal) para float string."""
-            s = s.strip().replace("%", "").replace(" ", "")
-            # "1,1792" → "1.1792" | "1.179,20" → "1179.20"
-            if s.count(",") == 1 and s.count(".") == 0:
+            """Normaliza número para float string, suportando formatos PT/BR e EN."""
+            s = s.strip().strip('"').replace("%", "").replace(" ", "")
+            if not s:
+                return "0"
+            n_dot   = s.count(".")
+            n_comma = s.count(",")
+            # Já está em formato EN padrão: "1.1715" ou "1,234.56"
+            if n_dot >= 1 and n_comma == 0:
+                # ponto é decimal (ex: "1.1715") — não mexe
+                return s
+            # Formato PT/BR: vírgula decimal sem ponto  "1,1792"
+            if n_comma == 1 and n_dot == 0:
                 return s.replace(",", ".")
-            return s.replace(".", "").replace(",", ".")
+            # Formato PT/BR com milhar: "1.179,20"
+            if n_comma == 1 and n_dot >= 1:
+                return s.replace(".", "").replace(",", ".")
+            # Formato EN com milhar: "1,234.56"
+            if n_dot == 1 and n_comma >= 1:
+                return s.replace(",", "")
+            return s
 
         reader_inv = csv.DictReader(lines, dialect=dialect)
         col_map = {}  # mapeia header real → chave interna
@@ -266,6 +282,7 @@ def load_bars_from_csv(path: str | Path) -> list[Bar]:
             "abertura": "open", "open": "open",
             "alta": "high",  "high": "high", "máx": "high", "max": "high",
             "baixa": "low",  "low": "low",  "mín": "low",  "min": "low",
+            "vol.": None, "vol": None, "change %": None, "var%": None,  # ignora colunas irrelevantes
         }
         rows_inv: list[dict] = []
         for raw_row in reader_inv:
