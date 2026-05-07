@@ -430,6 +430,14 @@ def main():
     except Exception as e:
         log(f"[INIT] Falha no refresh inicial: {e}")
 
+    # 2b. Carrega dados COT (assíncrono — não bloqueia startup)
+    try:
+        from cot_filter import refresh_cot, is_cot_update_day
+        threading.Thread(target=refresh_cot, daemon=True, name="cot-init").start()
+        log("[COT] Download do relatório CFTC iniciado em background")
+    except Exception as e:
+        log(f"[COT] Falha ao iniciar download: {e}")
+
     # 3. Notificação de startup
     if STARTUP_NOTIFICATION:
         try:
@@ -448,6 +456,20 @@ def main():
     log("[SCHEDULER] Iniciando agendador de tarefas")
     schedule.every().week.do(_schedule_weekly_learning(bot))
     schedule.every(30).days.do(_schedule_monthly_analysis(bot))
+
+    # Atualiza dados COT toda sexta após 20:30 UTC (15:30 EST — hora do relatório CFTC)
+    def _refresh_cot_weekly():
+        try:
+            from cot_filter import refresh_cot, is_cot_update_day, format_cot_telegram
+            if is_cot_update_day():
+                log("[COT] Sexta-feira — baixando novo relatório CFTC...")
+                ok = refresh_cot(force=True)
+                if ok and getattr(bot, "telegram_desk", None):
+                    bot.telegram_desk.send(format_cot_telegram())
+        except Exception as e:
+            log(f"[COT] Erro na atualização semanal: {e}")
+
+    schedule.every().friday.at("20:35").do(_refresh_cot_weekly)
     
     scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name="scheduler")
     scheduler_thread.start()
