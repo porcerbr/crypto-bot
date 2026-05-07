@@ -470,20 +470,26 @@ class TelegramDesk:
                     self._pending_genetic_generations = generations
 
                     # Tenta buscar dados direto da API (sem precisar de CSV)
+                    universe = _genetic_universe(symbol)
                     self.send(
                         f"🧬 <b>OTIMIZADOR GENÉTICO — {esc(symbol)}</b>\n"
-                        f"Gerações: <b>{generations}</b> | Walk-forward: treino 70% / validação 30%\n\n"
+                        f"Gerações: <b>{generations}</b> | Walk-forward rolante | Universo: {', '.join(esc(s) for s in universe)}\n\n"
                         "⏳ Buscando dados históricos via API...",
                         reply_markup=keyboard_markup(),
                     )
-                    api_bars = _fetch_bars_for_optimization(symbol, n_bars=5000)
+                    datasets: dict[str, list] = {}
+                    for sym in universe:
+                        bars = _fetch_bars_for_optimization(sym, n_bars=5000)
+                        if bars and len(bars) >= 300:
+                            datasets[sym] = bars
 
-                    if api_bars and len(api_bars) >= 300:
+                    if datasets:
+                        total_bars = sum(len(v) for v in datasets.values())
                         # Dados suficientes via API — roda direto, sem precisar de CSV
                         self.send(
-                            f"✅ {len(api_bars)} candles carregados via API.\n"
+                            f"✅ {len(datasets)} par(es) carregado(s) via API — {total_bars} candles no total.\n"
                             f"🔄 Iniciando evolução com <b>{generations} gerações</b>...\n"
-                            f"⏳ Tempo estimado: {max(2, generations // 10)}–{max(5, generations // 5)} minutos.",
+                            f"⏳ Tempo estimado: {max(3, generations // 8)}–{max(6, generations // 3)} minutos.",
                             reply_markup=keyboard_markup(),
                         )
                         try:
@@ -492,7 +498,7 @@ class TelegramDesk:
                                 try:
                                     from genetic_optimizer import run_evolution, save_best_genome
                                     results = run_evolution(
-                                        api_bars,
+                                        datasets,
                                         symbol=symbol,
                                         balance=Config.INITIAL_BALANCE,
                                         generations=generations,
@@ -536,6 +542,30 @@ class TelegramDesk:
         return executed
 
 
+
+
+_GENETIC_PEER_UNIVERSE: dict[str, list[str]] = {
+    "EURUSD": ["GBPUSD", "USDJPY"],
+    "GBPUSD": ["EURUSD", "USDJPY"],
+    "USDJPY": ["EURUSD", "GBPUSD"],
+    "EURJPY": ["EURUSD", "GBPJPY"],
+    "GBPJPY": ["GBPUSD", "EURJPY"],
+    "AUDUSD": ["NZDUSD"],
+    "NZDUSD": ["AUDUSD"],
+    "USDCAD": ["USDCHF"],
+    "USDCHF": ["USDCAD"],
+    "XAUUSD": ["EURUSD", "USDJPY"],
+}
+
+
+def _genetic_universe(symbol: str) -> list[str]:
+    primary = symbol.upper()
+    peers = _GENETIC_PEER_UNIVERSE.get(primary, [])
+    out = [primary]
+    for peer in peers:
+        if peer not in out:
+            out.append(peer)
+    return out[:3]
 
 
 def _fetch_bars_for_optimization(symbol: str, n_bars: int = 5000) -> list:
