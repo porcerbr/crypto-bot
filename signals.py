@@ -79,10 +79,6 @@ def _market_regime(res: dict, mtf: dict | None = None) -> str:
 def _setup_for_regime(regime: str, direction: str) -> str:
     if regime == "trend":
         return "pullback"
-    if regime == "range":
-        return "reversal"
-    if regime == "transition":
-        return "breakout"
     return "wait"
 
 
@@ -110,34 +106,36 @@ def calc_confluence(res, direction, mtf=None):
 
     if regime in ("trend", "transition", "neutral"):
         # ── Indicadores essenciais apenas (EMA200, ADX, RSI, MACD + SMC + MTF) ──
+        daily_bull = str(daily_bias).upper() in {"ALTA", "BUY", "BULL", "BULLISH"}
+        daily_bear = str(daily_bias).upper() in {"BAIXA", "SELL", "BEAR", "BEARISH"}
         if direction == "BUY":
-            add("Preço > EMA200",   price > res["ema200"],                                      Config.CONFLUENCE_WEIGHTS.get("ema200", 2))
-            add("ADX forte",        res["adx"] >= Config.REGIME_ADX_TRENDING,                   Config.CONFLUENCE_WEIGHTS.get("adx", 2))
-            add("RSI favorável",    40 < res["rsi"] < 68,                                       Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
-            add("MACD bullish",     res["macd_bull"],                                            Config.CONFLUENCE_WEIGHTS.get("macd", 1))
-            add("FVG ativo",        any(f.get("active") for f in fvg.get("bullish", [])),        Config.CONFLUENCE_WEIGHTS.get("fvg", 3))
-            add("OB ativo",         any(o.get("active") for o in ob.get("bullish", [])),         Config.CONFLUENCE_WEIGHTS.get("ob", 3))
-            add("Sweep de liquidez",sweep.get("bullish", False),                                 Config.CONFLUENCE_WEIGHTS.get("sweep", 2))
-            add("H4 alinhado",      aligned,                                                     Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 2))
+            add("Preço > EMA200",   price > res["ema200"],                                      Config.CONFLUENCE_WEIGHTS.get("ema200", 3))
+            add("ADX forte",        res["adx"] >= Config.REGIME_ADX_TRENDING,                   Config.CONFLUENCE_WEIGHTS.get("adx", 3))
+            add("RSI favorável",    42 < res["rsi"] < 70,                                       Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
+            add("MACD bullish",     res["macd_bull"],                                            Config.CONFLUENCE_WEIGHTS.get("macd", 2))
+            add("FVG ativo",        any(f.get("active") for f in fvg.get("bullish", [])),        Config.CONFLUENCE_WEIGHTS.get("fvg", 1))
+            add("OB ativo",         any(o.get("active") for o in ob.get("bullish", [])),         Config.CONFLUENCE_WEIGHTS.get("ob", 1))
+            add("Sweep de liquidez",sweep.get("bullish", False),                                 Config.CONFLUENCE_WEIGHTS.get("sweep", 1))
+            add("H4 alinhado",      aligned and daily_bull,                                      Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 3))
         else:
-            add("Preço < EMA200",   price < res["ema200"],                                      Config.CONFLUENCE_WEIGHTS.get("ema200", 2))
-            add("ADX forte",        res["adx"] >= Config.REGIME_ADX_TRENDING,                   Config.CONFLUENCE_WEIGHTS.get("adx", 2))
-            add("RSI favorável",    32 < res["rsi"] < 60,                                       Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
-            add("MACD bearish",     res["macd_bear"],                                            Config.CONFLUENCE_WEIGHTS.get("macd", 1))
-            add("FVG ativo",        any(f.get("active") for f in fvg.get("bearish", [])),        Config.CONFLUENCE_WEIGHTS.get("fvg", 3))
-            add("OB ativo",         any(o.get("active") for o in ob.get("bearish", [])),         Config.CONFLUENCE_WEIGHTS.get("ob", 3))
-            add("Sweep de liquidez",sweep.get("bearish", False),                                 Config.CONFLUENCE_WEIGHTS.get("sweep", 2))
-            add("H4 alinhado",      aligned,                                                     Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 2))
+            add("Preço < EMA200",   price < res["ema200"],                                      Config.CONFLUENCE_WEIGHTS.get("ema200", 3))
+            add("ADX forte",        res["adx"] >= Config.REGIME_ADX_TRENDING,                   Config.CONFLUENCE_WEIGHTS.get("adx", 3))
+            add("RSI favorável",    30 < res["rsi"] < 58,                                       Config.CONFLUENCE_WEIGHTS.get("rsi", 1))
+            add("MACD bearish",     res["macd_bear"],                                            Config.CONFLUENCE_WEIGHTS.get("macd", 2))
+            add("FVG ativo",        any(f.get("active") for f in fvg.get("bearish", [])),        Config.CONFLUENCE_WEIGHTS.get("fvg", 1))
+            add("OB ativo",         any(o.get("active") for o in ob.get("bearish", [])),         Config.CONFLUENCE_WEIGHTS.get("ob", 1))
+            add("Sweep de liquidez",sweep.get("bearish", False),                                 Config.CONFLUENCE_WEIGHTS.get("sweep", 1))
+            add("H4 alinhado",      aligned and daily_bear,                                      Config.CONFLUENCE_WEIGHTS.get("mtf_aligned", 3))
 
-    elif regime == "range":
-        # ── Regime de range: RSI extremo + SMC + H4 neutro ──────────────────────
+    elif regime == "range" and getattr(Config, "ALLOW_RANGE_REVERSALS", False):
+        # Range só é habilitado explicitamente.
         if direction == "BUY":
-            add("RSI sobrevenda",    res["rsi"] <= 40,                                                                                                    2)
+            add("RSI sobrevenda",    res["rsi"] <= 35,                                                                                                    2)
             add("ADX fraco/range",   res["adx"] <= Config.REGIME_ADX_RANGING,                                                                             1)
             add("Sweep de fundo",    sweep.get("bullish", False),                                                                                          3)
             add("FVG/OB de reversão",any(f.get("active") for f in fvg.get("bullish", [])) or any(o.get("active") for o in ob.get("bullish", [])),          3)
         else:
-            add("RSI sobrecompra",   res["rsi"] >= 60,                                                                                                    2)
+            add("RSI sobrecompra",   res["rsi"] >= 65,                                                                                                    2)
             add("ADX fraco/range",   res["adx"] <= Config.REGIME_ADX_RANGING,                                                                             1)
             add("Sweep de topo",     sweep.get("bearish", False),                                                                                          3)
             add("FVG/OB de reversão",any(f.get("active") for f in fvg.get("bearish", [])) or any(o.get("active") for o in ob.get("bearish", [])),          3)
@@ -146,8 +144,8 @@ def calc_confluence(res, direction, mtf=None):
     score = sum(weight for _, ok, weight in weighted if ok)
     total = sum(weight for _, _, weight in weighted)
 
-    min_score = Config.REGIME_MIN_CONFLUENCE.get(regime, Config.MIN_CONFLUENCE)
-    if setup_type in ("pullback", "reversal"):
+    min_score = max(Config.MIN_CONFLUENCE_WEIGHTED, Config.REGIME_MIN_CONFLUENCE.get(regime, Config.MIN_CONFLUENCE))
+    if setup_type == "pullback":
         min_score = max(1, min_score - 1)
     if regime == "trend" and aligned:
         min_score = max(1, min_score - Config.PREMIUM_SETUP_BONUS)

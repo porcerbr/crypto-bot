@@ -97,6 +97,7 @@ class Config:
     MAX_CORRELATED_SIGNALS_PER_GROUP = 2
     PAIR_PERFORMANCE_LOOKBACK = 12
     MIN_RECENT_PAIR_WR = 0.40
+    ALLOW_RANGE_REVERSALS = False  # foco em trend-following robusto
     MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
     USE_COT_FILTER     = True    # filtra sinais contra o posicionamento institucional (CFTC/COT)
     SIGNAL_COOLDOWN_SECONDS = 1800
@@ -165,19 +166,19 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     CONFLUENCE_WEIGHTS = {
         # ── Base técnica (indicadores principais) ──────────────────
-        "ema200":          2,  # preço > EMA200 — define o lado do mercado
-        "adx":             2,  # ADX > 25 — confirma força da tendência
+        "ema200":          3,  # preço > EMA200 — define o lado do mercado
+        "adx":             3,  # ADX > 25 — confirma força da tendência
         "rsi":             1,  # RSI — momentum / zona de preço favorável
-        "macd":            1,  # MACD — confirmação direcional
+        "macd":            2,  # MACD — confirmação direcional
         # ── SMC — estrutura de mercado institucional ────────────────
         "fvg":             3,  # Fair Value Gap ativo na direção
         "ob":              3,  # Order Block ativo na direção
         "sweep":           2,  # Liquidity Sweep confirmado
         # ── Multi-timeframe (H4) ───────────────────────────────────
-        "mtf_aligned":     2,  # H4 alinhado com H1
+        "mtf_aligned":     3,  # H4 alinhado com H1
     }
-    CONFLUENCE_MAX_SCORE = 16  # soma dos pesos acima
-    MIN_CONFLUENCE_WEIGHTED = 8  # score mínimo para gerar sinal (~50% do total)
+    CONFLUENCE_MAX_SCORE = 15  # soma dos pesos acima
+    MIN_CONFLUENCE_WEIGHTED = 10  # score mínimo para gerar sinal (~66% do total)
 
     # Legado — mantido para compatibilidade
     MIN_CONFLUENCE = 5

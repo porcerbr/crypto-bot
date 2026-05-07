@@ -63,28 +63,28 @@ def _is_h1_mode() -> bool:
 
 
 if _is_m15_mode():
-    # M15: focado em qualidade, não volume
+    # M15: mais frequente, SL/TP mais curtos, mais trades por semana
     RANGES["MIN_CONFLUENCE"] = (4, 7)
     RANGES["ADX_MIN"]        = (16, 28)
-    RANGES["ATR_MULT_SL"]    = (0.9, 1.9)
-    RANGES["ATR_MULT_TP"]    = (1.0, 2.8)
-    RANGES["PULL_MIN"]       = (-1.8, -0.4)
-    RANGES["PULL_MAX"]       = (0.6, 2.2)
-    RANGES["RISK_PCT"]       = (0.5, 1.6)
-    RANGES["WEEKLY_TARGET"]  = (4.0, 18.0)
-    RANGES["MIN_RR"]         = (1.0, 2.2)
+    RANGES["ATR_MULT_SL"]    = (0.8, 1.6)
+    RANGES["ATR_MULT_TP"]    = (1.6, 3.0)
+    RANGES["PULL_MIN"]       = (-2.0, -0.2)
+    RANGES["PULL_MAX"]       = (0.4, 2.5)
+    RANGES["RISK_PCT"]       = (0.3, 1.25)
+    RANGES["WEEKLY_TARGET"]  = (5.0, 18.0)   # M15: busca qualidade sem overtrade
+    RANGES["MIN_RR"]         = (1.2, 2.2)
     RANGES["WARMUP_BARS"]    = (80, 220)
-    RANGES["MAX_BARS_IN_TRADE"] = (6, 24)    # M15: menos tempo exposto
+    RANGES["MAX_BARS_IN_TRADE"] = (6, 40)    # M15: dá tempo ao movimento sem abrir demais
 elif _is_h1_mode():
-    RANGES["MIN_CONFLUENCE"] = (4, 8)
-    RANGES["ADX_MIN"]        = (18, 34)
-    RANGES["ATR_MULT_SL"]    = (1.0, 2.0)
-    RANGES["ATR_MULT_TP"]    = (2.0, 4.5)
-    RANGES["RISK_PCT"]       = (0.5, 1.8)
-    RANGES["WEEKLY_TARGET"]  = (1.5, 4.0)
-    RANGES["MIN_RR"]         = (1.5, 3.5)
-    RANGES["WARMUP_BARS"]    = (60, 180)
-    RANGES["MAX_BARS_IN_TRADE"] = (16, 72)
+    RANGES["MIN_CONFLUENCE"] = (5, 8)
+    RANGES["ADX_MIN"]        = (20, 34)
+    RANGES["ATR_MULT_SL"]    = (1.0, 1.8)
+    RANGES["ATR_MULT_TP"]    = (1.8, 3.6)
+    RANGES["RISK_PCT"]       = (0.3, 1.0)
+    RANGES["WEEKLY_TARGET"]  = (1.5, 3.5)
+    RANGES["MIN_RR"]         = (1.4, 2.8)
+    RANGES["WARMUP_BARS"]    = (80, 220)
+    RANGES["MAX_BARS_IN_TRADE"] = (18, 96)
 
 
 # Pares correlacionados usados na validação multi-pair (quando disponíveis via API).
@@ -107,8 +107,8 @@ MUTATION_RATE      = 0.22
 TOURNAMENT_SIZE    = 4
 # FIX #3: MIN_TRADES reduzido — 24 era muito agressivo para folds walk-forward menores
 # M15 gera muito mais trades por janela — MIN_TRADES maior é razoável
-MIN_TRADES         = 30 if _is_m15_mode() else (12 if _is_h1_mode() else 10)
-TARGET_TRADES_WEEK = 12.0 if _is_m15_mode() else (2.5 if _is_h1_mode() else 3.0)
+MIN_TRADES         = 24 if _is_m15_mode() else (12 if _is_h1_mode() else 10)
+TARGET_TRADES_WEEK = 8.0 if _is_m15_mode() else (2.5 if _is_h1_mode() else 3.0)
 MAX_WALK_FORWARD_FOLDS = 3
 
 Genome = dict[str, Any]
@@ -224,7 +224,7 @@ def _run_segment(
 def _metric_score(metrics: dict, target_trades_week: float) -> float:
     total = int(metrics.get("total_trades", 0) or 0)
     if total <= 0:
-        return -1.5
+        return -1.0
 
     pf  = _safe_float(metrics.get("profit_factor", 0.0), 0.0)
     wr  = _safe_float(metrics.get("winrate", 0.0), 0.0) / 100.0
@@ -234,38 +234,39 @@ def _metric_score(metrics: dict, target_trades_week: float) -> float:
     initial_balance = max(1.0, _safe_float(metrics.get("initial_balance", Config.INITIAL_BALANCE), Config.INITIAL_BALANCE))
     freq = _safe_float(metrics.get("trade_frequency_per_week", 0.0), 0.0)
 
-    pf_score   = max(0.0, min(1.0, (pf - 0.85) / 1.65))
-    wr_score   = max(0.0, min(1.0, (wr - 0.35) / 0.25))
-    dd_score   = max(0.0, 1.0 - min(dd, 0.30) / 0.30)
-    pnl_score  = max(-1.0, min(1.0, pnl / (initial_balance * 0.20)))
-    exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.008)))
+    pf_score   = min(max(pf, 0.0), 3.0) / 3.0
+    dd_score   = max(0.0, 1.0 - min(dd, 0.35) / 0.35)
+    pnl_score  = max(-1.0, min(1.0, pnl / (initial_balance * 0.25)))
+    exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.01)))
     freq_score = max(0.0, 1.0 - abs(freq - target_trades_week) / max(1.0, target_trades_week))
 
-    monthly_return_target = 0.25
-    monthly_days = 21.0
-    freq_day = freq / 5.0 if freq > 0 else 0.0
+    # Calcula retorno mensal estimado (normalizado a 0-1)
+    # Alvo: 20-30% ao mês com saldo de $1000 = $200-300
+    monthly_return_target = 0.25  # 25% = ponto ideal
+    monthly_days = 21.0           # dias úteis de trading
+    freq_day = freq / 5.0 if freq > 0 else 0.0   # trades/dia
     exp_pct_per_trade = exp / max(1.0, initial_balance) if exp > 0 else 0.0
     est_monthly_return = freq_day * monthly_days * exp_pct_per_trade
     monthly_score = max(0.0, min(1.0, est_monthly_return / monthly_return_target))
 
     return (
-        0.30 * pf_score +
-        0.28 * wr_score +
-        0.16 * dd_score +
-        0.10 * freq_score +
-        0.06 * monthly_score +
-        0.05 * (exp_score + 1) / 2 +
-        0.05 * (pnl_score + 1) / 2
+        0.22 * pf_score +
+        0.15 * wr +
+        0.15 * dd_score +
+        0.18 * freq_score +        # frequência tem peso maior agora
+        0.15 * monthly_score +     # retorno mensal estimado
+        0.08 * (exp_score + 1) / 2 +
+        0.07 * (pnl_score + 1) / 2
     )
 
 
 def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     train_trades = int(train_metrics.get("total_trades", 0) or 0)
     test_trades  = int(test_metrics.get("total_trades", 0) or 0)
-    min_test     = max(8, MIN_TRADES // 2)
+    min_test     = max(10, MIN_TRADES // 2)
 
     if train_trades < MIN_TRADES or test_trades < min_test:
-        return -5.0
+        return -8.0
 
     target_week = float(genome.get("WEEKLY_TARGET", TARGET_TRADES_WEEK) or TARGET_TRADES_WEEK)
     train_score = _metric_score(train_metrics, target_week)
@@ -275,39 +276,53 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     test_pf  = _safe_float(test_metrics.get("profit_factor", 0.0), 0.0)
     train_dd = _safe_float(train_metrics.get("max_drawdown_pct", 100.0), 100.0)
     test_dd  = _safe_float(test_metrics.get("max_drawdown_pct", 100.0), 100.0)
-    train_wr = _safe_float(train_metrics.get("winrate", 0.0), 0.0) / 100.0
-    test_wr  = _safe_float(test_metrics.get("winrate", 0.0), 0.0) / 100.0
+    train_wr = _safe_float(train_metrics.get("winrate", 0.0), 0.0)
+    test_wr  = _safe_float(test_metrics.get("winrate", 0.0), 0.0)
+    train_sh = _safe_float(train_metrics.get("sharpe_ratio", 0.0), 0.0)
+    test_sh  = _safe_float(test_metrics.get("sharpe_ratio", 0.0), 0.0)
+    train_exp = _safe_float(train_metrics.get("expectancy", 0.0), 0.0)
+    test_exp  = _safe_float(test_metrics.get("expectancy", 0.0), 0.0)
 
-    # Penaliza forte estratégias perdedoras ou com WR baixo
-    penalties = 0.0
-    if train_pf < 1.0:
-        penalties += (1.0 - train_pf) * 1.1
-    if test_pf < 1.0:
-        penalties += (1.0 - test_pf) * 1.4
-    if train_wr < 0.40:
-        penalties += (0.40 - train_wr) * 1.0
-    if test_wr < 0.40:
-        penalties += (0.40 - test_wr) * 1.5
+    # Estratégia perdedora é descartada cedo.
+    if train_pf < 1.0 or test_pf < 1.0:
+        return -6.0 - abs(min(train_pf, test_pf) - 1.0)
+    if train_wr < 35 or test_wr < 35:
+        return -5.0 - (35 - min(train_wr, test_wr)) / 10.0
+    if train_exp <= 0 or test_exp <= 0:
+        return -4.0
 
-    dd_limit = 15.0 if _is_m15_mode() else (20.0 if _is_h1_mode() else 28.0)
+    dd_limit = 14.0 if _is_m15_mode() else (18.0 if _is_h1_mode() else 24.0)
+    dd_penalty = 0.0
     if max(train_dd, test_dd) > dd_limit:
-        penalties += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.7
+        dd_penalty += min(1.5, (max(train_dd, test_dd) - dd_limit) / dd_limit)
 
-    robustness     = 1.0 - min(1.0, abs(train_score - test_score))
-    pf_gap_penalty = min(1.0, abs(train_pf - test_pf) / 2.0)
-    dd_penalty     = min(1.0, max(train_dd, test_dd) / 30.0)
-    trade_balance  = min(1.0, test_trades / max(1.0, train_trades))
+    sh_penalty = 0.0
+    if train_sh < 0 or test_sh < 0:
+        sh_penalty += 0.5 + abs(min(train_sh, test_sh)) * 0.1
+
+    robustness = 1.0 - min(1.0, abs(train_score - test_score))
+    pf_gap = min(1.0, abs(train_pf - test_pf) / 2.0)
+    wr_gap = min(1.0, abs(train_wr - test_wr) / 30.0)
+    trade_balance = min(1.0, test_trades / max(1.0, train_trades))
 
     raw = (
-        0.58 * test_score +
+        0.30 * test_score +
         0.18 * train_score +
-        0.12 * robustness +
-        0.05 * (1.0 - pf_gap_penalty) +
-        0.03 * trade_balance -
-        0.04 * dd_penalty
+        0.15 * robustness +
+        0.12 * (1.0 - pf_gap) +
+        0.08 * (1.0 - wr_gap) +
+        0.10 * trade_balance +
+        0.07 * max(0.0, min(1.0, test_sh / 3.0))
     )
-    return raw - penalties
+    raw -= (0.10 * dd_penalty) + (0.08 * sh_penalty)
 
+    # Bônus para tração com frequência adequada, mas sem overtrade.
+    freq = _safe_float(test_metrics.get("trade_frequency_per_week", 0.0), 0.0)
+    freq_target = max(1.0, target_week)
+    freq_score = max(0.0, 1.0 - abs(freq - freq_target) / freq_target)
+    raw += 0.05 * freq_score
+
+    return raw - 0.25
 
 # ─── Avaliação de um genoma em walk-forward (serial, sem global state) ─────────
 # FIX #1 + #2: Removido ProcessPoolExecutor e global _GENETIC_WORKER_CTX.
