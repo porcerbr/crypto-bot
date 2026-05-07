@@ -22,7 +22,6 @@ from backtester import load_bars_from_csv, run_backtest, build_indicator_cache, 
 from config import Config
 from utils import log, save_strategy_settings
 
-
 GENOME_KEYS = [
     "MIN_CONFLUENCE",
     "ADX_MIN",
@@ -51,6 +50,23 @@ RANGES: dict[str, tuple[float, float]] = {
     "MAX_BARS_IN_TRADE": (8, 120),
 }
 
+def _is_h1_mode() -> bool:
+    tf = str(getattr(Config, "TIMEFRAME", "H1")).strip().lower()
+    return tf in {"h1", "1h", "60m", "60"}
+
+
+if _is_h1_mode():
+    RANGES["MIN_CONFLUENCE"] = (4, 8)
+    RANGES["ADX_MIN"] = (18, 34)
+    RANGES["ATR_MULT_SL"] = (1.0, 2.0)
+    RANGES["ATR_MULT_TP"] = (2.0, 4.5)
+    RANGES["RISK_PCT"] = (0.5, 1.8)
+    RANGES["WEEKLY_TARGET"] = (1.5, 4.0)
+    RANGES["MIN_RR"] = (1.5, 3.5)
+    RANGES["WARMUP_BARS"] = (60, 180)
+    RANGES["MAX_BARS_IN_TRADE"] = (16, 72)
+
+
 # Universo padrão para robustez multi-pair quando houver dados via API.
 SYMBOL_PEERS: dict[str, list[str]] = {
     "EURUSD": ["GBPUSD", "USDJPY"],
@@ -69,8 +85,8 @@ POPULATION_SIZE = 16
 ELITE_COUNT = 4
 MUTATION_RATE = 0.22
 TOURNAMENT_SIZE = 4
-MIN_TRADES = 16
-TARGET_TRADES_WEEK = 3.0
+MIN_TRADES = 24 if _is_h1_mode() else 16
+TARGET_TRADES_WEEK = 2.5 if _is_h1_mode() else 3.0
 MAX_WALK_FORWARD_FOLDS = 3
 
 Genome = dict[str, Any]
@@ -265,7 +281,8 @@ def _metric_score(metrics: dict, target_trades_week: float) -> float:
 def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     train_trades = int(train_metrics.get("total_trades", 0) or 0)
     test_trades = int(test_metrics.get("total_trades", 0) or 0)
-    if train_trades < MIN_TRADES or test_trades < max(8, MIN_TRADES // 2):
+    min_test_trades = max(12, MIN_TRADES // 2)
+    if train_trades < MIN_TRADES or test_trades < min_test_trades:
         return -5.0
 
     target_week = float(genome.get("WEEKLY_TARGET", TARGET_TRADES_WEEK) or TARGET_TRADES_WEEK)
@@ -277,15 +294,22 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     train_dd = _safe_float(train_metrics.get("max_drawdown_pct", 100.0), 100.0)
     test_dd = _safe_float(test_metrics.get("max_drawdown_pct", 100.0), 100.0)
 
+    if train_pf < 1.0 or test_pf < 0.95:
+        return -4.5
+    if max(train_dd, test_dd) > (18.0 if _is_h1_mode() else 25.0):
+        return -4.0
+
     robustness = 1.0 - min(1.0, abs(train_score - test_score))
     pf_gap_penalty = min(1.0, abs(train_pf - test_pf) / 2.0)
-    dd_penalty = min(1.0, max(train_dd, test_dd) / 35.0)
+    dd_penalty = min(1.0, max(train_dd, test_dd) / 30.0)
+    trade_balance = min(1.0, test_trades / max(1.0, train_trades))
 
     return (
-        0.58 * test_score +
-        0.22 * train_score +
+        0.52 * test_score +
+        0.20 * train_score +
         0.12 * robustness +
-        0.08 * (1.0 - pf_gap_penalty) -
+        0.08 * (1.0 - pf_gap_penalty) +
+        0.04 * trade_balance -
         0.10 * dd_penalty
     )
 
@@ -428,7 +452,7 @@ def run_evolution(
             else:
                 avg_fitness = sum(symbol_scores) / len(symbol_scores)
                 # Penaliza genomas que só funcionam num único par ou que geram poucos trades no universo.
-                universe_penalty = min(0.45, symbol_trade_penalty / max(1, len(symbol_scores)))
+                universe_penalty = min(0.55, symbol_trade_penalty / max(1, len(symbol_scores)))
                 f = avg_fitness - universe_penalty
                 train_m = primary_train or {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
                 test_m = primary_test or train_m.copy()

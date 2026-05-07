@@ -491,6 +491,8 @@ def _signal(
     adx_min: float | None = None,
     pull_range: tuple[float, float] | None = None,
     weekly_trade_target: float = 3.0,
+    h4_bias: str | None = None,
+    require_h4_alignment: bool = False,
 ) -> str | None:
     adx_min = float(adx_min if adx_min is not None else (15 if tf == "W1" else 18))
     pull_range = pull_range or ((-1.5, 2.5) if tf == "W1" else (-1.0, 2.0))
@@ -508,6 +510,13 @@ def _signal(
             return pull_range[0] <= d21 <= pull_range[1]
         return -pull_range[1] <= d21 <= -pull_range[0]
 
+    def h4_ok(direction: str) -> bool:
+        if not require_h4_alignment:
+            return True
+        if not h4_bias or h4_bias == "NEUTRO":
+            return True
+        return str(h4_bias).upper() == direction
+
     # Trend-following: pullback + momentum trigger
     if regime in ("trend", "transition"):
         if res["trend_up"]:
@@ -521,7 +530,7 @@ def _signal(
                 res["rsi"] >= 40,
                 res["rsi"] <= 70,
             )
-            if score >= min_confluence and pull_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
+            if score >= min_confluence and pull_ok("BUY") and h4_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
                 return "BUY"
 
         if res["trend_dn"]:
@@ -535,7 +544,7 @@ def _signal(
                 res["rsi"] <= 60,
                 res["rsi"] >= 30,
             )
-            if score >= min_confluence and pull_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
+            if score >= min_confluence and pull_ok("SELL") and h4_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
                 return "SELL"
 
     # Mean reversion in ranges: use extremes + reversals
@@ -548,7 +557,7 @@ def _signal(
             res["rsi_bounce_up"],
             res["macd_cross_up"],
         )
-        if buy_score >= max(3, min_confluence - 1):
+        if buy_score >= max(3, min_confluence - 1) and h4_ok("BUY"):
             return "BUY"
 
         sell_score = count(
@@ -559,14 +568,14 @@ def _signal(
             res["rsi_bounce_dn"],
             res["macd_cross_down"],
         )
-        if sell_score >= max(3, min_confluence - 1):
+        if sell_score >= max(3, min_confluence - 1) and h4_ok("SELL"):
             return "SELL"
 
     # Light frequency relief: if target trades/week is high, accept slightly weaker transitions
     if weekly_trade_target >= 3.0 and regime == "transition":
-        if res["trend_up"] and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
+        if res["trend_up"] and h4_ok("BUY") and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
             return "BUY"
-        if res["trend_dn"] and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
+        if res["trend_dn"] and h4_ok("SELL") and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
             return "SELL"
 
     return None
@@ -593,6 +602,50 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | N
         window = max(0, i - lookback)
         cache[i] = _indicators(df_full.iloc[window : i + 1])
     return cache
+
+
+def _build_h4_bias_map(bars: list[Bar]) -> list[str | None]:
+    """Mapeia cada candle H1 para o viés do H4 mais recente já fechado."""
+    if not bars or len(bars) < 200:
+        return [None] * len(bars)
+
+    df_full = bars_to_dataframe(bars)
+    h4_df = df_full.resample("4h", label="right", closed="right").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+    }).dropna()
+
+    if len(h4_df) < 20:
+        return [None] * len(bars)
+
+    h4_bars: list[Bar] = []
+    for ts, row in h4_df.iterrows():
+        h4_bars.append(Bar(
+            timestamp=ts.to_pydatetime(),
+            open=float(row["Open"]),
+            high=float(row["High"]),
+            low=float(row["Low"]),
+            close=float(row["Close"]),
+        ))
+
+    h4_cache = build_indicator_cache(h4_bars, lookback=260)
+    h4_rows: list[dict] = []
+    for bar, res in zip(h4_bars, h4_cache):
+        bias = "NEUTRO"
+        if res:
+            adx_min = getattr(Config, "REGIME_ADX_TRENDING", 25) - 2
+            if res.get("trend_up") and float(res.get("adx", 0) or 0) >= adx_min:
+                bias = "BUY"
+            elif res.get("trend_dn") and float(res.get("adx", 0) or 0) >= adx_min:
+                bias = "SELL"
+        h4_rows.append({"timestamp": bar.timestamp, "h4_bias": bias})
+
+    orig = pd.DataFrame({"timestamp": [b.timestamp for b in bars]})
+    bias_df = pd.DataFrame(h4_rows).sort_values("timestamp")
+    merged = pd.merge_asof(orig.sort_values("timestamp"), bias_df, on="timestamp", direction="backward")
+    return [None if pd.isna(v) else str(v) for v in merged["h4_bias"].tolist()]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -629,12 +682,14 @@ def run_backtest(
 
     if indicator_cache is None:
         indicator_cache = build_indicator_cache(bars)
+    h4_bias_map = _build_h4_bias_map(bars) if tf == "H1" else [None] * len(bars)
     trades: list[dict] = []
     active: dict | None = None
     cooldown = 0
 
     for i in range(wb, len(bars)):
         bar = bars[i]
+        h4_bias = h4_bias_map[i] if i < len(h4_bias_map) else None
 
         if active is not None:
             t = active
@@ -715,6 +770,8 @@ def run_backtest(
             adx_min=adx_min,
             pull_range=pull_range,
             weekly_trade_target=weekly_trade_target,
+            h4_bias=h4_bias,
+            require_h4_alignment=(tf == "H1"),
         )
         if not direction:
             continue
