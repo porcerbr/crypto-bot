@@ -98,14 +98,17 @@ def resample_to_h1(bars: list[Bar]) -> list[Bar]:
     return result
 
 def prepare_bars_for_backtest(bars: list[Bar]) -> list[Bar]:
-    """Normaliza o histórico para o timeframe efetivamente usado no backtest."""
+    """
+    Normaliza o histórico para o timeframe efetivamente usado no backtest.
+    M15 agora é suportado nativamente — NÃO é mais reamostrado para H1.
+    Apenas M1 e M5 (sub-minuto) são reamostrados para H1.
+    """
     if not bars:
         return bars
-
     raw_tf = detect_timeframe(bars)
-    if raw_tf in ('M1', 'M5', 'M15'):
+    if raw_tf in ('M1', 'M5'):   # só TFs muito curtos são reamostrados
         return resample_to_h1(bars)
-    return bars
+    return bars  # M15, H1, H4, D1 ficam como estão
 
 
 
@@ -362,8 +365,23 @@ def bars_to_dataframe(bars: list[Bar]) -> pd.DataFrame:
 # Session / costs
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _in_session(bar: Bar, symbol: str) -> bool:
+def _in_session(bar: Bar, symbol: str, tf: str = "H1") -> bool:
+    """
+    Filtra horários de baixa liquidez.
+    M15: janela mais ampla (6h–22h UTC) — mais sessões cobertas.
+    H1: janela mais restrita — só durante pico de liquidez.
+    """
     h = bar.timestamp.hour
+    if tf in ("M15", "M5", "M1"):
+        # M15 — cobre Londres + Nova York + Asia/Pacific parcial
+        if symbol == "XAUUSD":
+            return 6 <= h < 21
+        if is_jpy_pair(symbol):
+            return h < 10 or h >= 22   # Tóquio + Londres abertura
+        if "AUD" in symbol or "NZD" in symbol:
+            return h < 10 or h >= 21
+        return 6 <= h < 22             # EUR/USD, GBP/USD: Lisboa → NY fechamento
+    # H1 — janela restrita (pico de liquidez)
     if symbol == "XAUUSD":
         return 7 <= h < 20
     if is_jpy_pair(symbol):
@@ -581,6 +599,89 @@ def _signal(
     return None
 
 
+def _signal_m15(
+    res: dict,
+    min_confluence: int = 4,
+    adx_min: float = 16.0,
+    pull_range: tuple[float, float] | None = None,
+    weekly_trade_target: float = 8.0,
+) -> str | None:
+    """
+    Lógica de sinal para M15.
+
+    Mais frequente que H1: usa EMA9/EMA21 crosses como trigger primário,
+    sem requerer H4 nem EMA200 (muito lento para M15).
+    Meta realista: 5-15 trades/dia por par, WR 45-55%, R:R 1.8-2.5.
+    Isso é suficiente para 20-30% ao mês com risco de 1% por trade.
+    """
+    pull_range = pull_range or (-1.8, 2.8)
+    min_confluence = max(2, min(7, int(min_confluence or 4)))
+    adx_min = float(adx_min or 16.0)
+
+    price = res["price"]
+    d21   = res["dist_e21"]
+
+    def count(*conds: bool) -> int:
+        return sum(1 for c in conds if c)
+
+    def pull_ok(direction: str) -> bool:
+        lo, hi = pull_range
+        if direction == "BUY":
+            return lo <= d21 <= hi
+        return -hi <= d21 <= -lo
+
+    # ── BUY ──────────────────────────────────────────────────────────────────
+    has_buy_trigger = (
+        res.get("macd_cross_up", False) or
+        res.get("ema9_cross_up", False) or
+        res.get("rsi_bounce_up", False)
+    )
+    buy_score = count(
+        res.get("above_ema50", False),          # preço acima da tendência média
+        res.get("ema9_above_ema21", False),      # momentum curto a favor
+        has_buy_trigger,                         # trigger: cruzamento ou reversão RSI
+        res.get("rsi", 50) >= 38,               # RSI não excessivamente sobrevendido
+        res.get("rsi", 50) <= 72,               # RSI não sobrecomprado
+        res.get("adx", 0) >= adx_min,           # força de tendência mínima
+        res.get("candle_bull", False),           # vela de confirmação
+        pull_ok("BUY"),                          # zona de pullback aceitável
+    )
+    if buy_score >= min_confluence and has_buy_trigger:
+        return "BUY"
+
+    # ── SELL ─────────────────────────────────────────────────────────────────
+    has_sell_trigger = (
+        res.get("macd_cross_down", False) or
+        res.get("ema9_cross_dn", False) or
+        res.get("rsi_bounce_dn", False)
+    )
+    sell_score = count(
+        res.get("below_ema50", False),
+        not res.get("ema9_above_ema21", True),
+        has_sell_trigger,
+        res.get("rsi", 50) <= 62,
+        res.get("rsi", 50) >= 28,
+        res.get("adx", 0) >= adx_min,
+        res.get("candle_bear", False),
+        pull_ok("SELL"),
+    )
+    if sell_score >= min_confluence and has_sell_trigger:
+        return "SELL"
+
+    # ── Range / Mean Reversion ────────────────────────────────────────────────
+    if res.get("range_mode", False):
+        if (res.get("rsi", 50) <= 32 and
+                res.get("rsi_bounce_up", False) and
+                res.get("candle_bull", False)):
+            return "BUY"
+        if (res.get("rsi", 50) >= 68 and
+                res.get("rsi_bounce_dn", False) and
+                res.get("candle_bear", False)):
+            return "SELL"
+
+    return None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SL / TP
 # ──────────────────────────────────────────────────────────────────────────────
@@ -687,6 +788,14 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | N
             "trend_up": price > e200 and e21 > e50,
             "trend_dn": price < e200 and e21 < e50,
             "range_mode": float(adx.iloc[i]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
+            # M15-specific: EMA9/EMA21 cross signals
+            "ema9_above_ema21": float(ema9.iloc[i]) > float(ema21.iloc[i]),
+            "ema9_cross_up": (float(ema9.iloc[i-1]) <= float(ema21.iloc[i-1]) and float(ema9.iloc[i]) > float(ema21.iloc[i])) if i >= 1 else False,
+            "ema9_cross_dn": (float(ema9.iloc[i-1]) >= float(ema21.iloc[i-1]) and float(ema9.iloc[i]) < float(ema21.iloc[i])) if i >= 1 else False,
+            "above_ema50": price > float(ema50.iloc[i]),
+            "below_ema50": price < float(ema50.iloc[i]),
+            "above_ema21": price > float(ema21.iloc[i]),
+            "below_ema21": price < float(ema21.iloc[i]),
         }
     return cache
 
@@ -768,9 +877,9 @@ def run_backtest(
     initial_balance = float(initial_balance if initial_balance is not None else Config.INITIAL_BALANCE)
     balance = initial_balance
 
-    wb = warmup_bars or (80 if tf == "H1" else 40)
-    max_bars = int(max_bars_in_trade or (60 if tf == "H1" else 12))
-    cooldown_after_loss = 2 if tf == "H1" else 1
+    wb = warmup_bars or (80 if tf == "H1" else 60)   # M15 precisa de 60 barras de warmup (~15h)
+    max_bars = int(max_bars_in_trade or (60 if tf == "H1" else 20))  # M15: expira em 20 barras (5h)
+    cooldown_after_loss = 2 if tf == "H1" else 1      # M15: cooldown mais curto
 
     if indicator_cache is None:
         indicator_cache = build_indicator_cache(bars)
@@ -851,23 +960,32 @@ def run_backtest(
             cooldown -= 1
             continue
 
-        if tf == "H1" and not _in_session(bar, symbol):
+        if not _in_session(bar, symbol, tf):
             continue
 
         res = indicator_cache[i] if i < len(indicator_cache) else None
         if not res or res["atr"] <= 0:
             continue
 
-        direction = _signal(
-            res,
-            tf,
-            min_confluence=min_confluence,
-            adx_min=adx_min,
-            pull_range=pull_range,
-            weekly_trade_target=weekly_trade_target,
-            h4_bias=h4_bias,
-            require_h4_alignment=(tf == "H1"),
-        )
+        if tf == "M15":
+            direction = _signal_m15(
+                res,
+                min_confluence=min_confluence,
+                adx_min=adx_min if adx_min is not None else 16.0,
+                pull_range=pull_range,
+                weekly_trade_target=weekly_trade_target,
+            )
+        else:
+            direction = _signal(
+                res,
+                tf,
+                min_confluence=min_confluence,
+                adx_min=adx_min,
+                pull_range=pull_range,
+                weekly_trade_target=weekly_trade_target,
+                h4_bias=h4_bias,
+                require_h4_alignment=(tf == "H1"),
+            )
         if not direction:
             continue
 

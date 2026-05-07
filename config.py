@@ -86,7 +86,7 @@ class Config:
     # O "saldo" e os trades "ativos" são uma simulação para estatística.
     # ═══════════════════════════════════════════════════════════════════════════════
     MODE              = "FXGOLD"
-    TIMEFRAME         = "1h"
+    TIMEFRAME         = os.getenv("TIMEFRAME", "M15")  # M15 = mais sinais; H1 = conservador
     BOT_IS_SIGNAL_ONLY = True  # flag semântica exibida no dashboard
 
     # Em modo sinalizador, sessão e notícias viram preferência de qualidade,

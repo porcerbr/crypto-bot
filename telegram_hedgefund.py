@@ -489,7 +489,7 @@ class TelegramDesk:
                         self.send(
                             f"✅ {len(datasets)} par(es) carregado(s) via API — {total_bars} candles no total.\n"
                             f"🔄 Iniciando evolução com <b>{generations} gerações</b>...\n"
-                            f"⏳ Tempo estimado: {max(3, generations // 8)}–{max(6, generations // 3)} minutos.",
+                            f"⏳ Tempo estimado: {max(2, generations // 10)}–{max(5, generations // 5)} minutos (M15 é mais rápido por fold).",
                             reply_markup=keyboard_markup(),
                         )
                         try:
@@ -598,7 +598,9 @@ def _fetch_bars_for_optimization(symbol: str, n_bars: int = 5000) -> list:
             "https://api.twelvedata.com/time_series",
             params={
                 "symbol": symbol_td,
-                "interval": "1h",
+                # M15 por padrão — 4x mais dados por período, muito mais sinais
+        # 5000 barras M15 = ~52 dias de dados (suficiente para walk-forward)
+        "interval": "15min" if str(getattr(__import__("config").Config, "TIMEFRAME", "M15")).lower() in {"m15","15m","15min","15"} else "1h",
                 "outputsize": min(n_bars, 5000),
                 "format": "JSON",
                 "apikey": api_key,

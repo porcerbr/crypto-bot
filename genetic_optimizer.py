@@ -52,20 +52,38 @@ RANGES: dict[str, tuple[float, float]] = {
     "MAX_BARS_IN_TRADE": (8, 120),
 }
 
+def _get_tf() -> str:
+    return str(getattr(Config, "TIMEFRAME", "M15")).strip().lower()
+
+def _is_m15_mode() -> bool:
+    return _get_tf() in {"m15", "15m", "15min", "15"}
+
 def _is_h1_mode() -> bool:
-    tf = str(getattr(Config, "TIMEFRAME", "H1")).strip().lower()
-    return tf in {"h1", "1h", "60m", "60"}
+    return _get_tf() in {"h1", "1h", "60m", "60"}
 
 
-if _is_h1_mode():
+if _is_m15_mode():
+    # M15: mais frequente, SL/TP mais curtos, mais trades por semana
+    RANGES["MIN_CONFLUENCE"] = (3, 6)
+    RANGES["ADX_MIN"]        = (13, 26)
+    RANGES["ATR_MULT_SL"]    = (0.7, 1.8)
+    RANGES["ATR_MULT_TP"]    = (1.5, 3.5)
+    RANGES["PULL_MIN"]       = (-2.0, -0.2)
+    RANGES["PULL_MAX"]       = (0.4, 2.5)
+    RANGES["RISK_PCT"]       = (0.5, 2.0)
+    RANGES["WEEKLY_TARGET"]  = (8.0, 30.0)   # M15 pode ter 10-25 trades/semana
+    RANGES["MIN_RR"]         = (1.2, 2.8)
+    RANGES["WARMUP_BARS"]    = (60, 200)
+    RANGES["MAX_BARS_IN_TRADE"] = (4, 30)    # M15: 4-30 barras = 1-7.5h
+elif _is_h1_mode():
     RANGES["MIN_CONFLUENCE"] = (4, 8)
-    RANGES["ADX_MIN"] = (18, 34)
-    RANGES["ATR_MULT_SL"] = (1.0, 2.0)
-    RANGES["ATR_MULT_TP"] = (2.0, 4.5)
-    RANGES["RISK_PCT"] = (0.5, 1.8)
-    RANGES["WEEKLY_TARGET"] = (1.5, 4.0)
-    RANGES["MIN_RR"] = (1.5, 3.5)
-    RANGES["WARMUP_BARS"] = (60, 180)
+    RANGES["ADX_MIN"]        = (18, 34)
+    RANGES["ATR_MULT_SL"]    = (1.0, 2.0)
+    RANGES["ATR_MULT_TP"]    = (2.0, 4.5)
+    RANGES["RISK_PCT"]       = (0.5, 1.8)
+    RANGES["WEEKLY_TARGET"]  = (1.5, 4.0)
+    RANGES["MIN_RR"]         = (1.5, 3.5)
+    RANGES["WARMUP_BARS"]    = (60, 180)
     RANGES["MAX_BARS_IN_TRADE"] = (16, 72)
 
 
@@ -88,8 +106,9 @@ ELITE_COUNT        = 4
 MUTATION_RATE      = 0.22
 TOURNAMENT_SIZE    = 4
 # FIX #3: MIN_TRADES reduzido — 24 era muito agressivo para folds walk-forward menores
-MIN_TRADES         = 12 if _is_h1_mode() else 10
-TARGET_TRADES_WEEK = 2.5 if _is_h1_mode() else 3.0
+# M15 gera muito mais trades por janela — MIN_TRADES maior é razoável
+MIN_TRADES         = 30 if _is_m15_mode() else (12 if _is_h1_mode() else 10)
+TARGET_TRADES_WEEK = 12.0 if _is_m15_mode() else (2.5 if _is_h1_mode() else 3.0)
 MAX_WALK_FORWARD_FOLDS = 3
 
 Genome = dict[str, Any]
@@ -221,13 +240,23 @@ def _metric_score(metrics: dict, target_trades_week: float) -> float:
     exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.01)))
     freq_score = max(0.0, 1.0 - abs(freq - target_trades_week) / max(1.0, target_trades_week))
 
+    # Calcula retorno mensal estimado (normalizado a 0-1)
+    # Alvo: 20-30% ao mês com saldo de $1000 = $200-300
+    monthly_return_target = 0.25  # 25% = ponto ideal
+    monthly_days = 21.0           # dias úteis de trading
+    freq_day = freq / 5.0 if freq > 0 else 0.0   # trades/dia
+    exp_pct_per_trade = exp / max(1.0, initial_balance) if exp > 0 else 0.0
+    est_monthly_return = freq_day * monthly_days * exp_pct_per_trade
+    monthly_score = max(0.0, min(1.0, est_monthly_return / monthly_return_target))
+
     return (
-        0.28 * pf_score +
-        0.18 * wr +
-        0.18 * dd_score +
-        0.16 * freq_score +
-        0.10 * (exp_score + 1) / 2 +
-        0.10 * (pnl_score + 1) / 2
+        0.22 * pf_score +
+        0.15 * wr +
+        0.15 * dd_score +
+        0.18 * freq_score +        # frequência tem peso maior agora
+        0.15 * monthly_score +     # retorno mensal estimado
+        0.08 * (exp_score + 1) / 2 +
+        0.07 * (pnl_score + 1) / 2
     )
 
 
@@ -256,7 +285,7 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     if test_pf < 0.95:
         pf_penalty += (0.95 - test_pf) * 0.8
 
-    dd_limit = 20.0 if _is_h1_mode() else 28.0
+    dd_limit = 15.0 if _is_m15_mode() else (20.0 if _is_h1_mode() else 28.0)
     if max(train_dd, test_dd) > dd_limit:
         pf_penalty += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.5
 
