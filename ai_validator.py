@@ -791,3 +791,170 @@ def check_live_regime(bot) -> dict:
         "confluence_adj": confluence_adj,
         "effective_conf": effective_conf,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FASE 3 — Auditoria de Prompt, Schema e Histórico de Score
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import json
+import threading
+from datetime import datetime, timezone
+
+_audit_lock = threading.Lock()
+_AUDIT_FILE = "ai_audit_log.jsonl"
+_PROMPT_VERSION = "2.0"  # Incrementar ao mudar o prompt principal
+
+
+def _get_audit_file() -> str:
+    """Retorna caminho do arquivo de auditoria (respeita DB_PATH se configurado)."""
+    import os
+    db_dir = os.path.dirname(getattr(Config, "DB_PATH", "bot_state.db"))
+    if db_dir and db_dir != ".":
+        return os.path.join(db_dir, _AUDIT_FILE)
+    return _AUDIT_FILE
+
+
+def record_ai_audit(
+    symbol: str,
+    direction: str,
+    prompt_hash: str,
+    prompt_version: str,
+    request_payload: dict,
+    raw_response: str,
+    parsed_schema: dict,
+    final_score: float,
+    was_accepted: bool,
+    reject_reason: str = "",
+) -> None:
+    """
+    Salva registro de auditoria de cada chamada à IA.
+
+    Permite reconstruir por que um sinal foi emitido/rejeitado, qual prompt
+    foi usado, qual foi a resposta bruta e qual o score histórico.
+
+    Args:
+        symbol: par avaliado
+        direction: BUY/SELL
+        prompt_hash: hash MD5 dos primeiros 200 chars do prompt (identifica versão)
+        prompt_version: string de versão do prompt (ex: "2.0")
+        request_payload: dict com os dados enviados para a IA
+        raw_response: string bruta da resposta da IA
+        parsed_schema: dict com o schema parseado da resposta
+        final_score: score 0–10 final
+        was_accepted: True se o sinal foi aceito
+        reject_reason: motivo do descarte (se houver)
+    """
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "direction": direction,
+        "prompt_version": prompt_version,
+        "prompt_hash": prompt_hash,
+        "final_score": round(final_score, 2),
+        "was_accepted": was_accepted,
+        "reject_reason": reject_reason,
+        "response_length": len(raw_response),
+        "schema": {
+            "score":       parsed_schema.get("score"),
+            "confidence":  parsed_schema.get("confidence"),
+            "regime":      parsed_schema.get("regime"),
+            "has_sl":      "sl" in parsed_schema or "stop_loss" in parsed_schema,
+            "has_tp":      "tp" in parsed_schema or "take_profit" in parsed_schema,
+            "valid":       parsed_schema.get("valid", True),
+        },
+        "request_summary": {
+            "n_indicators": len(request_payload.get("indicators", {})),
+            "timeframe":    request_payload.get("timeframe", ""),
+            "session":      request_payload.get("session", ""),
+        },
+    }
+
+    audit_file = _get_audit_file()
+    try:
+        with _audit_lock:
+            with open(audit_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as e:
+        log(f"[AI_AUDIT] Erro ao salvar auditoria: {e}")
+
+
+def load_ai_score_history(symbol: str = "", last_n: int = 100) -> list[dict]:
+    """
+    Carrega histórico de scores da IA para análise de tendência.
+
+    Args:
+        symbol: filtra por símbolo (vazio = todos)
+        last_n: máximo de registros a retornar
+
+    Returns:
+        lista de dicts com ts, symbol, final_score, was_accepted
+    """
+    audit_file = _get_audit_file()
+    records = []
+
+    try:
+        with open(audit_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    if symbol and r.get("symbol") != symbol:
+                        continue
+                    records.append({
+                        "ts":           r.get("ts", ""),
+                        "symbol":       r.get("symbol", ""),
+                        "direction":    r.get("direction", ""),
+                        "final_score":  r.get("final_score", 0.0),
+                        "was_accepted": r.get("was_accepted", False),
+                        "reject_reason":r.get("reject_reason", ""),
+                        "prompt_version": r.get("prompt_version", ""),
+                    })
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+
+    # Retorna os últimos N registros
+    return records[-last_n:]
+
+
+def get_ai_acceptance_rate(symbol: str = "", last_n: int = 50) -> dict:
+    """
+    Calcula a taxa de aceitação da IA e score médio por símbolo.
+
+    Útil para detectar se a IA está rejeitando muitos sinais (prompt ruim)
+    ou aceitando todos (threshold baixo demais).
+
+    Returns:
+        dict com acceptance_rate, avg_score, n_evaluated, n_accepted
+    """
+    history = load_ai_score_history(symbol=symbol, last_n=last_n)
+
+    if not history:
+        return {
+            "acceptance_rate": 0.0,
+            "avg_score": 0.0,
+            "n_evaluated": 0,
+            "n_accepted": 0,
+        }
+
+    n_accepted = sum(1 for r in history if r["was_accepted"])
+    scores = [r["final_score"] for r in history if r["final_score"] > 0]
+
+    return {
+        "acceptance_rate": round(n_accepted / len(history) * 100, 1),
+        "avg_score":       round(sum(scores) / len(scores), 2) if scores else 0.0,
+        "n_evaluated":     len(history),
+        "n_accepted":      n_accepted,
+        "symbol":          symbol or "all",
+        "prompt_version":  _PROMPT_VERSION,
+    }
+
+
+def _prompt_hash(prompt_text: str) -> str:
+    """Hash MD5 dos primeiros 200 chars do prompt (identifica mudanças de prompt)."""
+    import hashlib
+    return hashlib.md5(prompt_text[:200].encode()).hexdigest()[:8]

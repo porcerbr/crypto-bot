@@ -1,0 +1,61 @@
+# ─── Ambiente ────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Estado e logs do bot (NUNCA versionar) ──────────────────────────────────
+bot_state.db
+bot_state.db-wal
+bot_state.db-shm
+bot_app.log
+bot_app.log.*
+*.log
+*.log.*
+
+# ─── Exports e resultados de backtest ────────────────────────────────────────
+backtest_results/
+*.csv
+!requirements*.csv
+optimization_results/
+monte_carlo_results/
+
+# ─── Caches e temporários ────────────────────────────────────────────────────
+.cache/
+*.tmp
+*.bak
+*.swp
+~$*
+
+# ─── IDEs ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ─── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Testes ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ─── Jupyter ─────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Outros zips acidentais ──────────────────────────────────────────────────
+pro_bot2.zip
+testfile

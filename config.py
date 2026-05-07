@@ -284,6 +284,12 @@ class Config:
     PAUSE_DURATION         = 3600
     MAX_CONSECUTIVE_LOSSES = 3
 
+    # ─── Limites de perda (Fase 4) ────────────────────────────────────────────
+    # Perda máxima diária: ao atingir, bot pausa até meia-noite UTC
+    MAX_DAILY_LOSS_PCT  = float(os.getenv("MAX_DAILY_LOSS_PCT",  "5.0"))
+    # Perda máxima semanal: ao atingir, bot pausa até segunda-feira UTC
+    MAX_WEEKLY_LOSS_PCT = float(os.getenv("MAX_WEEKLY_LOSS_PCT", "10.0"))
+
     MARGIN_CALL_PCT = 100.0
     STOP_OUT_PCT    = 30.0
 

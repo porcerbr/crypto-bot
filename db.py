@@ -110,6 +110,17 @@ def init_db():
     _migrate_legacy()
 
 
+def init_db_with_migrations():
+    """Inicializa DB e aplica todas as migrações pendentes."""
+    init_db()
+    try:
+        applied = run_migrations()
+        if applied:
+            log(f"[DB] Migrações aplicadas: {applied}")
+    except Exception as e:
+        log(f"[DB] Aviso: falha ao aplicar migrações — {e}")
+
+
 def _migrate_legacy():
     """Importa state.json legado se o banco ainda estiver vazio."""
     if not os.path.exists(STATE_FILE):
@@ -368,3 +379,235 @@ def calculate_metrics(bot) -> dict:
 
 # Inicializa o banco na importação do módulo
 init_db()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FASE 5 — Schema Versionado, Migrações e Trilha de Auditoria
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SCHEMA_VERSION = 2  # Incrementar ao adicionar colunas/tabelas
+
+
+def get_schema_version() -> int:
+    """Retorna a versão do schema atual do banco."""
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1"
+            ).fetchone()
+            return int(row["version"]) if row else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
+def run_migrations() -> list[str]:
+    """
+    Executa migrações pendentes de forma incremental.
+
+    Cada migração é idempotente — pode rodar múltiplas vezes sem efeito colateral.
+    Retorna lista de migrações aplicadas.
+    """
+    applied: list[str] = []
+
+    # Garante tabela de controle de migrações
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     INTEGER PRIMARY KEY,
+                name        TEXT    NOT NULL,
+                applied_at  TEXT    NOT NULL DEFAULT (datetime('now','utc'))
+            )
+        """)
+
+    current = get_schema_version()
+
+    # ── Migração 1: Adicionar trilha de auditoria de sinais ──────────────────
+    if current < 1:
+        with _get_conn() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS signal_audit (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts              TEXT    NOT NULL,
+                    symbol          TEXT    NOT NULL,
+                    direction       TEXT    NOT NULL,
+                    score           REAL    DEFAULT 0,
+                    ai_score        REAL    DEFAULT 0,
+                    regime          TEXT    DEFAULT '',
+                    setup           TEXT    DEFAULT '',
+                    sl              REAL    DEFAULT 0,
+                    tp              REAL    DEFAULT 0,
+                    rr              REAL    DEFAULT 0,
+                    was_emitted     INTEGER DEFAULT 0,
+                    reject_reason   TEXT    DEFAULT '',
+                    strategy_version TEXT   DEFAULT '',
+                    data_sources    TEXT    DEFAULT '',
+                    created_at      TEXT    NOT NULL DEFAULT (datetime('now','utc'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_audit_symbol
+                    ON signal_audit(symbol);
+                CREATE INDEX IF NOT EXISTS idx_audit_ts
+                    ON signal_audit(ts);
+                CREATE INDEX IF NOT EXISTS idx_audit_regime
+                    ON signal_audit(regime);
+
+                INSERT OR IGNORE INTO schema_migrations (version, name)
+                    VALUES (1, 'add_signal_audit_table');
+            """)
+        applied.append("migration_1_signal_audit")
+        log("[DB] Migração 1 aplicada: tabela signal_audit criada")
+
+    # ── Migração 2: Adicionar colunas de risco ao trade_history ─────────────
+    if current < 2:
+        with _get_conn() as conn:
+            # ALTER TABLE é seguro com IF NOT EXISTS via try/except
+            for col, typedef in [
+                ("risk_usd",     "REAL DEFAULT 0"),
+                ("risk_pct",     "REAL DEFAULT 0"),
+                ("session",      "TEXT DEFAULT ''"),
+                ("regime",       "TEXT DEFAULT ''"),
+                ("strategy_ver", "TEXT DEFAULT ''"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE trade_history ADD COLUMN {col} {typedef}")
+                except sqlite3.OperationalError:
+                    pass  # coluna já existe — idempotente
+
+            conn.execute("""
+                INSERT OR IGNORE INTO schema_migrations (version, name)
+                    VALUES (2, 'add_risk_columns_to_trade_history')
+            """)
+        applied.append("migration_2_risk_columns")
+        log("[DB] Migração 2 aplicada: colunas de risco em trade_history")
+
+    return applied
+
+
+def record_signal_audit(
+    symbol: str,
+    direction: str,
+    score: float,
+    ai_score: float,
+    regime: str,
+    setup: str,
+    sl: float,
+    tp: float,
+    rr: float,
+    was_emitted: bool,
+    reject_reason: str = "",
+    strategy_version: str = "",
+    data_sources: str = "",
+) -> None:
+    """
+    Registra auditoria de um sinal gerado (emitido ou rejeitado).
+
+    Permite reconstruir post-facto por que qualquer sinal foi ou não foi enviado.
+
+    Args:
+        symbol: par monitorado
+        direction: BUY / SELL
+        score: score técnico final (0–10)
+        ai_score: score da IA (0–10, 0 se desativada)
+        regime: regime de mercado detectado
+        setup: nome do setup (ex: 'EMA_CROSS', 'BREAKOUT')
+        sl: stop loss calculado
+        tp: take profit calculado
+        rr: risk/reward ratio
+        was_emitted: True se o sinal foi enviado
+        reject_reason: motivo do descarte
+        strategy_version: versão da estratégia/config (para rastrear mudanças)
+        data_sources: fontes de dados usadas (ex: 'twelve_data,cot,news')
+    """
+    ts = datetime.utcnow().isoformat()
+    try:
+        with _get_conn() as conn:
+            conn.execute("""
+                INSERT INTO signal_audit
+                    (ts, symbol, direction, score, ai_score, regime, setup,
+                     sl, tp, rr, was_emitted, reject_reason,
+                     strategy_version, data_sources)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                ts, symbol, direction,
+                round(score, 3), round(ai_score, 3),
+                regime, setup,
+                round(sl, 5), round(tp, 5), round(rr, 3),
+                int(was_emitted), reject_reason,
+                strategy_version, data_sources,
+            ))
+    except Exception as e:
+        log(f"[DB] Erro ao registrar signal_audit: {e}")
+
+
+def get_signal_audit(
+    symbol: str = "",
+    last_n: int = 50,
+    only_emitted: bool = False,
+) -> list[dict]:
+    """
+    Recupera registros de auditoria de sinais.
+
+    Args:
+        symbol: filtra por símbolo (vazio = todos)
+        last_n: máximo de registros
+        only_emitted: se True, retorna só os sinais efetivamente enviados
+
+    Returns:
+        lista de dicts com os campos da tabela signal_audit
+    """
+    conditions = []
+    params: list = []
+
+    if symbol:
+        conditions.append("symbol = ?")
+        params.append(symbol)
+    if only_emitted:
+        conditions.append("was_emitted = 1")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM signal_audit {where} ORDER BY created_at DESC LIMIT ?",
+                params + [last_n]
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except sqlite3.OperationalError:
+        # Tabela ainda não existe — migração pendente
+        return []
+
+
+def get_signal_acceptance_rate(symbol: str = "", last_n: int = 100) -> dict:
+    """
+    Calcula taxa de emissão vs. rejeição de sinais.
+
+    Útil para diagnosticar se os filtros estão muito restritivos.
+    """
+    records = get_signal_audit(symbol=symbol, last_n=last_n)
+    if not records:
+        return {"acceptance_rate": 0.0, "n_evaluated": 0, "n_emitted": 0}
+
+    n_emitted = sum(1 for r in records if r.get("was_emitted"))
+    avg_score = round(
+        sum(r.get("score", 0) for r in records) / len(records), 2
+    ) if records else 0.0
+
+    # Principais motivos de rejeição
+    reasons: dict[str, int] = {}
+    for r in records:
+        reason = r.get("reject_reason", "")
+        if reason:
+            key = reason[:50]  # trunca para agrupar
+            reasons[key] = reasons.get(key, 0) + 1
+
+    top_reasons = sorted(reasons.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return {
+        "acceptance_rate": round(n_emitted / len(records) * 100, 1),
+        "n_evaluated":     len(records),
+        "n_emitted":       n_emitted,
+        "avg_score":       avg_score,
+        "symbol":          symbol or "all",
+        "top_reject_reasons": [{"reason": r, "count": c} for r, c in top_reasons],
+    }

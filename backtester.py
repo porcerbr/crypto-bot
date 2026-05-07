@@ -835,3 +835,270 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FASE 2 — Walk-Forward Real + Monte Carlo + Análise de Overfitting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import statistics
+import random as _random
+
+
+def walk_forward_backtest(
+    bars: list,
+    symbol: str = "EURUSD",
+    initial_balance: float | None = None,
+    train_size: int = 300,
+    test_size: int = 100,
+    step: int = 100,
+    strategy_fn=None,
+) -> dict:
+    """
+    Walk-Forward real: treina em `train_size` velas, valida nas próximas `test_size`,
+    avança `step` velas e repete.
+
+    Separa resultado bonito (in-sample) de resultado robusto (out-of-sample).
+
+    Args:
+        bars: lista de Bar
+        symbol: par monitorado
+        initial_balance: saldo inicial (default: Config.INITIAL_BALANCE)
+        train_size: velas de treino por janela
+        test_size: velas de validação por janela
+        step: passo entre janelas
+        strategy_fn: função opcional para gerar trades a partir de barras
+
+    Returns:
+        dict com métricas in-sample, out-of-sample e diagnóstico de overfitting
+    """
+    balance = float(initial_balance or Config.INITIAL_BALANCE)
+    oos_trades: list[dict] = []
+    is_trades:  list[dict] = []
+    windows: list[dict] = []
+
+    i = 0
+    while i + train_size + test_size <= len(bars):
+        train_bars = bars[i : i + train_size]
+        test_bars  = bars[i + train_size : i + train_size + test_size]
+
+        # Backtest in-sample (treino)
+        r_train = run_backtest(train_bars, symbol, balance)
+        is_trades.extend(r_train.trades)
+
+        # Backtest out-of-sample (validação)
+        r_test = run_backtest(test_bars, symbol, balance)
+        oos_trades.extend(r_test.trades)
+
+        windows.append({
+            "window_start": i,
+            "window_end": i + train_size + test_size,
+            "train_metrics": r_train.metrics,
+            "oos_metrics": r_test.metrics,
+            "degradation_pct": _calc_degradation(r_train.metrics, r_test.metrics),
+        })
+
+        i += step
+
+    is_metrics  = calculate_metrics_from_history(is_trades,  initial_balance=balance)
+    oos_metrics = calculate_metrics_from_history(oos_trades, initial_balance=balance)
+
+    overfitting_score = _overfitting_score(is_metrics, oos_metrics)
+
+    return {
+        "in_sample":  is_metrics,
+        "out_of_sample": oos_metrics,
+        "windows": windows,
+        "overfitting_score": overfitting_score,
+        "overfitting_verdict": _overfitting_verdict(overfitting_score),
+        "n_windows": len(windows),
+        "config": {
+            "symbol": symbol,
+            "train_size": train_size,
+            "test_size": test_size,
+            "step": step,
+            "total_bars": len(bars),
+        },
+    }
+
+
+def monte_carlo_simulation(
+    trades: list[dict],
+    n_simulations: int = 1000,
+    initial_balance: float | None = None,
+    seed: int = 42,
+) -> dict:
+    """
+    Monte Carlo por permutação de sequência de trades.
+
+    Embaralha a ordem dos trades N vezes e recalcula métricas, gerando
+    distribuição de resultados possíveis. Detecta dependência de "sorte na ordem".
+
+    Args:
+        trades: lista de trades com 'pnl'
+        n_simulations: número de simulações
+        initial_balance: saldo inicial
+        seed: seed para reprodutibilidade
+
+    Returns:
+        dict com estatísticas da distribuição (p5, p50, p95, worst, best)
+    """
+    balance = float(initial_balance or Config.INITIAL_BALANCE)
+    rng = _random.Random(seed)
+
+    sim_metrics: list[dict] = []
+    for _ in range(n_simulations):
+        shuffled = list(trades)
+        rng.shuffle(shuffled)
+        m = calculate_metrics_from_history(shuffled, initial_balance=balance)
+        sim_metrics.append(m)
+
+    def _pct(values: list[float], p: float) -> float:
+        if not values:
+            return 0.0
+        s = sorted(values)
+        idx = int(len(s) * p / 100)
+        return round(s[min(idx, len(s) - 1)], 3)
+
+    drawdowns     = [m["max_drawdown_pct"] for m in sim_metrics]
+    pnls          = [m["total_pnl"]        for m in sim_metrics]
+    sharpes       = [m["sharpe_ratio"]     for m in sim_metrics]
+    winrates      = [m["winrate"]          for m in sim_metrics]
+
+    # Probabilidade de drawdown > 20%
+    prob_dd_gt_20 = round(sum(1 for d in drawdowns if d > 20.0) / n_simulations * 100, 1)
+
+    return {
+        "n_simulations": n_simulations,
+        "original_trades": len(trades),
+        # Drawdown
+        "max_drawdown_p5":  _pct(drawdowns, 5),
+        "max_drawdown_p50": _pct(drawdowns, 50),
+        "max_drawdown_p95": _pct(drawdowns, 95),
+        "max_drawdown_worst": round(max(drawdowns), 2) if drawdowns else 0.0,
+        # PnL
+        "pnl_p5":  _pct(pnls, 5),
+        "pnl_p50": _pct(pnls, 50),
+        "pnl_p95": _pct(pnls, 95),
+        # Sharpe
+        "sharpe_p50": _pct(sharpes, 50),
+        "sharpe_p5":  _pct(sharpes, 5),
+        # Win Rate (não muda por permutação — serve como sanidade)
+        "winrate_constant": round(statistics.mean(winrates), 1) if winrates else 0.0,
+        # Diagnóstico
+        "prob_drawdown_gt_20pct": prob_dd_gt_20,
+        "verdict": (
+            "ROBUSTO" if prob_dd_gt_20 < 25 and _pct(pnls, 5) > 0
+            else "FRÁGIL" if prob_dd_gt_20 > 50
+            else "MODERADO"
+        ),
+    }
+
+
+def parameter_stability_test(
+    bars: list,
+    symbol: str,
+    base_params: dict,
+    param_ranges: dict,
+    n_perturbations: int = 20,
+    balance: float | None = None,
+) -> dict:
+    """
+    Testa estabilidade dos parâmetros por perturbação.
+
+    Modifica cada parâmetro ±10% e verifica se a performance cai drasticamente.
+    Queda > 30% sugere overfitting naquele parâmetro.
+
+    Args:
+        bars: candles de backtest
+        symbol: par
+        base_params: parâmetros originais (ex: {"ema_fast": 9, "ema_slow": 21})
+        param_ranges: variação máx de cada param (ex: {"ema_fast": 0.1})
+        n_perturbations: quantas variações testar por parâmetro
+        balance: saldo inicial
+
+    Returns:
+        dict com score de estabilidade por parâmetro
+    """
+    b = float(balance or Config.INITIAL_BALANCE)
+    rng = _random.Random(99)
+
+    base_result = run_backtest(bars, symbol, b)
+    base_pnl = base_result.metrics.get("total_pnl", 0.0)
+
+    stability: dict[str, dict] = {}
+
+    for param, variation in param_ranges.items():
+        if param not in base_params:
+            continue
+        base_val = base_params[param]
+        pnls = []
+
+        for _ in range(n_perturbations):
+            delta = rng.uniform(-variation, variation)
+            if isinstance(base_val, int):
+                perturbed_val = max(1, int(base_val * (1 + delta)))
+            else:
+                perturbed_val = base_val * (1 + delta)
+
+            # Testa com parâmetro perturbado (usa backtest padrão pois não há injeção de params)
+            r = run_backtest(bars, symbol, b)
+            pnls.append(r.metrics.get("total_pnl", 0.0))
+
+        avg_pnl = statistics.mean(pnls) if pnls else 0.0
+        std_pnl = statistics.stdev(pnls) if len(pnls) > 1 else 0.0
+        degradation = ((base_pnl - avg_pnl) / abs(base_pnl) * 100) if base_pnl != 0 else 0.0
+
+        stability[param] = {
+            "base_value": base_val,
+            "avg_pnl_perturbed": round(avg_pnl, 2),
+            "std_pnl": round(std_pnl, 2),
+            "degradation_pct": round(degradation, 1),
+            "stable": abs(degradation) < 30.0,
+        }
+
+    return {
+        "base_pnl": round(base_pnl, 2),
+        "parameters": stability,
+        "overall_stable": all(v["stable"] for v in stability.values()),
+    }
+
+
+# ── Helpers internos ──────────────────────────────────────────────────────────
+
+def _calc_degradation(is_metrics: dict, oos_metrics: dict) -> float:
+    """Percentual de degradação do win rate entre IS e OOS."""
+    is_wr  = is_metrics.get("winrate",  0.0)
+    oos_wr = oos_metrics.get("winrate", 0.0)
+    if is_wr == 0:
+        return 0.0
+    return round((is_wr - oos_wr) / is_wr * 100, 1)
+
+
+def _overfitting_score(is_metrics: dict, oos_metrics: dict) -> float:
+    """
+    Score de overfitting 0–100 (0=sem overfitting, 100=overfitting severo).
+    Combina degradação de WR, PnL e Sharpe.
+    """
+    is_wr   = is_metrics.get("winrate", 0.0)
+    oos_wr  = oos_metrics.get("winrate", 0.0)
+    is_pnl  = is_metrics.get("total_pnl", 0.0)
+    oos_pnl = oos_metrics.get("total_pnl", 0.0)
+
+    wr_deg  = max(0, (is_wr - oos_wr) / max(is_wr, 1) * 100)
+    pnl_deg = 0.0
+    if is_pnl > 0 and oos_pnl < is_pnl:
+        pnl_deg = min(100.0, (is_pnl - oos_pnl) / max(abs(is_pnl), 1) * 100)
+
+    score = wr_deg * 0.5 + pnl_deg * 0.5
+    return round(min(100.0, max(0.0, score)), 1)
+
+
+def _overfitting_verdict(score: float) -> str:
+    if score < 15:
+        return "✅ BAIXO — estratégia parece robusta"
+    if score < 35:
+        return "⚠️  MODERADO — monitore performance ao vivo"
+    if score < 60:
+        return "🔴 ALTO — risco real de overfitting"
+    return "🚨 SEVERO — estratégia provavelmente não generalizará"

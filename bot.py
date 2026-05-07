@@ -562,3 +562,111 @@ class TradingBot:
         if Config.USE_DYNAMIC_LEVERAGE:
             return get_dynamic_leverage(self.balance)
         return self.leverage
+
+    # ─── Fase 4: Limites de Perda e Healthcheck ───────────────────────────────
+
+    def check_loss_limits(self) -> dict:
+        """
+        Verifica limites de perda diária e semanal.
+
+        Retorna dict com status e se o bot deve ser pausado.
+        Chama pause_for() automaticamente se limite atingido.
+        """
+        from risk import check_daily_loss_limit, check_weekly_loss_limit
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start  = today_start - timedelta(days=now.weekday())
+
+        # Filtra trades de hoje e desta semana
+        trades_today: list[dict] = []
+        trades_week:  list[dict] = []
+
+        for t in self.history:
+            closed_str = t.get("closed_ts_iso") or t.get("closed_at", "")
+            if not closed_str:
+                continue
+            try:
+                closed_dt = datetime.fromisoformat(str(closed_str))
+                if closed_dt.tzinfo is None:
+                    closed_dt = closed_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+
+            if closed_dt >= today_start:
+                trades_today.append(t)
+            if closed_dt >= week_start:
+                trades_week.append(t)
+
+        daily  = check_daily_loss_limit(trades_today, self.balance)
+        weekly = check_weekly_loss_limit(trades_week,  self.balance)
+
+        result = {
+            "daily":  daily,
+            "weekly": weekly,
+            "paused_by_limit": False,
+            "reason": "",
+        }
+
+        if daily["blocked"] and not self.is_paused():
+            pause_secs = max(3600, int((today_start + timedelta(days=1) - now).total_seconds()))
+            self.pause_for(pause_secs, f"Limite diário atingido: {daily['loss_pct']:.1f}%")
+            result["paused_by_limit"] = True
+            result["reason"] = daily["reason"]
+            log(f"[RISK] ⛔ {daily['reason']} — pausado até meia-noite UTC")
+
+        elif weekly["blocked"] and not self.is_paused():
+            # Pausa até segunda-feira
+            days_to_monday = (7 - now.weekday()) % 7 or 7
+            pause_secs = days_to_monday * 86400
+            self.pause_for(pause_secs, f"Limite semanal atingido: {weekly['loss_pct']:.1f}%")
+            result["paused_by_limit"] = True
+            result["reason"] = weekly["reason"]
+            log(f"[RISK] ⛔ {weekly['reason']} — pausado até segunda-feira UTC")
+
+        return result
+
+    def healthcheck(self) -> dict:
+        """
+        Retorna status de saúde do bot para monitoramento.
+
+        Inclui: estado do circuit breaker, limites de perda, exposição,
+        idade do último sinal, status da conexão com API de dados.
+        """
+        import time as _time
+
+        loss_limits = self.check_loss_limits() if hasattr(self, "history") else {}
+
+        active_symbols = [t.get("symbol", "") for t in self.active_trades.values()] \
+            if isinstance(self.active_trades, dict) else []
+
+        # Calcula exposição total
+        active_list = list(self.active_trades.values()) \
+            if isinstance(self.active_trades, dict) else []
+
+        from risk import check_total_exposure
+        exposure = check_total_exposure(active_list, self.balance)
+
+        last_signal_age_s = None
+        if hasattr(self, "_last_signal_ts") and self._last_signal_ts:
+            last_signal_age_s = int(_time.time() - self._last_signal_ts)
+
+        return {
+            "status": "PAUSADO" if self.is_paused() else "OPERANDO",
+            "is_paused": self.is_paused(),
+            "paused_until": self.paused_until if self.is_paused() else None,
+            "consecutive_losses": getattr(self, "consecutive_losses", 0),
+            "max_consecutive_losses": getattr(Config, "MAX_CONSECUTIVE_LOSSES", 3),
+            "balance": round(self.balance, 2),
+            "active_trades": len(active_list),
+            "pending_trades": len(getattr(self, "pending_trades", {})),
+            "exposure_pct": exposure.get("exposure_pct", 0.0),
+            "exposure_blocked": exposure.get("blocked", False),
+            "daily_loss_pct": loss_limits.get("daily", {}).get("loss_pct", 0.0),
+            "weekly_loss_pct": loss_limits.get("weekly", {}).get("loss_pct", 0.0),
+            "daily_limit_pct": loss_limits.get("daily", {}).get("limit_pct", 5.0),
+            "weekly_limit_pct": loss_limits.get("weekly", {}).get("limit_pct", 10.0),
+            "last_signal_age_s": last_signal_age_s,
+            "signal_only_mode": getattr(Config, "BOT_IS_SIGNAL_ONLY", True),
+        }
