@@ -318,10 +318,11 @@ class TelegramDesk:
                                         )
                                     elif is_genetic:
                                         from genetic_optimizer import run_evolution, save_best_genome
-                                        results = run_evolution(bars, symbol=symbol, balance=Config.INITIAL_BALANCE, generations=20)
+                                        gens = getattr(self, "_pending_genetic_generations", 50) or 50
+                                        results = run_evolution(bars, symbol=symbol, balance=Config.INITIAL_BALANCE, generations=gens)
                                         best = max(results, key=lambda r: r.best_fitness)
                                         save_best_genome(best)
-                                        self.send(_format_genetic_result(symbol, best), reply_markup=keyboard_markup())
+                                        self.send(_format_genetic_result(symbol, best, gens), reply_markup=keyboard_markup())
                                     elif is_optimize:
                                         from optimizer import run_grid
                                         top = run_grid(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
@@ -456,16 +457,66 @@ class TelegramDesk:
                     )
 
                 elif cmd == "/genetic":
+                    # Sintaxe: /genetic [SIMBOLO] [GERACOES]
+                    # Exemplos: /genetic  |  /genetic EURUSD  |  /genetic XAUUSD 100
                     parts = text.split()
                     symbol = parts[1].upper() if len(parts) > 1 else "EURUSD"
-                    self._pending_genetic = symbol
+                    try:
+                        generations = int(parts[2]) if len(parts) > 2 else 50
+                        generations = max(10, min(generations, 200))  # clamp 10–200
+                    except (ValueError, IndexError):
+                        generations = 50
+
+                    self._pending_genetic  = symbol
+                    self._pending_genetic_generations = generations
+
+                    # Tenta buscar dados direto da API (sem precisar de CSV)
                     self.send(
                         f"🧬 <b>OTIMIZADOR GENÉTICO — {esc(symbol)}</b>\n"
-                        "Algoritmo com <b>walk-forward validation</b> — mais robusto que grid search.\n\n"
-                        "Envie o arquivo <b>.csv</b> com os dados históricos.\n"
-                        "⏳ Tempo estimado: 2–5 minutos (20 gerações).",
+                        f"Gerações: <b>{generations}</b> | Walk-forward: treino 70% / validação 30%\n\n"
+                        "⏳ Buscando dados históricos via API...",
                         reply_markup=keyboard_markup(),
                     )
+                    api_bars = _fetch_bars_for_optimization(symbol, n_bars=5000)
+
+                    if api_bars and len(api_bars) >= 300:
+                        # Dados suficientes via API — roda direto, sem precisar de CSV
+                        self.send(
+                            f"✅ {len(api_bars)} candles carregados via API.\n"
+                            f"🔄 Iniciando evolução com <b>{generations} gerações</b>...\n"
+                            f"⏳ Tempo estimado: {max(2, generations // 10)}–{max(5, generations // 5)} minutos.",
+                            reply_markup=keyboard_markup(),
+                        )
+                        try:
+                            import threading
+                            def _run_genetic_background():
+                                try:
+                                    from genetic_optimizer import run_evolution, save_best_genome
+                                    results = run_evolution(
+                                        api_bars,
+                                        symbol=symbol,
+                                        balance=Config.INITIAL_BALANCE,
+                                        generations=generations,
+                                    )
+                                    best = max(results, key=lambda r: r.best_fitness)
+                                    save_best_genome(best)
+                                    self.send(_format_genetic_result(symbol, best, generations), reply_markup=keyboard_markup())
+                                except Exception as e:
+                                    self.send(f"❌ Erro na otimização genética: {esc(str(e)[:200])}", reply_markup=keyboard_markup())
+
+                            t = threading.Thread(target=_run_genetic_background, daemon=True)
+                            t.start()
+                            self._pending_genetic = None  # já iniciou, não precisa esperar CSV
+                        except Exception as e:
+                            self.send(f"❌ Erro ao iniciar otimização: {esc(str(e)[:200])}", reply_markup=keyboard_markup())
+                    else:
+                        # Sem dados suficientes via API — pede CSV como fallback
+                        self.send(
+                            f"⚠️ Não foi possível carregar dados via API para {esc(symbol)}.\n\n"
+                            "Envie um arquivo <b>.csv</b> com dados históricos H1 (mínimo 300 candles).\n"
+                            f"A otimização rodará com <b>{generations} gerações</b> ao receber o arquivo.",
+                            reply_markup=keyboard_markup(),
+                        )
 
                 elif cmd == "/cot":
                     try:
@@ -486,7 +537,69 @@ class TelegramDesk:
         return executed
 
 
-def _format_genetic_result(symbol: str, best) -> str:
+
+
+def _fetch_bars_for_optimization(symbol: str, n_bars: int = 5000) -> list:
+    """
+    Busca dados históricos da Twelve Data para otimização genética.
+    Usa outputsize máximo (5000 barras) para ter histórico suficiente.
+    Retorna lista de Bar compatível com run_evolution().
+    """
+    import requests
+    from backtester import Bar
+    from datetime import datetime, timezone
+
+    api_key = Config.TWELVE_DATA_API_KEY
+    if not api_key:
+        return []
+
+    # Converte símbolo interno (XAUUSD → XAU/USD)
+    symbol_td = symbol if "/" in symbol else (
+        symbol[:3] + "/" + symbol[3:]
+        if len(symbol) == 6 else symbol
+    )
+    # Exceções
+    if symbol.upper() == "XAUUSD":
+        symbol_td = "XAU/USD"
+    elif symbol.upper() == "XAGUSD":
+        symbol_td = "XAG/USD"
+
+    try:
+        resp = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol": symbol_td,
+                "interval": "1h",
+                "outputsize": min(n_bars, 5000),
+                "format": "JSON",
+                "apikey": api_key,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        candles = data.get("values", [])
+        if not candles:
+            return []
+
+        bars = []
+        for c in reversed(candles):  # Twelve Data retorna do mais recente para o mais antigo
+            try:
+                bars.append(Bar(
+                    timestamp=datetime.fromisoformat(c["datetime"]).replace(tzinfo=timezone.utc),
+                    open=float(c["open"]),
+                    high=float(c["high"]),
+                    low=float(c["low"]),
+                    close=float(c["close"]),
+                ))
+            except Exception:
+                continue
+        return bars
+    except Exception as e:
+        log(f"[GENETIC] Erro ao buscar barras via API: {e}")
+        return []
+
+def _format_genetic_result(symbol: str, best, generations: int = 50) -> str:
     """Formata o resultado do otimizador genético para Telegram."""
     g  = best.best_genome
     tm = best.best_train_metrics

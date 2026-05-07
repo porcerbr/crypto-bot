@@ -18,7 +18,8 @@ class Config:
     TWELVE_DATA_API_KEY = _getenv_required("TWELVE_DATA_API_KEY")
 
     # Google Gemini — chave grátis em https://aistudio.google.com/apikey
-    GEMINI_API_KEY = _getenv_required("GEMINI_API_KEY")
+    ANTHROPIC_API_KEY = _getenv_required("ANTHROPIC_API_KEY")  # Claude (Sonnet)
+    GEMINI_API_KEY    = _getenv_required("GEMINI_API_KEY")      # Legado — não mais usado
 
     # Push opcional (ntfy.sh)
     NTFY_TOPIC = _getenv_required("NTFY_TOPIC")

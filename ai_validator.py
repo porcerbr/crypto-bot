@@ -2,9 +2,9 @@
 ai_validator.py — 3 camadas de inteligência (Google Gemini)
 ============================================================
 
-CAMADA 1 │ gemini-2.0-flash │ Pontuação de cada sinal      │ ~1s  │ INFO ONLY
-CAMADA 2 │ gemini-2.0-flash │ Aprendizado semanal           │ ~3s  │ AJUSTA PARAMS
-CAMADA 3 │ gemini-2.0-flash │ Estratégia mensal profunda    │ ~8s  │ ANÁLISE GERAL
+CAMADA 1 │ claude-sonnet-4-6 │ Pontuação de cada sinal      │ ~1s  │ INFO ONLY
+CAMADA 2 │ claude-sonnet-4-6 │ Aprendizado semanal           │ ~3s  │ AJUSTA PARAMS
+CAMADA 3 │ claude-sonnet-4-6 │ Estratégia mensal profunda    │ ~8s  │ ANÁLISE GERAL
 
 MUDANÇA PRINCIPAL:
   A Camada 1 NÃO mais bloqueia sinais — ela pontua de 1 a 10 para
@@ -12,7 +12,7 @@ MUDANÇA PRINCIPAL:
   são enviados. O histórico de WIN/LOSS alimenta as camadas 2 e 3.
 
 Free tier Google AI Studio: 1.500 req/dia, 15 req/min.
-Chave grátis em: https://aistudio.google.com/apikey
+Chave em: https://console.anthropic.com → API Keys
 """
 
 import json
@@ -27,8 +27,9 @@ from utils import log
 # ═══════════════════════════════════════════════════════════════════════════════
 # Configuração
 # ═══════════════════════════════════════════════════════════════════════════════
-_MODEL_FLASH        = "gemini-2.0-flash"
-_GEMINI_URL         = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_MODEL_CLAUDE       = "claude-sonnet-4-6"
+_ANTHROPIC_URL      = "https://api.anthropic.com/v1/messages"
+_ANTHROPIC_VERSION  = "2023-06-01"
 
 AI_PARAMS_FILE      = "ai_params.json"
 MIN_TRADES_TO_LEARN = 20
@@ -118,12 +119,12 @@ def save_ai_params(params: dict):
 
 def _get_api_key() -> str:
     from config import Config
-    return getattr(Config, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+    return getattr(Config, "ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
 
 
-def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int = 25) -> str | None:
+def _call_claude(system: str, user_msg: str, max_tokens: int = 500, timeout: int = 25) -> str | None:
     """
-    Chamada ao Gemini com retry automático e rate limiting.
+    Chamada ao Claude Sonnet com retry automático e rate limiting.
     Retorna string com a resposta, ou None se falhar após retries.
     """
     global _AI_DISABLED_UNTIL
@@ -131,47 +132,49 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
     if not api_key or time.time() < _AI_DISABLED_UNTIL:
         return None
 
-    url  = _GEMINI_URL.format(model=_MODEL_FLASH)
     body = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.1,   # Mais determinístico
-            "topP": 0.9,
-        },
+        "model": _MODEL_CLAUDE,
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+        "system": system,
+        "messages": [{"role": "user", "content": user_msg}],
     }
 
     for attempt in range(3):  # 3 tentativas
         _rate_limit_wait()
         try:
             resp = requests.post(
-                url,
-                params={"key": api_key},
-                headers={"Content-Type": "application/json"},
+                _ANTHROPIC_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": _ANTHROPIC_VERSION,
+                },
                 json=body,
                 timeout=timeout,
             )
             resp.raise_for_status()
             data = resp.json()
-            # Valida estrutura da resposta
-            candidates = data.get("candidates", [])
-            if not candidates:
-                log(f"[AI] Gemini retornou 0 candidatos (tentativa {attempt+1}/3)")
+            # Valida estrutura da resposta (formato Anthropic Messages API)
+            content_blocks = data.get("content", [])
+            if not content_blocks:
+                log(f"[AI] Claude retornou resposta vazia (tentativa {attempt+1}/3)")
                 continue
-            text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+            text = " ".join(
+                b.get("text", "") for b in content_blocks if b.get("type") == "text"
+            ).strip()
             if text:
                 _AI_DISABLED_UNTIL = 0.0
                 return text
-            log(f"[AI] Gemini retornou texto vazio (tentativa {attempt+1}/3)")
+            log(f"[AI] Claude retornou texto vazio (tentativa {attempt+1}/3)")
 
         except requests.exceptions.Timeout:
-            log(f"[AI] Gemini timeout (tentativa {attempt+1}/3)")
+            log(f"[AI] Claude timeout (tentativa {attempt+1}/3)")
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
 
         except requests.exceptions.ConnectionError as e:
-            log(f"[AI] Conexao falhou (tentativa {attempt+1}/3): {str(e)[:80]}")
+            log(f"[AI] Claude conexão falhou (tentativa {attempt+1}/3): {str(e)[:80]}")
             if attempt < 2:
                 time.sleep(10)
 
@@ -180,16 +183,16 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
             if status == 429:
                 # Evita bloquear o loop principal: entra em cooldown e sai.
                 wait = 3600 + (attempt * 300)
-                log(f"[AI] Gemini 429 — entrando em cooldown por {wait//60} min")
+                log(f"[AI] Claude 429 — entrando em cooldown por {wait//60} min")
                 _call_times.clear()
                 _AI_DISABLED_UNTIL = time.time() + wait
                 return None
             elif status >= 500:
-                log(f"[AI] Gemini erro servidor {status} (tentativa {attempt+1}/3)")
+                log(f"[AI] Claude erro servidor {status} (tentativa {attempt+1}/3)")
                 if attempt < 2:
                     time.sleep(10)
             else:
-                log(f"[AI] Gemini HTTP {status}: {str(e)[:80]}")
+                log(f"[AI] Claude HTTP {status}: {str(e)[:80]}")
                 return None  # Não tenta de novo em erros 4xx (exceto 429)
 
         except Exception as e:
@@ -197,7 +200,7 @@ def _call_gemini(system: str, user_msg: str, max_tokens: int = 500, timeout: int
             if attempt < 2:
                 time.sleep(5)
 
-    log("[AI] Gemini falhou apos 3 tentativas")
+    log("[AI] Claude falhou apos 3 tentativas")
     return None
 
 
@@ -434,7 +437,7 @@ Histórico recente do par ({len(pair_history)} trades):
 - WR geral do bot: {round(bot.wins / max(bot.wins + bot.losses, 1) * 100, 1)}%
 """.strip()
 
-    raw    = _call_gemini(_SCORER_SYSTEM, user_msg, max_tokens=100, timeout=15)
+    raw    = _call_claude(_SCORER_SYSTEM, user_msg, max_tokens=100, timeout=15)
     result = _parse_json(raw, context=f"{sym} {direction}")
 
     if result is None:
@@ -495,7 +498,7 @@ def weekly_learning(bot) -> dict | None:
     from config import Config
 
     if not _get_api_key():
-        log("[AI] GEMINI_API_KEY não configurada — aprendizado semanal ignorado.")
+        log("[AI] ANTHROPIC_API_KEY não configurada — aprendizado semanal ignorado.")
         return None
 
     history = bot.history or []
@@ -553,7 +556,7 @@ Análise estratégica vigente: {params.get('opus_summary') or 'ainda não dispon
 """.strip()
 
     log("[AI] Aprendizado semanal iniciado...")
-    raw    = _call_gemini(_LEARNER_SYSTEM, user_msg, max_tokens=600, timeout=40)
+    raw    = _call_claude(_LEARNER_SYSTEM, user_msg, max_tokens=600, timeout=40)
     result = _parse_json(raw, context="weekly_learning")
 
     if result is None:
@@ -609,7 +612,7 @@ def monthly_deep_analysis(bot) -> dict | None:
     from config import Config
 
     if not _get_api_key():
-        log("[AI] GEMINI_API_KEY não configurada — análise mensal ignorada.")
+        log("[AI] ANTHROPIC_API_KEY não configurada — análise mensal ignorada.")
         return None
 
     history = bot.history or []
@@ -676,7 +679,7 @@ Análise anterior: {params.get('opus_summary') or 'primeira análise'}
 """.strip()
 
     log("[AI] Análise estratégica mensal iniciada...")
-    raw    = _call_gemini(_STRATEGIST_SYSTEM, user_msg, max_tokens=1000, timeout=60)
+    raw    = _call_claude(_STRATEGIST_SYSTEM, user_msg, max_tokens=1000, timeout=60)
     result = _parse_json(raw, context="monthly_deep_analysis")
 
     if result is None:
