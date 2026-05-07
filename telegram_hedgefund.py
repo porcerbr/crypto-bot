@@ -309,7 +309,6 @@ class TelegramDesk:
                                     tmp_path = tmp.name
                                 try:
                                     from backtester import load_bars_from_csv
-                                    from config import Config
                                     bars = load_bars_from_csv(tmp_path)
                                     if len(bars) < 60:
                                         self.send(
