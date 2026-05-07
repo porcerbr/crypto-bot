@@ -97,6 +97,7 @@ class Config:
     PAIR_PERFORMANCE_LOOKBACK = 12
     MIN_RECENT_PAIR_WR = 0.40
     MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
+    USE_COT_FILTER     = True    # filtra sinais contra o posicionamento institucional (CFTC/COT)
     SIGNAL_COOLDOWN_SECONDS = 1800
 
     FXGOLD_ASSETS = {
