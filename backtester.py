@@ -605,17 +605,18 @@ def _signal_m15(
     adx_min: float = 16.0,
     pull_range: tuple[float, float] | None = None,
     weekly_trade_target: float = 8.0,
+    higher_bias: str | None = None,
 ) -> str | None:
     """
     Lógica de sinal para M15.
 
-    Mais frequente que H1: usa EMA9/EMA21 crosses como trigger primário,
-    sem requerer H4 nem EMA200 (muito lento para M15).
-    Meta realista: 5-15 trades/dia por par, WR 45-55%, R:R 1.8-2.5.
-    Isso é suficiente para 20-30% ao mês com risco de 1% por trade.
+    Versão mais seletiva:
+    - usa confirmação do timeframe maior (1h)
+    - exige pullback mais limpo
+    - privilegia trades com tendência alinhada
     """
-    pull_range = pull_range or (-1.8, 2.8)
-    min_confluence = max(2, min(7, int(min_confluence or 4)))
+    pull_range = pull_range or (-1.4, 2.2)
+    min_confluence = max(3, min(8, int(min_confluence or 4)))
     adx_min = float(adx_min or 16.0)
 
     price = res["price"]
@@ -630,6 +631,14 @@ def _signal_m15(
             return lo <= d21 <= hi
         return -hi <= d21 <= -lo
 
+    def higher_ok(direction: str) -> bool:
+        if not higher_bias or str(higher_bias).upper() == "NEUTRO":
+            return True
+        return str(higher_bias).upper() == direction
+
+    trend_aligned_buy = res.get("trend_up", False) and price > res.get("ema50", price)
+    trend_aligned_sell = res.get("trend_dn", False) and price < res.get("ema50", price)
+
     # ── BUY ──────────────────────────────────────────────────────────────────
     has_buy_trigger = (
         res.get("macd_cross_up", False) or
@@ -637,16 +646,18 @@ def _signal_m15(
         res.get("rsi_bounce_up", False)
     )
     buy_score = count(
-        res.get("above_ema50", False),          # preço acima da tendência média
-        res.get("ema9_above_ema21", False),      # momentum curto a favor
-        has_buy_trigger,                         # trigger: cruzamento ou reversão RSI
-        res.get("rsi", 50) >= 38,               # RSI não excessivamente sobrevendido
-        res.get("rsi", 50) <= 72,               # RSI não sobrecomprado
-        res.get("adx", 0) >= adx_min,           # força de tendência mínima
-        res.get("candle_bull", False),           # vela de confirmação
-        pull_ok("BUY"),                          # zona de pullback aceitável
+        res.get("above_ema50", False),
+        res.get("ema9_above_ema21", False),
+        trend_aligned_buy,
+        has_buy_trigger,
+        res.get("rsi", 50) >= 42,
+        res.get("rsi", 50) <= 68,
+        res.get("adx", 0) >= adx_min,
+        res.get("candle_bull", False),
+        pull_ok("BUY"),
+        higher_ok("BUY"),
     )
-    if buy_score >= min_confluence and has_buy_trigger:
+    if buy_score >= min_confluence and has_buy_trigger and higher_ok("BUY"):
         return "BUY"
 
     # ── SELL ─────────────────────────────────────────────────────────────────
@@ -658,25 +669,30 @@ def _signal_m15(
     sell_score = count(
         res.get("below_ema50", False),
         not res.get("ema9_above_ema21", True),
+        trend_aligned_sell,
         has_sell_trigger,
-        res.get("rsi", 50) <= 62,
-        res.get("rsi", 50) >= 28,
+        res.get("rsi", 50) <= 58,
+        res.get("rsi", 50) >= 32,
         res.get("adx", 0) >= adx_min,
         res.get("candle_bear", False),
         pull_ok("SELL"),
+        higher_ok("SELL"),
     )
-    if sell_score >= min_confluence and has_sell_trigger:
+    if sell_score >= min_confluence and has_sell_trigger and higher_ok("SELL"):
         return "SELL"
 
     # ── Range / Mean Reversion ────────────────────────────────────────────────
-    if res.get("range_mode", False):
-        if (res.get("rsi", 50) <= 32 and
+    # Só quando o TF maior não aponta direção clara.
+    if res.get("range_mode", False) and (not higher_bias or str(higher_bias).upper() == "NEUTRO"):
+        if (res.get("rsi", 50) <= 34 and
                 res.get("rsi_bounce_up", False) and
-                res.get("candle_bull", False)):
+                res.get("candle_bull", False) and
+                res.get("dist_bb_dn", 0) >= 1.3):
             return "BUY"
-        if (res.get("rsi", 50) >= 68 and
+        if (res.get("rsi", 50) >= 66 and
                 res.get("rsi_bounce_dn", False) and
-                res.get("candle_bear", False)):
+                res.get("candle_bear", False) and
+                res.get("dist_bb_up", 0) >= 1.3):
             return "SELL"
 
     return None
@@ -800,25 +816,25 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | N
     return cache
 
 
-def _build_h4_bias_map(bars: list[Bar]) -> list[str | None]:
-    """Mapeia cada candle H1 para o viés do H4 mais recente já fechado."""
-    if not bars or len(bars) < 200:
+def _build_higher_tf_bias_map(bars: list[Bar], timeframe: str = "4h") -> list[str | None]:
+    """Mapeia cada candle para o viés do timeframe maior mais recente já fechado."""
+    if not bars or len(bars) < 120:
         return [None] * len(bars)
 
     df_full = bars_to_dataframe(bars)
-    h4_df = df_full.resample("4h", label="right", closed="right").agg({
+    higher_df = df_full.resample(timeframe, label="right", closed="right").agg({
         "Open": "first",
         "High": "max",
         "Low": "min",
         "Close": "last",
     }).dropna()
 
-    if len(h4_df) < 20:
+    if len(higher_df) < 12:
         return [None] * len(bars)
 
-    h4_bars: list[Bar] = []
-    for ts, row in h4_df.iterrows():
-        h4_bars.append(Bar(
+    higher_bars: list[Bar] = []
+    for ts, row in higher_df.iterrows():
+        higher_bars.append(Bar(
             timestamp=ts.to_pydatetime(),
             open=float(row["Open"]),
             high=float(row["High"]),
@@ -826,9 +842,9 @@ def _build_h4_bias_map(bars: list[Bar]) -> list[str | None]:
             close=float(row["Close"]),
         ))
 
-    h4_cache = build_indicator_cache(h4_bars, lookback=260)
-    h4_rows: list[dict] = []
-    for bar, res in zip(h4_bars, h4_cache):
+    higher_cache = build_indicator_cache(higher_bars, lookback=260)
+    higher_rows: list[dict] = []
+    for bar, res in zip(higher_bars, higher_cache):
         bias = "NEUTRO"
         if res:
             adx_min = getattr(Config, "REGIME_ADX_TRENDING", 25) - 2
@@ -836,12 +852,20 @@ def _build_h4_bias_map(bars: list[Bar]) -> list[str | None]:
                 bias = "BUY"
             elif res.get("trend_dn") and float(res.get("adx", 0) or 0) >= adx_min:
                 bias = "SELL"
-        h4_rows.append({"timestamp": bar.timestamp, "h4_bias": bias})
+        higher_rows.append({"timestamp": bar.timestamp, "bias": bias})
 
     orig = pd.DataFrame({"timestamp": [b.timestamp for b in bars]})
-    bias_df = pd.DataFrame(h4_rows).sort_values("timestamp")
+    bias_df = pd.DataFrame(higher_rows).sort_values("timestamp")
     merged = pd.merge_asof(orig.sort_values("timestamp"), bias_df, on="timestamp", direction="backward")
-    return [None if pd.isna(v) else str(v) for v in merged["h4_bias"].tolist()]
+    return [None if pd.isna(v) else str(v) for v in merged["bias"].tolist()]
+
+
+def _build_h4_bias_map(bars: list[Bar]) -> list[str | None]:
+    return _build_higher_tf_bias_map(bars, "4h")
+
+
+def _build_h1_bias_map(bars: list[Bar]) -> list[str | None]:
+    return _build_higher_tf_bias_map(bars, "1h")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -884,7 +908,12 @@ def run_backtest(
     if indicator_cache is None:
         indicator_cache = build_indicator_cache(bars)
     if h4_bias_map is None:
-        h4_bias_map = _build_h4_bias_map(bars) if tf == "H1" else [None] * len(bars)
+        if tf == "H1":
+            h4_bias_map = _build_h4_bias_map(bars)
+        elif tf == "M15":
+            h4_bias_map = _build_h1_bias_map(bars)
+        else:
+            h4_bias_map = [None] * len(bars)
     elif len(h4_bias_map) < len(bars):
         h4_bias_map = list(h4_bias_map) + [None] * (len(bars) - len(h4_bias_map))
     trades: list[dict] = []
@@ -974,6 +1003,7 @@ def run_backtest(
                 adx_min=adx_min if adx_min is not None else 16.0,
                 pull_range=pull_range,
                 weekly_trade_target=weekly_trade_target,
+                higher_bias=h4_bias,
             )
         else:
             direction = _signal(
