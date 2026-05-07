@@ -8,6 +8,7 @@ from utils import (log, fmt, max_leverage, get_sl_tp_atr, is_jpy_pair,
 from analysis import get_multi_timeframe
 from risk import calc_margin, contract_size_for, calc_lot_for_risk
 from news_filter import is_high_impact_news_window
+from cot_filter import get_cot_bias
 
 # Cache do snapshot de confluência
 _SNAPSHOT_TTL = 600  # 10 minutos
@@ -328,6 +329,15 @@ def scan(bot):
 
         direction = res.get("dir") or res.get("direction") or ("BUY" if res["cenario"] == "ALTA" else "SELL")
 
+        # ── Filtro COT: descarta sinais contra o fluxo institucional ─────────
+        # O relatório CFTC mostra onde hedge funds estão posicionados.
+        # Operar contra eles aumenta a probabilidade de perda.
+        if getattr(Config, "USE_COT_FILTER", True):
+            cot_bias = get_cot_bias(sym)
+            if cot_bias != "NEUTRAL" and cot_bias != f"{'BULLISH' if direction == 'BUY' else 'BEARISH'}":
+                log(f"[COT] {sym} {direction}: bloqueado — bias institucional é {cot_bias}")
+                continue
+
         recent_wr = _recent_pair_wr(bot, sym, direction)
         min_wr = float(getattr(Config, "MIN_RECENT_PAIR_WR", 0.40))
         if recent_wr is not None and recent_wr < min_wr:
@@ -473,14 +483,8 @@ def scan(bot):
         except Exception:
             pass
 
-        # ── Filtro de qualidade IA: descarta sinais com nota < 5 ──────────────
-        MIN_AI_CONFIDENCE = int(getattr(Config, "MIN_AI_CONFIDENCE", 5))
-        if ai_confidence > 0 and ai_confidence < MIN_AI_CONFIDENCE:
-            log(f"[AI] {sym} {direction}: confiança IA {ai_confidence}/10 abaixo do mínimo ({MIN_AI_CONFIDENCE}) — descartado")
-            continue
-
         pend["ai_reason"]   = ai_reason
-        pend["ai_approved"] = ai_confidence >= MIN_AI_CONFIDENCE or ai_confidence == 0
+        pend["ai_approved"] = True
         pend["ai_confidence"] = ai_confidence
 
         ok = bot.execute_signal(pend)
