@@ -13,12 +13,14 @@ import argparse
 import copy
 import json
 import math
+import os
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from backtester import load_bars_from_csv, run_backtest, build_indicator_cache, prepare_bars_for_backtest
+from backtester import load_bars_from_csv, run_backtest, build_indicator_cache, prepare_bars_for_backtest, _build_h4_bias_map
 from config import Config
 from utils import log, save_strategy_settings
 
@@ -90,6 +92,62 @@ TARGET_TRADES_WEEK = 2.5 if _is_h1_mode() else 3.0
 MAX_WALK_FORWARD_FOLDS = 3
 
 Genome = dict[str, Any]
+
+_GENETIC_WORKER_CTX: dict[str, Any] = {}
+
+
+def _init_genetic_worker(prepared_map, cache_map, fold_map, balance, primary):
+    global _GENETIC_WORKER_CTX
+    _GENETIC_WORKER_CTX = {
+        "prepared_map": prepared_map,
+        "cache_map": cache_map,
+        "fold_map": fold_map,
+        "balance": balance,
+        "primary": primary,
+    }
+
+
+def _evaluate_genome_worker(genome: Genome) -> dict[str, Any]:
+    ctx = _GENETIC_WORKER_CTX
+    prepared_map = ctx["prepared_map"]
+    cache_map = ctx["cache_map"]
+    fold_map = ctx["fold_map"]
+    balance = ctx["balance"]
+    primary = ctx["primary"]
+
+    symbol_scores: list[float] = []
+    primary_train = None
+    primary_test = None
+    primary_fitness = None
+    symbol_trade_penalty = 0.0
+
+    for sym, prepared in prepared_map.items():
+        evaluation = _evaluate_genome_on_dataset(genome, sym, prepared_map[sym], cache_map[sym], fold_map[sym], balance)
+        symbol_scores.append(float(evaluation["fitness"]))
+        symbol_trade_penalty += max(0.0, 1.0 - min(1.0, float(evaluation["avg_test_trades"]) / float(MIN_TRADES)))
+        if sym == primary:
+            primary_train = evaluation["primary_train"]
+            primary_test = evaluation["primary_test"]
+            primary_fitness = evaluation["fitness"]
+
+    if not symbol_scores:
+        train_m = {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
+        test_m = train_m.copy()
+        f = -5.0
+    else:
+        avg_fitness = sum(symbol_scores) / len(symbol_scores)
+        universe_penalty = min(0.55, symbol_trade_penalty / max(1, len(symbol_scores)))
+        f = avg_fitness - universe_penalty
+        train_m = primary_train or {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
+        test_m = primary_test or train_m.copy()
+        if primary_fitness is not None:
+            f = (f * 0.8) + (float(primary_fitness) * 0.2)
+
+    return {
+        "fitness": f,
+        "train": train_m,
+        "test": test_m,
+    }
 
 
 def _rand_gene(key: str) -> float | int:
@@ -198,9 +256,12 @@ def _evaluate_genome_on_dataset(
         train_cache = full_cache[train_slice]
         test_cache = full_cache[test_slice]
 
+        h4_map_train = _build_h4_bias_map(train_bars) if len(train_bars) >= 200 else None
+        h4_map_test = _build_h4_bias_map(test_bars) if len(test_bars) >= 200 else None
+
         try:
-            train_bt = _run_segment(train_bars, symbol, balance, genome, train_cache)
-            test_bt = _run_segment(test_bars, symbol, balance, genome, test_cache)
+            train_bt = _run_segment(train_bars, symbol, balance, genome, train_cache, h4_map_train, True)
+            test_bt = _run_segment(test_bars, symbol, balance, genome, test_cache, h4_map_test, True)
             train_m = train_bt.metrics
             test_m = test_bt.metrics
         except Exception:
@@ -351,7 +412,15 @@ def _split_bars(bars: list, split_ratio: float = 0.7) -> tuple[list, list]:
     return bars[:split], bars[max(0, split - 180):]
 
 
-def _run_segment(bars, symbol: str, balance: float, genome: Genome, indicator_cache: list[dict | None] | None = None):
+def _run_segment(
+    bars,
+    symbol: str,
+    balance: float,
+    genome: Genome,
+    indicator_cache: list[dict | None] | None = None,
+    h4_bias_map: list[str | None] | None = None,
+    prepared_bars: bool = False,
+):
     return run_backtest(
         bars,
         symbol=symbol,
@@ -366,6 +435,8 @@ def _run_segment(bars, symbol: str, balance: float, genome: Genome, indicator_ca
         weekly_trade_target=float(genome["WEEKLY_TARGET"]),
         max_bars_in_trade=int(genome["MAX_BARS_IN_TRADE"]),
         indicator_cache=indicator_cache,
+        prepared_bars=prepared_bars,
+        h4_bias_map=h4_bias_map,
     )
 
 
@@ -391,7 +462,6 @@ def run_evolution(
     if symbol.upper() not in datasets and datasets:
         symbol = next(iter(datasets.keys()))
 
-    # Sempre valida o par principal primeiro e, quando possível, adiciona pares correlatos.
     primary = symbol.upper()
     universe = _unique_preserve_order([primary] + [s.upper() for s in SYMBOL_PEERS.get(primary, [])])
     datasets = {k: datasets[k] for k in universe if k in datasets}
@@ -404,6 +474,7 @@ def run_evolution(
     prepared_map: dict[str, list] = {}
     cache_map: dict[str, list[dict | None]] = {}
     fold_map: dict[str, list[tuple[slice, slice]]] = {}
+    h4_map: dict[str, list[str | None]] = {}
 
     for sym, data in datasets.items():
         prepared = prepare_bars_for_backtest(data)
@@ -412,6 +483,8 @@ def run_evolution(
         prepared_map[sym] = prepared
         cache_map[sym] = build_indicator_cache(prepared)
         fold_map[sym] = _make_walk_forward_slices(len(prepared), max_folds=MAX_WALK_FORWARD_FOLDS)
+        if sym == primary or _is_h1_mode():
+            h4_map[sym] = _build_h4_bias_map(prepared)
 
     if primary not in prepared_map:
         raise ValueError("Histórico insuficiente para otimização robusta")
@@ -419,73 +492,77 @@ def run_evolution(
     if primary not in fold_map or not fold_map[primary]:
         raise ValueError("Histórico insuficiente para gerar walk-forward")
 
-    log("[GENETIC] Pré-calculando indicadores e janelas walk-forward...")
+    log("[GENETIC] Pré-calculando indicadores, viés H4 e janelas walk-forward...")
     population: list[Genome] = [random_genome() for _ in range(POPULATION_SIZE)]
     results: list[GenerationResult] = []
 
-    for gen in range(1, generations + 1):
-        log(f"[GENETIC] Geração {gen}/{generations} — avaliando {len(population)} genomas em {len(prepared_map)} par(es)...")
-        fitness_scores: list[float] = []
-        train_metrics_list: list[dict] = []
-        test_metrics_list: list[dict] = []
+    worker_count = max(2, min(6, os.cpu_count() or 2, len(population)))
+    use_parallel = worker_count > 1 and len(population) > 2
 
-        for i, genome in enumerate(population):
-            symbol_scores: list[float] = []
-            primary_train = None
-            primary_test = None
-            primary_fitness = None
-            symbol_trade_penalty = 0.0
+    def _eval_population_serial(population: list[Genome]):
+        out = []
+        for genome in population:
+            out.append(_evaluate_genome_worker(genome))
+        return out
 
-            for sym, prepared in prepared_map.items():
-                evaluation = _evaluate_genome_on_dataset(genome, sym, prepared_map[sym], cache_map[sym], fold_map[sym], balance)
-                symbol_scores.append(float(evaluation["fitness"]))
-                symbol_trade_penalty += max(0.0, 1.0 - min(1.0, float(evaluation["avg_test_trades"]) / float(MIN_TRADES)))
-                if sym == primary:
-                    primary_train = evaluation["primary_train"]
-                    primary_test = evaluation["primary_test"]
-                    primary_fitness = evaluation["fitness"]
+    executor = None
+    try:
+        if use_parallel:
+            executor = ProcessPoolExecutor(
+                max_workers=worker_count,
+                initializer=_init_genetic_worker,
+                initargs=(prepared_map, cache_map, fold_map, balance, primary),
+            )
 
-            if not symbol_scores:
-                train_m = {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
-                test_m = train_m.copy()
-                f = -5.0
+        for gen in range(1, generations + 1):
+            log(f"[GENETIC] Geração {gen}/{generations} — avaliando {len(population)} genomas em {len(prepared_map)} par(es)...")
+
+            if use_parallel and executor is not None:
+                try:
+                    evaluated = list(executor.map(_evaluate_genome_worker, population, chunksize=1))
+                except Exception as e:
+                    log(f"[GENETIC] Paralelização falhou, voltando para modo serial: {e}")
+                    evaluated = _eval_population_serial(population)
+                    use_parallel = False
             else:
-                avg_fitness = sum(symbol_scores) / len(symbol_scores)
-                # Penaliza genomas que só funcionam num único par ou que geram poucos trades no universo.
-                universe_penalty = min(0.55, symbol_trade_penalty / max(1, len(symbol_scores)))
-                f = avg_fitness - universe_penalty
-                train_m = primary_train or {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
-                test_m = primary_test or train_m.copy()
-                if primary_fitness is not None:
-                    f = (f * 0.8) + (float(primary_fitness) * 0.2)
+                evaluated = _eval_population_serial(population)
 
-            fitness_scores.append(f)
-            train_metrics_list.append(train_m)
-            test_metrics_list.append(test_m)
+            fitness_scores: list[float] = []
+            train_metrics_list: list[dict] = []
+            test_metrics_list: list[dict] = []
 
-        best_idx = fitness_scores.index(max(fitness_scores))
-        best_g = population[best_idx]
-        best_f = fitness_scores[best_idx]
-        best_train = train_metrics_list[best_idx]
-        best_test = test_metrics_list[best_idx]
+            for item in evaluated:
+                fitness_scores.append(float(item["fitness"]))
+                train_metrics_list.append(item["train"])
+                test_metrics_list.append(item["test"])
 
-        log(
-            f"[GENETIC] Gen {gen}: fitness={best_f:.3f} | "
-            f"WR(t)={best_test.get('winrate', 0)}% | PF(t)={best_test.get('profit_factor', 0)} | "
-            f"DD(t)={best_test.get('max_drawdown_pct', 0)}% | Trades(t)={best_test.get('total_trades', 0)} | "
-            f"Trades/wk={best_test.get('trade_frequency_per_week', 0)}"
-        )
+            best_idx = fitness_scores.index(max(fitness_scores))
+            best_g = population[best_idx]
+            best_f = fitness_scores[best_idx]
+            best_train = train_metrics_list[best_idx]
+            best_test = test_metrics_list[best_idx]
 
-        results.append(GenerationResult(
-            generation=gen,
-            best_genome=copy.deepcopy(best_g),
-            best_fitness=best_f,
-            best_train_metrics=best_train,
-            best_test_metrics=best_test,
-            population=list(population),
-        ))
+            log(
+                f"[GENETIC] Gen {gen}: fitness={best_f:.3f} | "
+                f"WR(t)={best_test.get('winrate', 0)}% | PF(t)={best_test.get('profit_factor', 0)} | "
+                f"DD(t)={best_test.get('max_drawdown_pct', 0)}% | Trades(t)={best_test.get('total_trades', 0)} | "
+                f"Trades/wk={best_test.get('trade_frequency_per_week', 0)}"
+            )
 
-        population = evolve(population, fitness_scores)
+            results.append(GenerationResult(
+                generation=gen,
+                best_genome=copy.deepcopy(best_g),
+                best_fitness=best_f,
+                best_train_metrics=best_train,
+                best_test_metrics=best_test,
+                population=list(population),
+            ))
+
+            population = evolve(population, fitness_scores)
+
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
 
     return results
 

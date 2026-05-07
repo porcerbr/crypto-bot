@@ -591,16 +591,103 @@ def _sl_tp(entry: float, direction: str, atr: float, atr_sl_mult: float = 1.5, a
     return get_sl_tp_atr(entry, atr, direction, atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)[:2]
 
 
+
 def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | None]:
-    """Pré-calcula os indicadores por candle para reutilização em múltiplos backtests."""
+    """Pré-calcula os indicadores por candle para reutilização em múltiplos backtests.
+
+    A versão vetorizada calcula os indicadores para toda a série apenas uma vez e
+    depois materializa os snapshots por candle, evitando o custo de recomputar
+    janelas inteiras a cada barra.
+    """
     if not bars:
         return []
 
-    df_full = bars_to_dataframe(bars)
-    cache: list[dict | None] = [None] * len(bars)
-    for i in range(len(bars)):
-        window = max(0, i - lookback)
-        cache[i] = _indicators(df_full.iloc[window : i + 1])
+    df = bars_to_dataframe(bars)
+    n = len(df)
+    if n < 40:
+        return [None] * n
+
+    c = df["Close"]
+    h = df["High"]
+    l = df["Low"]
+    o = df["Open"]
+
+    ema9 = c.ewm(span=9, adjust=False).mean()
+    ema21 = c.ewm(span=21, adjust=False).mean()
+    ema50 = c.ewm(span=50, adjust=False).mean()
+    ema200_span = max(1, min(200, n - 1))
+    ema200 = c.ewm(span=ema200_span, adjust=False).mean()
+
+    macd_line = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+
+    d = c.diff()
+    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean()
+    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean()
+    rsi = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
+
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(span=14, adjust=False).mean()
+
+    up_move = h.diff()
+    down_move = -l.diff()
+    plus_dm = ((up_move > down_move) & (up_move > 0)) * up_move.clip(lower=0)
+    minus_dm = ((down_move > up_move) & (down_move > 0)) * down_move.clip(lower=0)
+    atr_safe = atr.replace(0, 1e-10)
+    plus_di = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    minus_di = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    adx = ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10) * 100).ewm(span=14, adjust=False).mean()
+
+    bb_mid = c.rolling(20).mean()
+    bb_std = c.rolling(20).std(ddof=0).fillna(0)
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+
+    cache: list[dict | None] = [None] * n
+    for i in range(n):
+        if i < 39:
+            continue
+
+        atr_val = float(atr.iloc[i]) if not math.isnan(float(atr.iloc[i])) else 0.0
+        price = float(c.iloc[i])
+        e21 = float(ema21.iloc[i])
+        e50 = float(ema50.iloc[i])
+        e200 = float(ema200.iloc[i])
+        e9 = float(ema9.iloc[i])
+        rsi_val = float(rsi.iloc[i])
+        rsi_prev = float(rsi.iloc[i - 1]) if i >= 1 else rsi_val
+        macd_now = float(macd_line.iloc[i])
+        macd_sig = float(macd_signal.iloc[i])
+        macd_prev = float(macd_line.iloc[i - 1]) if i >= 1 else macd_now
+        sig_prev = float(macd_signal.iloc[i - 1]) if i >= 1 else macd_sig
+
+        cache[i] = {
+            "price": price,
+            "ema9": e9,
+            "ema21": e21,
+            "ema50": e50,
+            "ema200": e200,
+            "atr": atr_val,
+            "adx": float(adx.iloc[i]),
+            "pdi": float(plus_di.iloc[i]),
+            "ndi": float(minus_di.iloc[i]),
+            "rsi": rsi_val,
+            "rsi_prev": rsi_prev,
+            "macd_above": macd_now > macd_sig,
+            "macd_below": macd_now < macd_sig,
+            "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
+            "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
+            "dist_e21": (price - e21) / atr_val if atr_val > 0 else 0.0,
+            "dist_bb_up": (float(bb_upper.iloc[i]) - price) / atr_val if atr_val > 0 else 0.0,
+            "dist_bb_dn": (price - float(bb_lower.iloc[i])) / atr_val if atr_val > 0 else 0.0,
+            "candle_bull": float(c.iloc[i]) > float(o.iloc[i]),
+            "candle_bear": float(c.iloc[i]) < float(o.iloc[i]),
+            "rsi_bounce_up": rsi_prev < 42 and rsi_val >= 42,
+            "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
+            "trend_up": price > e200 and e21 > e50,
+            "trend_dn": price < e200 and e21 < e50,
+            "range_mode": float(adx.iloc[i]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
+        }
     return cache
 
 
@@ -666,12 +753,17 @@ def run_backtest(
     weekly_trade_target: float = 3.0,
     max_bars_in_trade: int | None = None,
     indicator_cache: list[dict | None] | None = None,
+    prepared_bars: bool = False,
+    h4_bias_map: list[str | None] | None = None,
 ) -> BacktestResult:
     if not bars:
         return BacktestResult(metrics=calculate_metrics_from_history([], initial_balance=initial_balance), trades=[], equity_curve=[], params={"symbol": symbol})
 
     # Resample automático: M1/M5/M15 → H1 para performance e compatibilidade da estratégia
-    bars = prepare_bars_for_backtest(bars)
+    if not prepared_bars:
+        bars = prepare_bars_for_backtest(bars)
+    else:
+        bars = list(bars)
     tf = detect_timeframe(bars)
     initial_balance = float(initial_balance if initial_balance is not None else Config.INITIAL_BALANCE)
     balance = initial_balance
@@ -682,7 +774,10 @@ def run_backtest(
 
     if indicator_cache is None:
         indicator_cache = build_indicator_cache(bars)
-    h4_bias_map = _build_h4_bias_map(bars) if tf == "H1" else [None] * len(bars)
+    if h4_bias_map is None:
+        h4_bias_map = _build_h4_bias_map(bars) if tf == "H1" else [None] * len(bars)
+    elif len(h4_bias_map) < len(bars):
+        h4_bias_map = list(h4_bias_map) + [None] * (len(bars) - len(h4_bias_map))
     trades: list[dict] = []
     active: dict | None = None
     cooldown = 0
