@@ -97,6 +97,17 @@ def resample_to_h1(bars: list[Bar]) -> list[Bar]:
         ))
     return result
 
+def prepare_bars_for_backtest(bars: list[Bar]) -> list[Bar]:
+    """Normaliza o histórico para o timeframe efetivamente usado no backtest."""
+    if not bars:
+        return bars
+
+    raw_tf = detect_timeframe(bars)
+    if raw_tf in ('M1', 'M5', 'M15'):
+        return resample_to_h1(bars)
+    return bars
+
+
 
 def _parse_dt(value: str) -> datetime | None:
     if not value:
@@ -571,6 +582,19 @@ def _sl_tp(entry: float, direction: str, atr: float, atr_sl_mult: float = 1.5, a
     return get_sl_tp_atr(entry, atr, direction, atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)[:2]
 
 
+def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | None]:
+    """Pré-calcula os indicadores por candle para reutilização em múltiplos backtests."""
+    if not bars:
+        return []
+
+    df_full = bars_to_dataframe(bars)
+    cache: list[dict | None] = [None] * len(bars)
+    for i in range(len(bars)):
+        window = max(0, i - lookback)
+        cache[i] = _indicators(df_full.iloc[window : i + 1])
+    return cache
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Backtest engine
 # ──────────────────────────────────────────────────────────────────────────────
@@ -588,15 +612,13 @@ def run_backtest(
     warmup_bars: int | None = None,
     weekly_trade_target: float = 3.0,
     max_bars_in_trade: int | None = None,
+    indicator_cache: list[dict | None] | None = None,
 ) -> BacktestResult:
     if not bars:
         return BacktestResult(metrics=calculate_metrics_from_history([], initial_balance=initial_balance), trades=[], equity_curve=[], params={"symbol": symbol})
 
     # Resample automático: M1/M5/M15 → H1 para performance e compatibilidade da estratégia
-    raw_tf = detect_timeframe(bars)
-    if raw_tf in ("M1", "M5", "M15"):
-        bars = resample_to_h1(bars)
-
+    bars = prepare_bars_for_backtest(bars)
     tf = detect_timeframe(bars)
     initial_balance = float(initial_balance if initial_balance is not None else Config.INITIAL_BALANCE)
     balance = initial_balance
@@ -605,7 +627,8 @@ def run_backtest(
     max_bars = int(max_bars_in_trade or (60 if tf == "H1" else 12))
     cooldown_after_loss = 2 if tf == "H1" else 1
 
-    df_full = bars_to_dataframe(bars)
+    if indicator_cache is None:
+        indicator_cache = build_indicator_cache(bars)
     trades: list[dict] = []
     active: dict | None = None
     cooldown = 0
@@ -681,8 +704,7 @@ def run_backtest(
         if tf == "H1" and not _in_session(bar, symbol):
             continue
 
-        window = max(0, i - 260)
-        res = _indicators(df_full.iloc[window : i + 1])
+        res = indicator_cache[i] if i < len(indicator_cache) else None
         if not res or res["atr"] <= 0:
             continue
 

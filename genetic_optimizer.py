@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from backtester import load_bars_from_csv, run_backtest
+from backtester import load_bars_from_csv, run_backtest, build_indicator_cache, prepare_bars_for_backtest
 from config import Config
 from utils import log, save_strategy_settings
 
@@ -195,7 +195,7 @@ def _split_bars(bars: list, split_ratio: float = 0.7) -> tuple[list, list]:
     return bars[:split], bars[max(0, split - 180):]
 
 
-def _run_segment(bars, symbol: str, balance: float, genome: Genome, tail_extra: int = 0):
+def _run_segment(bars, symbol: str, balance: float, genome: Genome, indicator_cache: list[dict | None] | None = None):
     return run_backtest(
         bars,
         symbol=symbol,
@@ -209,6 +209,7 @@ def _run_segment(bars, symbol: str, balance: float, genome: Genome, tail_extra: 
         warmup_bars=int(genome["WARMUP_BARS"]),
         weekly_trade_target=float(genome["WEEKLY_TARGET"]),
         max_bars_in_trade=int(genome["MAX_BARS_IN_TRADE"]),
+        indicator_cache=indicator_cache,
     )
 
 
@@ -222,6 +223,11 @@ def run_evolution(
         raise ValueError("Histórico insuficiente para otimização robusta")
 
     train_bars, test_bars = _split_bars(bars)
+    train_bars = prepare_bars_for_backtest(train_bars)
+    test_bars = prepare_bars_for_backtest(test_bars)
+    log("[GENETIC] Pré-calculando indicadores do treino e do teste...")
+    train_cache = build_indicator_cache(train_bars)
+    test_cache = build_indicator_cache(test_bars)
     population: list[Genome] = [random_genome() for _ in range(POPULATION_SIZE)]
     results: list[GenerationResult] = []
 
@@ -233,8 +239,8 @@ def run_evolution(
 
         for i, genome in enumerate(population):
             try:
-                train_bt = _run_segment(train_bars, symbol, balance, genome)
-                test_bt = _run_segment(test_bars, symbol, balance, genome)
+                train_bt = _run_segment(train_bars, symbol, balance, genome, train_cache)
+                test_bt = _run_segment(test_bars, symbol, balance, genome, test_cache)
                 train_m = train_bt.metrics
                 test_m = test_bt.metrics
             except Exception as e:
