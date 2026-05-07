@@ -432,16 +432,30 @@ def _refresh_cache():
     if failed_symbols:
         yahoo_ok = _refresh_cache_from_yahoo(failed_symbols)
         source_stats["yahoo"] += yahoo_ok
-        still_failed = [s for s in failed_symbols if s not in _cache]
+        # Símbolos que ainda falharam após Yahoo
+        still_failed = [s for s in failed_symbols
+                        if s not in _cache or source_stats["yahoo"] == 0]
     else:
         still_failed = []
 
-    for sym in still_failed:
-        if sym in _cache:
-            source_stats["stale"] += 1
-            log(f"[FEED] {sym}: usando cache antigo (stale-safe)")
+    # ── Stale-safe: usa cache expirado quando todas as fontes falharam ───────
+    # Para análise H1, dados de até 4h atrás são aceitáveis.
+    # Isso cobre o período de créditos esgotados até meia-noite UTC.
+    _STALE_MAX_AGE = 4 * 3600   # 4 horas
+    for sym in list(still_failed):
+        cached_entry = _cache.get(sym)
+        if cached_entry is not None:
+            # _cache guarda (timestamp, dataframe)
+            cache_ts  = cached_entry[0] if isinstance(cached_entry, tuple) else cached_entry.get("ts", 0)
+            cache_age = now - cache_ts
+            if cache_age <= _STALE_MAX_AGE:
+                source_stats["stale"] += 1
+                still_failed.remove(sym)
+                log(f"[FEED] {sym}: cache stale OK ({int(cache_age/60)}min atrás)")
+            else:
+                log(f"[FEED] {sym}: cache muito antigo ({int(cache_age/3600)}h) — sem dados")
         else:
-            log(f"[FEED] {sym}: sem dados válidos em nenhuma fonte")
+            log(f"[FEED] {sym}: sem dados em nenhuma fonte e sem cache")
 
     _last_refresh = now
     log(
