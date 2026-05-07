@@ -62,7 +62,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     # FALLBACK DE DADOS — Yahoo Finance
     # ═══════════════════════════════════════════════════════════════════════════════
-    USE_YAHOO_FALLBACK  = True
+    USE_YAHOO_FALLBACK  = False     # Railway bloqueia Yahoo Finance — usar stale cache
     YAHOO_FALLBACK_TTL  = 30 * 60
 
     # ═══════════════════════════════════════════════════════════════════════════════
