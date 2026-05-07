@@ -367,7 +367,8 @@ class TelegramDesk:
                         "• /mode — modo e parâmetros\n"
                         "• /backtest [PAR] — backtest do par\n"
                         "• /optimize — grid search via CSV\n"
-                        "• /genetic [PAR] — otimização robusta walk-forward via CSV\n\n"
+                        "• /genetic [PAR] — otimização robusta walk-forward via CSV\n"
+                        "• /cot — bias semanal COT (Commitment of Traders)\n\n"
                         "Botões abaixo para acesso rápido.",
                         reply_markup=keyboard_markup(),
                     )
@@ -465,6 +466,15 @@ class TelegramDesk:
                         "⏳ Tempo estimado: 2–5 minutos (20 gerações).",
                         reply_markup=keyboard_markup(),
                     )
+
+                elif cmd == "/cot":
+                    try:
+                        from cot_filter import format_cot_telegram, refresh_cot
+                        self.send("⏳ Carregando dados COT...", reply_markup=keyboard_markup())
+                        refresh_cot()
+                        self.send(format_cot_telegram(), reply_markup=keyboard_markup())
+                    except Exception as e:
+                        self.send(f"❌ Erro ao buscar dados COT: {e}", reply_markup=keyboard_markup())
 
                 else:
                     self.send(
