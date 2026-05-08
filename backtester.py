@@ -367,21 +367,26 @@ def bars_to_dataframe(bars: list[Bar]) -> pd.DataFrame:
 
 def _in_session(bar: Bar, symbol: str, tf: str = "H1") -> bool:
     """
-    Filtra horários de baixa liquidez.
-    M15: janela mais ampla (6h–22h UTC) — mais sessões cobertas.
-    H1: janela mais restrita — só durante pico de liquidez.
+    Filtra horários de mercado morto.
+
+    M15: apenas bloqueia 00h–05h UTC (liquidez zero) e fins de semana.
+    Deixa tudo o mais aberto — sessões de Tóquio, Londres e NY são todas válidas.
+
+    H1: janela mais restrita (pico de liquidez por par).
     """
-    h = bar.timestamp.hour
+    ts = bar.timestamp
+    # Fim de semana: mercado fechado
+    if ts.weekday() >= 5:
+        return False
+    # Sexta > 22h UTC: risco de gap no fim de semana
+    if ts.weekday() == 4 and ts.hour >= 22:
+        return False
+
+    h = ts.hour
     if tf in ("M15", "M5", "M1"):
-        # M15 — cobre Londres + Nova York + Asia/Pacific parcial
-        if symbol == "XAUUSD":
-            return 6 <= h < 21
-        if is_jpy_pair(symbol):
-            return h < 10 or h >= 22   # Tóquio + Londres abertura
-        if "AUD" in symbol or "NZD" in symbol:
-            return h < 10 or h >= 21
-        return 6 <= h < 22             # EUR/USD, GBP/USD: Lisboa → NY fechamento
-    # H1 — janela restrita (pico de liquidez)
+        # M15: só bloqueia o mercado morto (madrugada UTC)
+        return h >= 5   # bloqueia 00:00–04:59 UTC
+    # H1 — janela restrita (pico de liquidez por par)
     if symbol == "XAUUSD":
         return 7 <= h < 20
     if is_jpy_pair(symbol):
@@ -601,213 +606,69 @@ def _signal(
 
 def _signal_m15(
     res: dict,
-    min_confluence: int = 3,
-    adx_min: float = 16.0,
+    min_confluence: int = 1,
+    adx_min: float = 20.0,
     pull_range: tuple[float, float] | None = None,
     weekly_trade_target: float = 8.0,
     h1_bias: str | None = None,
+    rsi_ob: float = 68.0,
+    rsi_os: float = 32.0,
 ) -> str | None:
     """
-    Sinal M15 com multi-timeframe: H1 filtra a direção, M15 define a entrada.
+    Estratégia de 3 indicadores — o que traders profissionais realmente usam:
 
-    Estrutura:
-    - HARD requirements (todos devem ser verdade): ADX, pullback zone,
-      trigger de momentum, alinhamento com tendência EMA50 M15
-    - H1 bias: descarta sinais contra a tendência H1 (maior filtro de WR)
-    - SOFT conditions: apenas refinam a qualidade (1-2 necessárias)
-    - RANGE mode: reversão apenas em extremos RSI severos (ADX fraco)
+        EMA50  →  direção da tendência (filtro estrutural)
+        MACD   →  momentum e timing de entrada (cruzamento de sinal)
+        RSI    →  evita entrar em regiões extremas (sobrecomprado/sobrevendido)
 
-    Alvo: WR 42-55% | R:R 1.5-2.2 | Frequência 3-8 trades/dia por par
+    + H1 bias: descarta sinais contra a tendência do timeframe superior.
+
+    Hard requirements (todos obrigatórios):
+        BUY:  preço > EMA50  +  MACD cruzou para cima  +  RSI < rsi_ob  +  H1 não em baixa
+        SELL: preço < EMA50  +  MACD cruzou para baixo +  RSI > rsi_os  +  H1 não em alta
+
+    Soft conditions (evoluídas pelo genético, 0–3 necessárias):
+        ADX >= adx_min  •  RSI em zona ideal  •  vela confirma direção
+
+    Referência: EMA+RSI+MACD é a combinação #1 usada por traders profissionais de Forex
+    (Axi, XS Broker, Quantified Strategies, LiteFinance — consenso de mercado 2024-2026).
     """
-    pull_range      = pull_range or (-1.5, 2.0)
-    min_confluence  = max(1, min(5, int(min_confluence or 3)))
-    adx_min         = float(adx_min or 16.0)
+    rsi    = float(res.get("rsi", 50) or 50)
+    adx    = float(res.get("adx", 0)  or 0)
+    d21    = float(res.get("dist_e21", 0) or 0)
 
-    adx  = float(res.get("adx", 0) or 0)
-    rsi  = float(res.get("rsi", 50) or 50)
-    d21  = float(res.get("dist_e21", 0) or 0)
-    pull_lo, pull_hi = pull_range
-
-    # ── H1 bias: filtra direção ───────────────────────────────────────────────
-    # "BUY"  → só entradas de compra (tendência H1 altista)
-    # "SELL" → só entradas de venda (tendência H1 baixista)
-    # None / "NEUTRAL" → permite os dois lados
     h1_allows_buy  = h1_bias in (None, "NEUTRAL", "BUY")
     h1_allows_sell = h1_bias in (None, "NEUTRAL", "SELL")
-    h1_strong_up   = h1_bias == "BUY"
-    h1_strong_dn   = h1_bias == "SELL"
-
-    # ── Triggers M15 (momentum concreto) ─────────────────────────────────────
-    buy_trigger  = res.get("macd_cross_up", False) or res.get("ema9_cross_up", False)
-    sell_trigger = res.get("macd_cross_down", False) or res.get("ema9_cross_dn", False)
 
     # ── BUY ──────────────────────────────────────────────────────────────────
-    # Hard: ADX suficiente + H1 não em baixa + pullback + trigger + acima EMA50
-    if (adx >= adx_min
-            and h1_allows_buy
-            and pull_lo <= d21 <= pull_hi
-            and buy_trigger
-            and res.get("above_ema50", False)):
+    if (res.get("above_ema50", False)      # tendência M15 altista
+            and res.get("macd_cross_up", False)  # MACD cruza para cima (trigger)
+            and rsi < rsi_ob               # RSI não sobrecomprado
+            and h1_allows_buy):            # H1 não em queda
 
         soft = sum([
-            40 <= rsi <= 68,                           # RSI em zona saudável
-            res.get("candle_bull", False),             # vela confirma
-            res.get("ema9_above_ema21", False),        # momentum curto alinhado
-            h1_strong_up,                              # H1 fortemente a favor
-            float(res.get("pdi", 0) or 0) > float(res.get("ndi", 0) or 0),  # DI+>DI-
+            adx >= adx_min,                # força de tendência (opcional)
+            40 <= rsi <= 65,               # RSI em zona ideal de entrada
+            res.get("candle_bull", False), # vela de confirmação
         ])
-        if soft >= max(1, min_confluence - 2):
+        if soft >= min_confluence:
             return "BUY"
 
     # ── SELL ─────────────────────────────────────────────────────────────────
-    if (adx >= adx_min
-            and h1_allows_sell
-            and -pull_hi <= d21 <= -pull_lo
-            and sell_trigger
-            and res.get("below_ema50", False)):
+    if (res.get("below_ema50", False)
+            and res.get("macd_cross_down", False)
+            and rsi > rsi_os
+            and h1_allows_sell):
 
         soft = sum([
-            32 <= rsi <= 60,
+            adx >= adx_min,
+            35 <= rsi <= 60,
             res.get("candle_bear", False),
-            not res.get("ema9_above_ema21", True),
-            h1_strong_dn,
-            float(res.get("ndi", 0) or 0) > float(res.get("pdi", 0) or 0),
         ])
-        if soft >= max(1, min_confluence - 2):
-            return "SELL"
-
-    # ── RANGE MODE: reversão em extremos severos (só ADX fraco) ──────────────
-    if adx < adx_min and res.get("range_mode", False):
-        if (rsi <= 28
-                and res.get("rsi_bounce_up", False)
-                and res.get("candle_bull", False)
-                and h1_allows_buy):
-            return "BUY"
-        if (rsi >= 72
-                and res.get("rsi_bounce_dn", False)
-                and res.get("candle_bear", False)
-                and h1_allows_sell):
+        if soft >= min_confluence:
             return "SELL"
 
     return None
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SL / TP
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _sl_tp(entry: float, direction: str, atr: float, atr_sl_mult: float = 1.5, atr_tp_mult: float = 3.0) -> tuple[float, float]:
-    atr_sl_mult = max(0.1, float(atr_sl_mult or 1.5))
-    atr_tp_mult = max(0.1, float(atr_tp_mult or 3.0))
-    return get_sl_tp_atr(entry, atr, direction, atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)[:2]
-
-
-
-def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | None]:
-    """Pré-calcula os indicadores por candle para reutilização em múltiplos backtests.
-
-    A versão vetorizada calcula os indicadores para toda a série apenas uma vez e
-    depois materializa os snapshots por candle, evitando o custo de recomputar
-    janelas inteiras a cada barra.
-    """
-    if not bars:
-        return []
-
-    df = bars_to_dataframe(bars)
-    n = len(df)
-    if n < 40:
-        return [None] * n
-
-    c = df["Close"]
-    h = df["High"]
-    l = df["Low"]
-    o = df["Open"]
-
-    ema9 = c.ewm(span=9, adjust=False).mean()
-    ema21 = c.ewm(span=21, adjust=False).mean()
-    ema50 = c.ewm(span=50, adjust=False).mean()
-    ema200_span = max(1, min(200, n - 1))
-    ema200 = c.ewm(span=ema200_span, adjust=False).mean()
-
-    macd_line = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
-    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-
-    d = c.diff()
-    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean()
-    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean()
-    rsi = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
-
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(span=14, adjust=False).mean()
-
-    up_move = h.diff()
-    down_move = -l.diff()
-    plus_dm = ((up_move > down_move) & (up_move > 0)) * up_move.clip(lower=0)
-    minus_dm = ((down_move > up_move) & (down_move > 0)) * down_move.clip(lower=0)
-    atr_safe = atr.replace(0, 1e-10)
-    plus_di = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr_safe
-    minus_di = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr_safe
-    adx = ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10) * 100).ewm(span=14, adjust=False).mean()
-
-    bb_mid = c.rolling(20).mean()
-    bb_std = c.rolling(20).std(ddof=0).fillna(0)
-    bb_upper = bb_mid + 2 * bb_std
-    bb_lower = bb_mid - 2 * bb_std
-
-    cache: list[dict | None] = [None] * n
-    for i in range(n):
-        if i < 39:
-            continue
-
-        atr_val = float(atr.iloc[i]) if not math.isnan(float(atr.iloc[i])) else 0.0
-        price = float(c.iloc[i])
-        e21 = float(ema21.iloc[i])
-        e50 = float(ema50.iloc[i])
-        e200 = float(ema200.iloc[i])
-        e9 = float(ema9.iloc[i])
-        rsi_val = float(rsi.iloc[i])
-        rsi_prev = float(rsi.iloc[i - 1]) if i >= 1 else rsi_val
-        macd_now = float(macd_line.iloc[i])
-        macd_sig = float(macd_signal.iloc[i])
-        macd_prev = float(macd_line.iloc[i - 1]) if i >= 1 else macd_now
-        sig_prev = float(macd_signal.iloc[i - 1]) if i >= 1 else macd_sig
-
-        cache[i] = {
-            "price": price,
-            "ema9": e9,
-            "ema21": e21,
-            "ema50": e50,
-            "ema200": e200,
-            "atr": atr_val,
-            "adx": float(adx.iloc[i]),
-            "pdi": float(plus_di.iloc[i]),
-            "ndi": float(minus_di.iloc[i]),
-            "rsi": rsi_val,
-            "rsi_prev": rsi_prev,
-            "macd_above": macd_now > macd_sig,
-            "macd_below": macd_now < macd_sig,
-            "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
-            "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
-            "dist_e21": (price - e21) / atr_val if atr_val > 0 else 0.0,
-            "dist_bb_up": (float(bb_upper.iloc[i]) - price) / atr_val if atr_val > 0 else 0.0,
-            "dist_bb_dn": (price - float(bb_lower.iloc[i])) / atr_val if atr_val > 0 else 0.0,
-            "candle_bull": float(c.iloc[i]) > float(o.iloc[i]),
-            "candle_bear": float(c.iloc[i]) < float(o.iloc[i]),
-            "rsi_bounce_up": rsi_prev < 42 and rsi_val >= 42,
-            "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
-            "trend_up": price > e200 and e21 > e50,
-            "trend_dn": price < e200 and e21 < e50,
-            "range_mode": float(adx.iloc[i]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
-            # M15-specific: EMA9/EMA21 cross signals
-            "ema9_above_ema21": float(ema9.iloc[i]) > float(ema21.iloc[i]),
-            "ema9_cross_up": (float(ema9.iloc[i-1]) <= float(ema21.iloc[i-1]) and float(ema9.iloc[i]) > float(ema21.iloc[i])) if i >= 1 else False,
-            "ema9_cross_dn": (float(ema9.iloc[i-1]) >= float(ema21.iloc[i-1]) and float(ema9.iloc[i]) < float(ema21.iloc[i])) if i >= 1 else False,
-            "above_ema50": price > float(ema50.iloc[i]),
-            "below_ema50": price < float(ema50.iloc[i]),
-            "above_ema21": price > float(ema21.iloc[i]),
-            "below_ema21": price < float(ema21.iloc[i]),
-        }
-    return cache
-
 
 def _build_h1_bias_from_m15(bars: list[Bar]) -> list[str | None]:
     """
@@ -932,6 +793,8 @@ def run_backtest(
     indicator_cache: list[dict | None] | None = None,
     prepared_bars: bool = False,
     h4_bias_map: list[str | None] | None = None,
+    rsi_ob: float = 68.0,   # M15: RSI overbought threshold (don't BUY above)
+    rsi_os: float = 32.0,   # M15: RSI oversold threshold (don't SELL below)
 ) -> BacktestResult:
     if not bars:
         return BacktestResult(metrics=calculate_metrics_from_history([], initial_balance=initial_balance), trades=[], equity_curve=[], params={"symbol": symbol})
@@ -1047,10 +910,12 @@ def run_backtest(
             direction = _signal_m15(
                 res,
                 min_confluence=min_confluence,
-                adx_min=adx_min if adx_min is not None else 16.0,
+                adx_min=adx_min if adx_min is not None else 20.0,
                 pull_range=pull_range,
                 weekly_trade_target=weekly_trade_target,
-                h1_bias=h1_bias_m,   # filtro multi-timeframe
+                h1_bias=h1_bias_m,
+                rsi_ob=rsi_ob,
+                rsi_os=rsi_os,
             )
         else:
             direction = _signal(

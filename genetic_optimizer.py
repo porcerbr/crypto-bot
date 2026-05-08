@@ -24,7 +24,23 @@ from config import Config
 from utils import log, save_strategy_settings
 
 
-GENOME_KEYS = [
+# Para M15: RSI_OB e RSI_OS substituem PULL_MIN/PULL_MAX (mais relevantes)
+# Para H1: mantém PULL_MIN/PULL_MAX (pullback zone é importante no H1)
+GENOME_KEYS_M15 = [
+    "MIN_CONFLUENCE",    # soft conditions exigidas além dos 3 hard reqs (0-2)
+    "ADX_MIN",           # filtro de força de tendência (soft, opcional)
+    "ATR_MULT_SL",       # multiplicador SL por ATR
+    "ATR_MULT_TP",       # multiplicador TP por ATR
+    "RSI_OB",            # RSI overbought: não compra acima deste valor (62-75)
+    "RSI_OS",            # RSI oversold: não vende abaixo deste valor (25-38)
+    "RISK_PCT",          # risco por trade (%)
+    "WEEKLY_TARGET",     # meta de trades/semana (fitness)
+    "MIN_RR",            # R:R mínimo exigido
+    "WARMUP_BARS",       # barras de aquecimento antes de operar
+    "MAX_BARS_IN_TRADE", # expiração do trade em barras
+]
+
+GENOME_KEYS_H1 = [
     "MIN_CONFLUENCE",
     "ADX_MIN",
     "ATR_MULT_SL",
@@ -38,13 +54,19 @@ GENOME_KEYS = [
     "MAX_BARS_IN_TRADE",
 ]
 
+# Chaves ativas dependem do timeframe
+GENOME_KEYS = GENOME_KEYS_M15  # padrão M15; atualizado abaixo se H1
+
 RANGES: dict[str, tuple[float, float]] = {
+    # H1 defaults (sobrescritos abaixo para M15)
     "MIN_CONFLUENCE": (3, 8),
     "ADX_MIN": (14, 30),
     "ATR_MULT_SL": (1.0, 2.2),
     "ATR_MULT_TP": (2.0, 4.8),
     "PULL_MIN": (-2.2, -0.4),
     "PULL_MAX": (0.8, 3.0),
+    "RSI_OB": (62, 75),
+    "RSI_OS": (25, 38),
     "RISK_PCT": (0.5, 2.5),
     "WEEKLY_TARGET": (1.5, 5.0),
     "MIN_RR": (1.2, 3.5),
@@ -63,24 +85,29 @@ def _is_h1_mode() -> bool:
 
 
 if _is_m15_mode():
-    # M15 com multi-timeframe (H1 bias): sinais mais seletivos → WR maior
-    # Pull range mais apertado: preço deve estar PERTO da EMA21 para entrar
-    RANGES["MIN_CONFLUENCE"] = (2, 4)        # hard reqs já filtram; soft leve
-    RANGES["ADX_MIN"]        = (14, 24)      # ADX mínimo para tendência válida
-    RANGES["ATR_MULT_SL"]    = (0.8, 1.8)   # SL apertado (M15 tem ATR menor)
-    RANGES["ATR_MULT_TP"]    = (1.4, 2.8)   # TP menor = WR maior (break-even < 42%)
-    RANGES["PULL_MIN"]       = (-1.8, -0.3)  # pullback: preço não muito estendido
-    RANGES["PULL_MAX"]       = (0.3, 2.0)
-    RANGES["RISK_PCT"]       = (0.8, 2.5)   # risco maior compensa frequência
-    RANGES["WEEKLY_TARGET"]  = (4.0, 20.0)  # 4-20 trades/semana por par
-    RANGES["MIN_RR"]         = (1.3, 2.5)
-    RANGES["WARMUP_BARS"]    = (60, 180)
-    RANGES["MAX_BARS_IN_TRADE"] = (4, 24)   # M15: máx 6h no trade
+    # M15: estratégia EMA50 + MACD + RSI (3 indicadores dos pros)
+    # Genome controla: quando entrar (RSI_OB/OS), filtros opcionais (ADX, confluence)
+    # e gestão (SL/TP/risco)
+    GENOME_KEYS = GENOME_KEYS_M15   # usa RSI_OB/RSI_OS em vez de PULL_MIN/PULL_MAX
+    RANGES["MIN_CONFLUENCE"] = (0, 2)        # 0=puro EMA+MACD+RSI; 2=mais filtrado
+    RANGES["ADX_MIN"]        = (12, 28)      # filtro opcional de força de tendência
+    RANGES["ATR_MULT_SL"]    = (0.8, 2.0)
+    RANGES["ATR_MULT_TP"]    = (1.4, 3.0)   # R:R 1.4–3.0, break-even em 25–42%
+    RANGES["RSI_OB"]         = (62, 75)      # não compra quando RSI > este valor
+    RANGES["RSI_OS"]         = (25, 38)      # não vende quando RSI < este valor
+    RANGES["RISK_PCT"]       = (0.8, 2.5)
+    RANGES["WEEKLY_TARGET"]  = (5.0, 25.0)
+    RANGES["MIN_RR"]         = (1.2, 2.8)
+    RANGES["WARMUP_BARS"]    = (60, 200)
+    RANGES["MAX_BARS_IN_TRADE"] = (4, 32)
 elif _is_h1_mode():
+    GENOME_KEYS = GENOME_KEYS_H1   # usa PULL_MIN/PULL_MAX para H1
     RANGES["MIN_CONFLUENCE"] = (4, 8)
     RANGES["ADX_MIN"]        = (18, 34)
     RANGES["ATR_MULT_SL"]    = (1.0, 2.0)
     RANGES["ATR_MULT_TP"]    = (2.0, 4.5)
+    RANGES["PULL_MIN"]       = (-2.2, -0.4)
+    RANGES["PULL_MAX"]       = (0.8, 3.0)
     RANGES["RISK_PCT"]       = (0.5, 1.8)
     RANGES["WEEKLY_TARGET"]  = (1.5, 4.0)
     RANGES["MIN_RR"]         = (1.5, 3.5)
@@ -203,6 +230,16 @@ def _run_segment(
     h4_bias_map=None,
     prepared_bars: bool = False,
 ):
+    # M15 usa RSI_OB/RSI_OS; H1 usa PULL_MIN/PULL_MAX
+    if _is_m15_mode():
+        pull = None                       # M15: sem pullback zone
+        rsi_ob = float(genome.get("RSI_OB", 68.0))
+        rsi_os = float(genome.get("RSI_OS", 32.0))
+    else:
+        pull   = (float(genome.get("PULL_MIN", -1.5)), float(genome.get("PULL_MAX", 2.0)))
+        rsi_ob = 68.0
+        rsi_os = 32.0
+
     return run_backtest(
         bars,
         symbol=symbol,
@@ -211,7 +248,7 @@ def _run_segment(
         adx_min=float(genome["ADX_MIN"]),
         atr_sl_mult=float(genome["ATR_MULT_SL"]),
         atr_tp_mult=float(genome["ATR_MULT_TP"]),
-        pull_range=(float(genome["PULL_MIN"]), float(genome["PULL_MAX"])),
+        pull_range=pull,
         risk_pct=float(genome["RISK_PCT"]),
         warmup_bars=int(genome["WARMUP_BARS"]),
         weekly_trade_target=float(genome["WEEKLY_TARGET"]),
@@ -219,6 +256,8 @@ def _run_segment(
         indicator_cache=indicator_cache,
         prepared_bars=prepared_bars,
         h4_bias_map=h4_bias_map,
+        rsi_ob=rsi_ob,
+        rsi_os=rsi_os,
     )
 
 
@@ -617,20 +656,26 @@ def main():
     overall_best = max(results, key=lambda r: r.best_fitness)
     save_best_genome(overall_best, args.output)
 
+    g = overall_best.best_genome
     saved_settings = {
         "profile": "hedge_fund",
-        "min_confluence":       int(overall_best.best_genome["MIN_CONFLUENCE"]),
-        "adx_min":              float(overall_best.best_genome["ADX_MIN"]),
-        "atr_sl_mult":          float(overall_best.best_genome["ATR_MULT_SL"]),
-        "atr_tp_mult":          float(overall_best.best_genome["ATR_MULT_TP"]),
-        "pull_min":             float(overall_best.best_genome["PULL_MIN"]),
-        "pull_max":             float(overall_best.best_genome["PULL_MAX"]),
-        "risk_pct":             float(overall_best.best_genome["RISK_PCT"]),
-        "weekly_trade_target":  float(overall_best.best_genome["WEEKLY_TARGET"]),
-        "min_rr":               float(overall_best.best_genome["MIN_RR"]),
-        "warmup_bars":          int(overall_best.best_genome["WARMUP_BARS"]),
-        "max_bars_in_trade":    int(overall_best.best_genome["MAX_BARS_IN_TRADE"]),
+        "timeframe": "M15" if _is_m15_mode() else "H1",
+        "min_confluence":       int(g["MIN_CONFLUENCE"]),
+        "adx_min":              float(g["ADX_MIN"]),
+        "atr_sl_mult":          float(g["ATR_MULT_SL"]),
+        "atr_tp_mult":          float(g["ATR_MULT_TP"]),
+        "risk_pct":             float(g["RISK_PCT"]),
+        "weekly_trade_target":  float(g["WEEKLY_TARGET"]),
+        "min_rr":               float(g["MIN_RR"]),
+        "warmup_bars":          int(g["WARMUP_BARS"]),
+        "max_bars_in_trade":    int(g["MAX_BARS_IN_TRADE"]),
         "optimization_mode": "robust",
+        # M15: RSI thresholds (substituem pullback zone)
+        "rsi_ob": float(g.get("RSI_OB", 68.0)),
+        "rsi_os": float(g.get("RSI_OS", 32.0)),
+        # H1: pullback zone
+        "pull_min": float(g.get("PULL_MIN", -1.5)),
+        "pull_max": float(g.get("PULL_MAX", 2.0)),
     }
     try:
         save_strategy_settings(saved_settings)
