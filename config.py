@@ -91,15 +91,14 @@ class Config:
 
     # Em modo sinalizador, sessão e notícias viram preferência de qualidade,
     # não veto absoluto. Isso evita o bot ficar parado por longos períodos.
-    SESSION_HARD_BLOCK = True
-    NEWS_HARD_BLOCK = True
+    SESSION_HARD_BLOCK = False
+    NEWS_HARD_BLOCK = False
     MAX_SYMBOLS_PER_REFRESH = 6
     MAX_CORRELATED_SIGNALS_PER_GROUP = 2
     PAIR_PERFORMANCE_LOOKBACK = 12
     MIN_RECENT_PAIR_WR = 0.40
-    ALLOW_RANGE_REVERSALS = False  # foco em trend-following robusto
     MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
-    USE_COT_FILTER     = False    # filtra sinais contra o posicionamento institucional (CFTC/COT)
+    USE_COT_FILTER     = True    # filtra sinais contra o posicionamento institucional (CFTC/COT)
     SIGNAL_COOLDOWN_SECONDS = 1800
 
     FXGOLD_ASSETS = {
@@ -157,22 +156,28 @@ class Config:
     ATR_TP_MULT = 3.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
-    # SISTEMA LEVE DE CONFLUÊNCIA — FX CORE
-    # Mantido apenas o que costuma aparecer com mais consistência em FX:
-    # tendência (EMA200), momentum (MACD/RSI) e volatilidade (ATR para gestão).
+    # SISTEMA DE PESOS PARA CONFLUÊNCIA — INDICADORES ESSENCIAIS
+    # Total máximo: 16 pontos
+    # Indicadores removidos (redundantes): EMA9/21, Bandas de Bollinger,
+    #   padrão de candle, estrutura e MTF EMA200.
+    # Mantidos: EMA200, ADX, RSI, MACD (base técnica) +
+    #           FVG, OB, Sweep, MTF Aligned (SMC/confluência).
     # ═══════════════════════════════════════════════════════════════════════════════
     CONFLUENCE_WEIGHTS = {
-        "ema200":          4,  # tendência principal
-        "macd":            3,  # momentum direcional
-        "rsi":             2,  # timing / força relativa
-        "adx":             0,
-        "fvg":             0,
-        "ob":              0,
-        "sweep":           0,
-        "mtf_aligned":     0,
+        # ── Base técnica (indicadores principais) ──────────────────
+        "ema200":          2,  # preço > EMA200 — define o lado do mercado
+        "adx":             2,  # ADX > 25 — confirma força da tendência
+        "rsi":             1,  # RSI — momentum / zona de preço favorável
+        "macd":            1,  # MACD — confirmação direcional
+        # ── SMC — estrutura de mercado institucional ────────────────
+        "fvg":             3,  # Fair Value Gap ativo na direção
+        "ob":              3,  # Order Block ativo na direção
+        "sweep":           2,  # Liquidity Sweep confirmado
+        # ── Multi-timeframe (H4) ───────────────────────────────────
+        "mtf_aligned":     2,  # H4 alinhado com H1
     }
-    CONFLUENCE_MAX_SCORE = 9
-    MIN_CONFLUENCE_WEIGHTED = 6
+    CONFLUENCE_MAX_SCORE = 16  # soma dos pesos acima
+    MIN_CONFLUENCE_WEIGHTED = 8  # score mínimo para gerar sinal (~50% do total)
 
     # Legado — mantido para compatibilidade
     MIN_CONFLUENCE = 5
@@ -182,16 +187,16 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     # Ajustado proporcionalmente ao novo CONFLUENCE_MAX_SCORE = 16
     REGIME_MIN_CONFLUENCE = {
-        "trend": 6,
-        "range": 0,
-        "transition": 5,
-        "neutral": 5
+        "trend": 9,       # ~56% do total (antes 11/21 ≈ 52%)
+        "range": 7,       # ~44% do total (antes  9/21 ≈ 43%)
+        "transition": 8,  # ~50% do total (antes 10/21 ≈ 48%)
+        "neutral": 8,     # ~50% do total (antes 10/21 ≈ 48%)
     }
     REGIME_MIN_RR = {
-        "trend": 1.6,
-        "range": 1.3,
-        "transition": 1.5,
-        "neutral": 1.5,
+        "trend": 2.0,
+        "range": 1.6,
+        "transition": 1.8,
+        "neutral": 1.8,
     }
     REGIME_ADX_TRENDING = 25
     REGIME_ADX_RANGING  = 18

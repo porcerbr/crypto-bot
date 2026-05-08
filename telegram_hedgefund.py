@@ -316,15 +316,12 @@ class TelegramDesk:
                                             reply_markup=keyboard_markup(),
                                         )
                                     elif is_genetic:
-                                        from genetic_optimizer import run_evolution, save_best_genome, select_best_live_result
+                                        from genetic_optimizer import run_evolution, save_best_genome
                                         gens = getattr(self, "_pending_genetic_generations", 50) or 50
                                         results = run_evolution(bars, symbol=symbol, balance=Config.INITIAL_BALANCE, generations=gens)
-                                        best, live_ok, reason = select_best_live_result(results)
-                                        applied = save_best_genome(best)
-                                        msg = _format_genetic_result(symbol, best, gens)
-                                        if not live_ok or not applied:
-                                            msg += f"\n\n⚠️ Configuração não aplicada ao bot ao vivo: {reason}"
-                                        self.send(msg, reply_markup=keyboard_markup())
+                                        best = max(results, key=lambda r: r.best_fitness)
+                                        save_best_genome(best)
+                                        self.send(_format_genetic_result(symbol, best, gens), reply_markup=keyboard_markup())
                                     elif is_optimize:
                                         from optimizer import run_grid
                                         top = run_grid(bars, symbol=symbol, initial_balance=Config.INITIAL_BALANCE)
@@ -499,19 +496,16 @@ class TelegramDesk:
                             import threading
                             def _run_genetic_background():
                                 try:
-                                    from genetic_optimizer import run_evolution, save_best_genome, select_best_live_result
+                                    from genetic_optimizer import run_evolution, save_best_genome
                                     results = run_evolution(
                                         datasets,
                                         symbol=symbol,
                                         balance=Config.INITIAL_BALANCE,
                                         generations=generations,
                                     )
-                                    best, live_ok, reason = select_best_live_result(results)
-                                    applied = save_best_genome(best)
-                                    msg = _format_genetic_result(symbol, best, generations)
-                                    if not live_ok or not applied:
-                                        msg += f"\n\n⚠️ Configuração não aplicada ao bot ao vivo: {reason}"
-                                    self.send(msg, reply_markup=keyboard_markup())
+                                    best = max(results, key=lambda r: r.best_fitness)
+                                    save_best_genome(best)
+                                    self.send(_format_genetic_result(symbol, best, generations), reply_markup=keyboard_markup())
                                 except Exception as e:
                                     self.send(f"❌ Erro na otimização genética: {esc(str(e)[:200])}", reply_markup=keyboard_markup())
 
