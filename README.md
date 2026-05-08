@@ -110,3 +110,44 @@ RISK_PERCENT_PER_TRADE = 1.0
 ## Observação importante
 
 Meta de 10–15% ao mês em Forex normalmente exige alavancagem e risco elevados. Use essa versão como base disciplinada para backtest, forward test em conta demo e ajuste por par antes de considerar capital real.
+
+## Backtest Lab multi-anos
+
+Esta versão inclui um laboratório de backtest para testar várias configurações usando anos de candles OHLC em CSV, sem enviar ordens reais e sem depender do Telegram.
+
+### Rodar pelo terminal
+
+```bash
+python backtest_lab.py dados/EURUSD_M15.csv --symbol EURUSD --balance 1000 --grid quick --top 20 --out reports
+```
+
+Busca mais ampla:
+
+```bash
+python backtest_lab.py dados/EURUSD_M15.csv --symbol EURUSD --balance 1000 --grid deep --top 30 --out reports
+```
+
+Arquivos gerados em `reports/`:
+
+- `*_ranking.csv`: ranking das configurações testadas.
+- `*_top.csv`: melhores configurações.
+- `*_yearly_best.csv`: consistência anual da melhor configuração.
+- `*_summary.json`: resumo completo.
+
+### Rodar pelo Telegram
+
+1. Envie `/lab EURUSD`.
+2. Envie o CSV histórico do par.
+3. O bot responde com a melhor configuração, retorno, drawdown, profit factor e resultado anual.
+
+### Testes simulados do Telegram
+
+O arquivo `telegram_testkit.py` simula `sendMessage`, `getUpdates`, upload/download de CSV e falhas transitórias, sem usar internet. Rode:
+
+```bash
+pytest -q
+```
+
+Resultado validado nesta build: `51 passed`.
+
+> Aviso: backtest não garante lucro futuro. Use os resultados para filtrar configurações e faça forward test em conta demo antes de qualquer operação real.

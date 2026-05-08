@@ -85,18 +85,29 @@ class TelegramDesk:
         # Estado: aguardando CSV para otimização ("EURUSD") ou None
         self._pending_optimize: str | None = None
         self._pending_genetic:  str | None = None
+        self._pending_lab: str | None = None
 
     def _post(self, method: str, payload: dict):
-        try:
-            return requests.post(f"{self.base}/{method}", json=payload, timeout=10)
-        except Exception:
-            return None
+        """POST com retry curto para facilitar testes e evitar falhas transitórias."""
+        for _ in range(3):
+            try:
+                resp = requests.post(f"{self.base}/{method}", json=payload, timeout=10)
+                if resp is not None:
+                    return resp
+            except Exception:
+                time.sleep(0.05)
+        return None
 
     def _get(self, method: str, params: dict | None = None):
-        try:
-            return requests.get(f"{self.base}/{method}", params=params, timeout=15)
-        except Exception:
-            return None
+        """GET com retry curto para polling/downloads simulados ou reais."""
+        for _ in range(3):
+            try:
+                resp = requests.get(f"{self.base}/{method}", params=params, timeout=15)
+                if resp is not None:
+                    return resp
+            except Exception:
+                time.sleep(0.05)
+        return None
 
     def bootstrap(self):
         """Garante polling limpo: remove webhook e descarta updates pendentes."""
@@ -270,28 +281,46 @@ class TelegramDesk:
                         # Modo otimização: via /optimize (estado pendente) OU caption "optimize PAR"
                         caption_parts = caption.split()
                         caption_optimize = caption_parts and caption_parts[0] == "OPTIMIZE"
-                        if self._pending_optimize:
+                        caption_lab = caption_parts and caption_parts[0] == "LAB"
+                        if getattr(self, "_pending_lab", None):
+                            is_lab = True
+                            is_optimize = False
+                            is_genetic = False
+                            symbol = self._pending_lab
+                            self._pending_lab = None
+                        elif self._pending_optimize:
+                            is_lab = False
                             is_optimize = True
                             is_genetic  = False
                             symbol = self._pending_optimize
                             self._pending_optimize = None
                         elif getattr(self, "_pending_genetic", None):
+                            is_lab = False
                             is_optimize = False
                             is_genetic  = True
                             symbol = self._pending_genetic
                             self._pending_genetic = None
+                        elif caption_lab:
+                            is_lab = True
+                            is_optimize = False
+                            is_genetic = False
+                            symbol = caption_parts[1] if len(caption_parts) > 1 else "EURUSD"
                         elif caption_optimize:
+                            is_lab = False
                             is_optimize = True
                             is_genetic  = False
                             symbol = caption_parts[1] if len(caption_parts) > 1 else "EURUSD"
                         else:
+                            is_lab = False
                             is_optimize = False
                             is_genetic  = False
                             symbol = caption if caption else "EURUSD"
 
                         self.send(
                             f"📂 <b>CSV recebido:</b> {fname}\n"
-                            + (f"🧬 Iniciando otimização genética para <b>{symbol}</b> (20 gerações)...\n⏳ Aguarde 2–5 minutos."
+                            + (f"🧪 Iniciando Backtest Lab para <b>{symbol}</b>...\n🔎 Testando configurações e separando resultado anual."
+                               if is_lab else
+                               f"🧬 Iniciando otimização genética para <b>{symbol}</b> (20 gerações)...\n⏳ Aguarde 2–5 minutos."
                                if is_genetic else
                                f"🔬 Iniciando otimização para <b>{symbol}</b> (2 304 combinações)...\n⏳ Aguarde ~30 segundos."
                                if is_optimize else
@@ -315,6 +344,11 @@ class TelegramDesk:
                                             f"⚠️ CSV com apenas {len(bars)} candles. Mínimo recomendado: 60.",
                                             reply_markup=keyboard_markup(),
                                         )
+                                    elif is_lab:
+                                        from backtest_lab import run_lab, save_lab_result, format_lab_summary
+                                        lab = run_lab(bars, symbol=symbol, balance=Config.INITIAL_BALANCE, grid="quick", top=15)
+                                        save_lab_result(lab, out_dir="reports")
+                                        self.send(format_lab_summary(lab), reply_markup=keyboard_markup())
                                     elif is_genetic:
                                         from genetic_optimizer import run_evolution, save_best_genome
                                         gens = getattr(self, "_pending_genetic_generations", 50) or 50
@@ -367,6 +401,7 @@ class TelegramDesk:
                         "• /mode — modo e parâmetros\n"
                         "• /backtest [PAR] — backtest do par\n"
                         "• /optimize — grid search via CSV\n"
+                        "• /lab [PAR] — laboratório multi-anos via CSV\n"
                         "• /genetic [PAR] — otimização robusta walk-forward via CSV\n"
                         "• /cot — bias semanal COT (Commitment of Traders)\n\n"
                         "Botões abaixo para acesso rápido.",
@@ -452,6 +487,18 @@ class TelegramDesk:
                         "Agora envie o arquivo <b>.csv</b> com os dados históricos.\n"
                         "Não precisa de legenda — o bot detecta automaticamente.\n\n"
                         "⏳ Tempo estimado: 30–60 segundos após o envio.",
+                        reply_markup=keyboard_markup(),
+                    )
+
+                elif cmd == "/lab":
+                    parts = text.split()
+                    symbol = parts[1].upper() if len(parts) > 1 else "EURUSD"
+                    self._pending_lab = symbol
+                    self.send(
+                        f"🧪 <b>BACKTEST LAB — {esc(symbol)}</b>\n"
+                        "Agora envie o arquivo <b>.csv</b> com anos de candles OHLC.\n"
+                        "O bot testará configurações, ranqueará por retorno/drawdown e mostrará a consistência anual.\n\n"
+                        "Dica: use M15 ou H1 com histórico de vários anos para evitar overfitting.",
                         reply_markup=keyboard_markup(),
                     )
 

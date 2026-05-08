@@ -1,0 +1,5 @@
+[
+  {"min_confluence": 1, "adx_min": 16, "atr_sl_mult": 1.2, "atr_tp_mult": 2.4, "risk_pct": 0.5, "rsi_ob": 68, "rsi_os": 32, "max_bars_in_trade": 20},
+  {"min_confluence": 1, "adx_min": 20, "atr_sl_mult": 1.5, "atr_tp_mult": 3.0, "risk_pct": 1.0, "rsi_ob": 70, "rsi_os": 30, "max_bars_in_trade": 24},
+  {"min_confluence": 2, "adx_min": 24, "atr_sl_mult": 1.8, "atr_tp_mult": 3.2, "risk_pct": 0.5, "rsi_ob": 66, "rsi_os": 34, "max_bars_in_trade": 32}
+]
