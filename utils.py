@@ -149,20 +149,20 @@ def get_trade_limit_override():
 
 STRATEGY_SETTINGS_FILE = "strategy_settings.json"
 DEFAULT_STRATEGY_SETTINGS = {
-    "profile": "h1_trend_clean",
-    "min_confluence": 6,
-    "adx_min": 22.0,
-    "atr_sl_mult": 1.35,
-    "atr_tp_mult": 2.75,
-    "pull_min": -1.1,
-    "pull_max": 1.9,
-    "risk_pct": 1.0,
+    "profile": "hedge_fund",
+    "min_confluence": 5,
+    "adx_min": 18.0,
+    "atr_sl_mult": 1.5,
+    "atr_tp_mult": 3.5,
+    "pull_min": -1.0,
+    "pull_max": 2.0,
+    "risk_pct": 1.5,
     "weekly_trade_target": 3.0,
     "min_rr": 1.8,
     "trend_adx": 25.0,
     "range_adx": 18.0,
-    "warmup_bars": 120,
-    "max_bars_in_trade": 36,
+    "warmup_bars": 80,
+    "max_bars_in_trade": 60,
     "optimization_mode": "robust",
 }
 

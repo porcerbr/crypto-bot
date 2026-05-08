@@ -86,20 +86,20 @@ class Config:
     # O "saldo" e os trades "ativos" são uma simulação para estatística.
     # ═══════════════════════════════════════════════════════════════════════════════
     MODE              = "FXGOLD"
-    TIMEFRAME         = os.getenv("TIMEFRAME", "H1")  # H1 = melhor equilíbrio entre ruído e frequência
+    TIMEFRAME         = os.getenv("TIMEFRAME", "M15")  # M15 = mais sinais; H1 = conservador
     BOT_IS_SIGNAL_ONLY = True  # flag semântica exibida no dashboard
 
     # Em modo sinalizador, sessão e notícias viram preferência de qualidade,
     # não veto absoluto. Isso evita o bot ficar parado por longos períodos.
     SESSION_HARD_BLOCK = False
     NEWS_HARD_BLOCK = False
-    MAX_SYMBOLS_PER_REFRESH = 4
+    MAX_SYMBOLS_PER_REFRESH = 6
     MAX_CORRELATED_SIGNALS_PER_GROUP = 2
-    PAIR_PERFORMANCE_LOOKBACK = 8
-    MIN_RECENT_PAIR_WR = 0.35
-    MIN_AI_CONFIDENCE  = 0       # IA fica apenas como apoio; não bloqueia sinal
-    USE_COT_FILTER     = False   # desabilitado por padrão para evitar excesso de filtros
-    SIGNAL_COOLDOWN_SECONDS = 1200
+    PAIR_PERFORMANCE_LOOKBACK = 12
+    MIN_RECENT_PAIR_WR = 0.40
+    MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
+    USE_COT_FILTER     = True    # filtra sinais contra o posicionamento institucional (CFTC/COT)
+    SIGNAL_COOLDOWN_SECONDS = 1800
 
     FXGOLD_ASSETS = {
         "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY",
@@ -129,7 +129,7 @@ class Config:
     # SMC & MULTI-TIMEFRAME
     # ═══════════════════════════════════════════════════════════════════════════════
     MTF_CONFIRM_TIMEFRAME    = "4h"
-    MTF_MIN_CONFLUENCE       = 4
+    MTF_MIN_CONFLUENCE       = 5
     FVG_LOOKBACK             = 20
     OB_LOOKBACK              = 15
     LIQUIDITY_SWING_LOOKBACK = 10
@@ -157,38 +157,46 @@ class Config:
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # SISTEMA DE PESOS PARA CONFLUÊNCIA — INDICADORES ESSENCIAIS
-    # Total máximo: 9 pontos
-    # Núcleo: EMA200, ADX, RSI, MACD e confirmação H4.
+    # Total máximo: 16 pontos
+    # Indicadores removidos (redundantes): EMA9/21, Bandas de Bollinger,
+    #   padrão de candle, estrutura e MTF EMA200.
+    # Mantidos: EMA200, ADX, RSI, MACD (base técnica) +
+    #           FVG, OB, Sweep, MTF Aligned (SMC/confluência).
     # ═══════════════════════════════════════════════════════════════════════════════
     CONFLUENCE_WEIGHTS = {
-        # ── Base técnica (apenas o núcleo) ────────────────────────
-        "ema200":          2,  # preço do lado certo da tendência
-        "adx":             2,  # força de tendência
-        "rsi":             1,  # momentum saudável
-        "macd":            2,  # gatilho direcional
-        "mtf_aligned":     2,  # H4 na mesma direção
+        # ── Base técnica (indicadores principais) ──────────────────
+        "ema200":          2,  # preço > EMA200 — define o lado do mercado
+        "adx":             2,  # ADX > 25 — confirma força da tendência
+        "rsi":             1,  # RSI — momentum / zona de preço favorável
+        "macd":            1,  # MACD — confirmação direcional
+        # ── SMC — estrutura de mercado institucional ────────────────
+        "fvg":             3,  # Fair Value Gap ativo na direção
+        "ob":              3,  # Order Block ativo na direção
+        "sweep":           2,  # Liquidity Sweep confirmado
+        # ── Multi-timeframe (H4) ───────────────────────────────────
+        "mtf_aligned":     2,  # H4 alinhado com H1
     }
-    CONFLUENCE_MAX_SCORE = 9
-    MIN_CONFLUENCE_WEIGHTED = 6
+    CONFLUENCE_MAX_SCORE = 16  # soma dos pesos acima
+    MIN_CONFLUENCE_WEIGHTED = 8  # score mínimo para gerar sinal (~50% do total)
 
     # Legado — mantido para compatibilidade
-    MIN_CONFLUENCE = 6
+    MIN_CONFLUENCE = 5
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # PERFIL PROFISSIONAL DE EXECUÇÃO
     # ═══════════════════════════════════════════════════════════════════════════════
-    # Ajustado proporcionalmente ao novo CONFLUENCE_MAX_SCORE = 9
+    # Ajustado proporcionalmente ao novo CONFLUENCE_MAX_SCORE = 16
     REGIME_MIN_CONFLUENCE = {
-        "trend": 6,
-        "range": 5,
-        "transition": 6,
-        "neutral": 6,
+        "trend": 9,       # ~56% do total (antes 11/21 ≈ 52%)
+        "range": 7,       # ~44% do total (antes  9/21 ≈ 43%)
+        "transition": 8,  # ~50% do total (antes 10/21 ≈ 48%)
+        "neutral": 8,     # ~50% do total (antes 10/21 ≈ 48%)
     }
     REGIME_MIN_RR = {
-        "trend": 1.8,
+        "trend": 2.0,
         "range": 1.6,
-        "transition": 1.7,
-        "neutral": 1.7,
+        "transition": 1.8,
+        "neutral": 1.8,
     }
     REGIME_ADX_TRENDING = 25
     REGIME_ADX_RANGING  = 18
@@ -210,7 +218,7 @@ class Config:
     # CAPITAL E RISCO
     # ═══════════════════════════════════════════════════════════════════════════════
     INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
-    RISK_PERCENT_PER_TRADE = 1.0
+    RISK_PERCENT_PER_TRADE = 2.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # MULTI-CONTA / ESCALA DE CAPITAL / PROTEÇÃO INTELIGENTE
