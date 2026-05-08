@@ -99,16 +99,16 @@ def resample_to_h1(bars: list[Bar]) -> list[Bar]:
 
 def prepare_bars_for_backtest(bars: list[Bar]) -> list[Bar]:
     """
-    Normaliza o histórico para o timeframe efetivamente usado no backtest.
-    M15 agora é suportado nativamente — NÃO é mais reamostrado para H1.
-    Apenas M1 e M5 (sub-minuto) são reamostrados para H1.
+    Normaliza o histórico para o timeframe usado no motor.
+    Para simplificar a estratégia, M1/M5/M15 são agregados para H1.
     """
     if not bars:
         return bars
     raw_tf = detect_timeframe(bars)
-    if raw_tf in ('M1', 'M5'):   # só TFs muito curtos são reamostrados
+    if raw_tf in ('M1', 'M5', 'M15'):
         return resample_to_h1(bars)
-    return bars  # M15, H1, H4, D1 ficam como estão
+    return bars
+
 
 
 
@@ -610,8 +610,8 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 300) -> list[dict | N
             "candle_bear": float(c.iloc[i]) < float(o_col.iloc[i]),
             "rsi_bounce_up": rsi_prev < 42 and rsi_val >= 42,
             "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
-            "trend_up":  price > e200 and e21 > e50,
-            "trend_dn":  price < e200 and e21 < e50,
+            "trend_up":  price > e200 and e21 > e200,
+            "trend_dn":  price < e200 and e21 < e200,
             "range_mode": float(adx.iloc[i]) <= regime_adx,
             # M15: EMA9/21 cross + posição relativa
             "ema9_above_ema21": e9 > e21,
@@ -651,16 +651,15 @@ def _signal(
     h4_bias: str | None = None,
     require_h4_alignment: bool = False,
 ) -> str | None:
-    adx_min = float(adx_min if adx_min is not None else (15 if tf == "W1" else 18))
-    pull_range = pull_range or ((-1.5, 2.5) if tf == "W1" else (-1.0, 2.0))
+    """Estratégia enxuta: tendência + pullback + momentum + força."""
+    adx_min = float(adx_min if adx_min is not None else 22.0)
+    pull_range = pull_range or (-1.2, 1.8)
     min_confluence = max(1, min(8, int(min_confluence or 5)))
 
-    regime = _regime(res, tf)
-    price = res["price"]
-    d21 = res["dist_e21"]
-
-    def count(*conds: bool) -> int:
-        return sum(1 for c in conds if c)
+    price = float(res.get("price", 0) or 0)
+    rsi = float(res.get("rsi", 50) or 50)
+    adx = float(res.get("adx", 0) or 0)
+    d21 = float(res.get("dist_e21", 0) or 0)
 
     def pull_ok(direction: str) -> bool:
         if direction == "BUY":
@@ -670,73 +669,37 @@ def _signal(
     def h4_ok(direction: str) -> bool:
         if not require_h4_alignment:
             return True
-        if not h4_bias or h4_bias == "NEUTRO":
+        if not h4_bias or str(h4_bias).upper() == "NEUTRO":
             return True
         return str(h4_bias).upper() == direction
 
-    # Trend-following: pullback + momentum trigger
-    if regime in ("trend", "transition"):
-        if res["trend_up"]:
-            score = count(
-                res["trend_up"],
-                pull_ok("BUY"),
-                res["macd_cross_up"] or res["rsi_bounce_up"],
-                res["candle_bull"],
-                res["adx"] >= adx_min,
-                res["pdi"] >= res["ndi"],
-                res["rsi"] >= 40,
-                res["rsi"] <= 70,
-            )
-            if score >= min_confluence and pull_ok("BUY") and h4_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
-                return "BUY"
-
-        if res["trend_dn"]:
-            score = count(
-                res["trend_dn"],
-                pull_ok("SELL"),
-                res["macd_cross_down"] or res["rsi_bounce_dn"],
-                res["candle_bear"],
-                res["adx"] >= adx_min,
-                res["ndi"] >= res["pdi"],
-                res["rsi"] <= 60,
-                res["rsi"] >= 30,
-            )
-            if score >= min_confluence and pull_ok("SELL") and h4_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
-                return "SELL"
-
-    # Mean reversion in ranges: use extremes + reversals
-    if regime == "range":
-        buy_score = count(
-            res["rsi"] <= 40,
-            price <= res["ema21"],
-            res["candle_bull"],
-            res["dist_bb_dn"] >= 1.0,
-            res["rsi_bounce_up"],
-            res["macd_cross_up"],
-        )
-        if buy_score >= max(3, min_confluence - 1) and h4_ok("BUY"):
+    buy_score = sum([
+        bool(res.get("trend_up", False)),
+        price > float(res.get("ema21", 0) or 0),
+        pull_ok("BUY"),
+        bool(res.get("macd_cross_up", False) or res.get("macd_above", False)),
+        45 <= rsi <= 68,
+        adx >= adx_min,
+        h4_ok("BUY"),
+    ])
+    if buy_score >= min_confluence and res.get("trend_up", False) and pull_ok("BUY") and h4_ok("BUY"):
+        if res.get("macd_cross_up", False) or (res.get("macd_above", False) and rsi >= 50):
             return "BUY"
 
-        sell_score = count(
-            res["rsi"] >= 60,
-            price >= res["ema21"],
-            res["candle_bear"],
-            res["dist_bb_up"] >= 1.0,
-            res["rsi_bounce_dn"],
-            res["macd_cross_down"],
-        )
-        if sell_score >= max(3, min_confluence - 1) and h4_ok("SELL"):
-            return "SELL"
-
-    # Light frequency relief: if target trades/week is high, accept slightly weaker transitions
-    if weekly_trade_target >= 3.0 and regime == "transition":
-        if res["trend_up"] and h4_ok("BUY") and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
-            return "BUY"
-        if res["trend_dn"] and h4_ok("SELL") and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
+    sell_score = sum([
+        bool(res.get("trend_dn", False)),
+        price < float(res.get("ema21", 0) or 0),
+        pull_ok("SELL"),
+        bool(res.get("macd_cross_down", False) or res.get("macd_below", False)),
+        32 <= rsi <= 55,
+        adx >= adx_min,
+        h4_ok("SELL"),
+    ])
+    if sell_score >= min_confluence and res.get("trend_dn", False) and pull_ok("SELL") and h4_ok("SELL"):
+        if res.get("macd_cross_down", False) or (res.get("macd_below", False) and rsi <= 50):
             return "SELL"
 
     return None
-
 
 def _signal_m15(
     res: dict,
@@ -748,61 +711,16 @@ def _signal_m15(
     rsi_ob: float = 68.0,
     rsi_os: float = 32.0,
 ) -> str | None:
-    """
-    Estratégia de 3 indicadores — o que traders profissionais realmente usam:
-
-        EMA50  →  direção da tendência (filtro estrutural)
-        MACD   →  momentum e timing de entrada (cruzamento de sinal)
-        RSI    →  evita entrar em regiões extremas (sobrecomprado/sobrevendido)
-
-    + H1 bias: descarta sinais contra a tendência do timeframe superior.
-
-    Hard requirements (todos obrigatórios):
-        BUY:  preço > EMA50  +  MACD cruzou para cima  +  RSI < rsi_ob  +  H1 não em baixa
-        SELL: preço < EMA50  +  MACD cruzou para baixo +  RSI > rsi_os  +  H1 não em alta
-
-    Soft conditions (evoluídas pelo genético, 0–3 necessárias):
-        ADX >= adx_min  •  RSI em zona ideal  •  vela confirma direção
-
-    Referência: EMA+RSI+MACD é a combinação #1 usada por traders profissionais de Forex
-    (Axi, XS Broker, Quantified Strategies, LiteFinance — consenso de mercado 2024-2026).
-    """
-    rsi    = float(res.get("rsi", 50) or 50)
-    adx    = float(res.get("adx", 0)  or 0)
-    d21    = float(res.get("dist_e21", 0) or 0)
-
-    h1_allows_buy  = h1_bias in (None, "NEUTRAL", "BUY")
-    h1_allows_sell = h1_bias in (None, "NEUTRAL", "SELL")
-
-    # ── BUY ──────────────────────────────────────────────────────────────────
-    if (res.get("above_ema50", False)      # tendência M15 altista
-            and res.get("macd_cross_up", False)  # MACD cruza para cima (trigger)
-            and rsi < rsi_ob               # RSI não sobrecomprado
-            and h1_allows_buy):            # H1 não em queda
-
-        soft = sum([
-            adx >= adx_min,                # força de tendência (opcional)
-            40 <= rsi <= 65,               # RSI em zona ideal de entrada
-            res.get("candle_bull", False), # vela de confirmação
-        ])
-        if soft >= min_confluence:
-            return "BUY"
-
-    # ── SELL ─────────────────────────────────────────────────────────────────
-    if (res.get("below_ema50", False)
-            and res.get("macd_cross_down", False)
-            and rsi > rsi_os
-            and h1_allows_sell):
-
-        soft = sum([
-            adx >= adx_min,
-            35 <= rsi <= 60,
-            res.get("candle_bear", False),
-        ])
-        if soft >= min_confluence:
-            return "SELL"
-
-    return None
+    return _signal(
+        res,
+        "H1",
+        min_confluence=min_confluence,
+        adx_min=adx_min,
+        pull_range=pull_range,
+        weekly_trade_target=weekly_trade_target,
+        h4_bias=h1_bias,
+        require_h4_alignment=True,
+    )
 
 def _build_h1_bias_from_m15(bars: list[Bar]) -> list[str | None]:
     """

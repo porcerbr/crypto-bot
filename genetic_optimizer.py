@@ -102,17 +102,17 @@ if _is_m15_mode():
     RANGES["MAX_BARS_IN_TRADE"] = (4, 32)
 elif _is_h1_mode():
     GENOME_KEYS = GENOME_KEYS_H1   # usa PULL_MIN/PULL_MAX para H1
-    RANGES["MIN_CONFLUENCE"] = (4, 8)
-    RANGES["ADX_MIN"]        = (18, 34)
-    RANGES["ATR_MULT_SL"]    = (1.0, 2.0)
-    RANGES["ATR_MULT_TP"]    = (2.0, 4.5)
-    RANGES["PULL_MIN"]       = (-2.2, -0.4)
-    RANGES["PULL_MAX"]       = (0.8, 3.0)
-    RANGES["RISK_PCT"]       = (0.5, 1.8)
-    RANGES["WEEKLY_TARGET"]  = (1.5, 4.0)
-    RANGES["MIN_RR"]         = (1.5, 3.5)
-    RANGES["WARMUP_BARS"]    = (60, 180)
-    RANGES["MAX_BARS_IN_TRADE"] = (16, 72)
+    RANGES["MIN_CONFLUENCE"] = (5, 7)
+    RANGES["ADX_MIN"]        = (20, 30)
+    RANGES["ATR_MULT_SL"]    = (1.0, 1.8)
+    RANGES["ATR_MULT_TP"]    = (2.0, 3.8)
+    RANGES["PULL_MIN"]       = (-1.5, -0.3)
+    RANGES["PULL_MAX"]       = (0.8, 2.2)
+    RANGES["RISK_PCT"]       = (0.5, 1.2)
+    RANGES["WEEKLY_TARGET"]  = (2.0, 4.0)
+    RANGES["MIN_RR"]         = (1.7, 3.0)
+    RANGES["WARMUP_BARS"]    = (100, 240)
+    RANGES["MAX_BARS_IN_TRADE"] = (12, 48)
 
 
 # Pares correlacionados usados na validação multi-pair (quando disponíveis via API).
@@ -279,26 +279,17 @@ def _metric_score(metrics: dict, target_trades_week: float) -> float:
     freq = _safe_float(metrics.get("trade_frequency_per_week", 0.0), 0.0)
 
     pf_score   = min(max(pf, 0.0), 3.0) / 3.0
-    dd_score   = max(0.0, 1.0 - min(dd, 0.35) / 0.35)
-    pnl_score  = max(-1.0, min(1.0, pnl / (initial_balance * 0.25)))
-    exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.01)))
+    wr_score   = max(0.0, min(1.0, wr))
+    dd_score   = max(0.0, 1.0 - min(dd, 0.30) / 0.30)
     freq_score = max(0.0, 1.0 - abs(freq - target_trades_week) / max(1.0, target_trades_week))
-
-    # Calcula retorno mensal estimado (normalizado a 0-1)
-    # Alvo: 20-30% ao mês com saldo de $1000 = $200-300
-    monthly_return_target = 0.25  # 25% = ponto ideal
-    monthly_days = 21.0           # dias úteis de trading
-    freq_day = freq / 5.0 if freq > 0 else 0.0   # trades/dia
-    exp_pct_per_trade = exp / max(1.0, initial_balance) if exp > 0 else 0.0
-    est_monthly_return = freq_day * monthly_days * exp_pct_per_trade
-    monthly_score = max(0.0, min(1.0, est_monthly_return / monthly_return_target))
+    exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.01)))
+    pnl_score  = max(-1.0, min(1.0, pnl / max(1.0, initial_balance * 0.20)))
 
     return (
-        0.22 * pf_score +
-        0.15 * wr +
-        0.15 * dd_score +
-        0.18 * freq_score +        # frequência tem peso maior agora
-        0.15 * monthly_score +     # retorno mensal estimado
+        0.28 * pf_score +
+        0.20 * wr_score +
+        0.20 * dd_score +
+        0.17 * freq_score +
         0.08 * (exp_score + 1) / 2 +
         0.07 * (pnl_score + 1) / 2
     )
@@ -321,17 +312,15 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     train_dd = _safe_float(train_metrics.get("max_drawdown_pct", 100.0), 100.0)
     test_dd  = _safe_float(test_metrics.get("max_drawdown_pct", 100.0), 100.0)
 
-    # FIX #4: PF guard suavizado — penaliza progressivamente em vez de hard -4.5
-    # Isso permite seleção natural funcionar mesmo na geração 1 com genomas ruins.
     pf_penalty = 0.0
-    if train_pf < 1.0:
-        pf_penalty += (1.0 - train_pf) * 0.6   # penalidade proporcional, não cliff
-    if test_pf < 0.95:
-        pf_penalty += (0.95 - test_pf) * 0.8
+    if train_pf < 1.05:
+        pf_penalty += (1.05 - train_pf) * 0.8
+    if test_pf < 1.0:
+        pf_penalty += (1.0 - test_pf) * 1.0
 
-    dd_limit = 15.0 if _is_m15_mode() else (20.0 if _is_h1_mode() else 28.0)
+    dd_limit = 16.0 if _is_h1_mode() else 20.0
     if max(train_dd, test_dd) > dd_limit:
-        pf_penalty += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.5
+        pf_penalty += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.8
 
     robustness     = 1.0 - min(1.0, abs(train_score - test_score))
     pf_gap_penalty = min(1.0, abs(train_pf - test_pf) / 2.0)
@@ -339,12 +328,12 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     trade_balance  = min(1.0, test_trades / max(1.0, train_trades))
 
     raw = (
-        0.52 * test_score +
-        0.20 * train_score +
+        0.60 * test_score +
+        0.18 * train_score +
         0.12 * robustness +
-        0.08 * (1.0 - pf_gap_penalty) +
-        0.04 * trade_balance -
-        0.10 * dd_penalty
+        0.05 * (1.0 - pf_gap_penalty) +
+        0.05 * trade_balance -
+        0.08 * dd_penalty
     )
     return raw - pf_penalty
 

@@ -3,7 +3,22 @@ import threading
 import requests
 import pandas as pd
 from datetime import datetime, timezone
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+except Exception:  # fallback mínimo para ambientes sem a dependência
+    def retry(*args, **kwargs):
+        def deco(fn):
+            return fn
+        return deco
+
+    def stop_after_attempt(*args, **kwargs):
+        return None
+
+    def wait_exponential(*args, **kwargs):
+        return None
+
+    def retry_if_exception_type(*args, **kwargs):
+        return None
 from config import Config
 from utils import log, asset_name
 
