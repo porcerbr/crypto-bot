@@ -1,154 +1,112 @@
-# 🎯 Sniper Bot — FX & Gold Signal Engine
+# Sniper Bot — FX & Gold Signal Engine Simplificado
 
-> **Este bot é SINALIZADOR apenas.** Não executa ordens em corretora real.  
-> Todos os cálculos de saldo / P&L são simulados para fins de estatística e treinamento.
+> **Sinalizador apenas.** O bot não executa ordens reais em corretora. Nenhum bot consegue garantir 10–15% ao mês; essa versão foi ajustada para reduzir ruído, melhorar disciplina e facilitar backtests.
 
----
+## O que mudou
 
-## Índice
+A lógica antiga estava saturada: combinava EMA, RSI, MACD, Bollinger, FVG, Order Block, liquidity sweep, COT, IA, regime dinâmico e múltiplos filtros. Isso aumentava conflitos internos e sinais inconsistentes.
 
-- [Visão Geral](#visão-geral)
-- [Arquitetura](#arquitetura)
-- [Instalação](#instalação)
-- [Variáveis de Ambiente](#variáveis-de-ambiente)
-- [Execução](#execução)
-- [Risco e Proteções](#risco-e-proteções)
-- [Backtesting](#backtesting)
-- [Dashboard](#dashboard)
-- [Testes](#testes)
-- [Deploy Railway](#deploy-railway)
+Esta versão usa apenas quatro indicadores no sinal ao vivo:
 
----
+1. **EMA50 + EMA200** — direção da tendência.
+2. **RSI14** — momentum e zona operacional.
+3. **ATR14** — stop, alvo e filtro de volatilidade.
+4. **ADX14** — força mínima da tendência.
 
-## Visão Geral
+O restante fica como proteção operacional, não como gerador de sinal: sessão principal, notícias de alto impacto, fim de semana/gap, cooldown e correlação.
 
-O Sniper Bot é um sinalizador inteligente de Forex e Ouro que combina:
+## Regra de sinal
 
-- **Análise técnica multi-timeframe** (EMA, RSI, MACD, Bollinger, ATR, Stoch)
-- **Filtro de notícias** de alto impacto (FED, NFP, CPI, etc.)
-- **Filtro COT** (posicionamento institucional CFTC)
-- **Validação por IA** (Google Gemini) com score de confiança 0–10
-- **Gestão de risco** com limites diários/semanais e circuit breakers
-- **Backtest walk-forward** com Monte Carlo e análise de regime
-- **Dashboard web** com curva de equity, drawdown e expectancy
-- **Notificações Telegram** estruturadas
+### Compra
 
----
+- Preço acima da EMA200.
+- EMA50 acima da EMA200.
+- H4/D1 não estão contra a direção.
+- RSI entre 50 e 68.
+- Preço próximo da EMA50, sem estar esticado demais.
+- ATR saudável.
+- ADX acima do mínimo configurado.
 
-## Arquitetura
+### Venda
 
+- Preço abaixo da EMA200.
+- EMA50 abaixo da EMA200.
+- H4/D1 não estão contra a direção.
+- RSI entre 32 e 50.
+- Preço próximo da EMA50, sem estar esticado demais.
+- ATR saudável.
+- ADX acima do mínimo configurado.
+
+## Gestão de risco padrão
+
+- Stop Loss: `1.5 × ATR`.
+- Take Profit: `3.0 × ATR`.
+- Relação risco-retorno aproximada: `1:2`.
+- Risco de referência: `1%` por trade.
+- Notícias de alto impacto: bloqueadas por padrão.
+- Sessões fora de liquidez: bloqueadas por padrão.
+
+## Arquivos principais
+
+```text
+main.py        Entrypoint do bot
+signals.py     Motor simplificado de sinais
+analysis.py    Dados, EMA50/EMA200, RSI, ATR, ADX e MTF
+config.py      Parâmetros e proteções
+bot.py         Estado, cooldown, notificações e monitoramento
+backtester.py  Backtests e relatórios
+risk.py        Gestão de risco
 ```
-main.py              ← Entrypoint: scheduler, threads, orquestração
-├── bot.py           ← Motor principal (estado, cooldowns, circuit breaker)
-├── signals.py       ← Pipeline de sinais (técnico → filtros → score)
-├── analysis.py      ← Dados e indicadores (cache, integridade)
-├── risk.py          ← Position sizing, limites de perda, exposição
-├── portfolio.py     ← Gestão de carteira, correlação, tiers
-├── ai_validator.py  ← Validação Gemini (prompt versionado, auditável)
-├── news_filter.py   ← Bloqueio por notícias de alto impacto
-├── cot_filter.py    ← Bias institucional CFTC/COT
-├── backtester.py    ← Walk-forward, Monte Carlo, análise de regime
-├── performance.py   ← Métricas: Sharpe, Sortino, Calmar, expectancy
-├── db.py            ← SQLite com migrações versionadas e atomicidade
-├── api.py           ← REST API Flask com autenticação
-├── telegram_hedgefund.py ← Templates Telegram padronizados
-└── config.py        ← Configuração tipada com validação rígida
-```
-
----
 
 ## Instalação
 
 ```bash
-git clone <repo> && cd crypto-bot
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # edite com suas chaves
+cp .env.example .env
 ```
 
----
+Configure no `.env`:
 
-## Variáveis de Ambiente
-
-| Variável | Obrigatório | Descrição |
-|---|---|---|
-| `TELEGRAM_TOKEN` | ✅ | Token do bot Telegram |
-| `TELEGRAM_CHAT_ID` | ✅ | ID do chat/grupo de sinais |
-| `TWELVE_DATA_API_KEY` | ✅ | Chave Twelve Data (dados de mercado) |
-| `GEMINI_API_KEY` | ⚠️ Recomendado | Chave Google Gemini |
-| `DASHBOARD_API_TOKEN` | ⚠️ Produção | Token de auth do dashboard |
-| `NTFY_TOPIC` | ❌ Opcional | Push via ntfy.sh |
-| `BACKUP_REMOTE_URL` | ❌ Opcional | URL S3/Supabase para backup |
-| `DEFAULT_LEVERAGE` | ❌ Opcional | Alavancagem padrão (default: 500) |
-| `INITIAL_BALANCE` | ❌ Opcional | Saldo simulado inicial (default: 1000) |
-| `DB_PATH` | ❌ Opcional | Caminho SQLite (default: bot_state.db) |
-
-Gere o token do dashboard: `python -c "import secrets; print(secrets.token_hex(32))"`
-
----
+```text
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+TWELVE_DATA_API_KEY=
+DASHBOARD_API_TOKEN=
+```
 
 ## Execução
 
 ```bash
-python main.py                                           # modo normal
-python backtester.py --symbol EURUSD --walk-forward      # backtest walk-forward
-python backtester.py --symbol XAUUSD --monte-carlo       # Monte Carlo
-python genetic_optimizer.py --symbol EURUSD --generations 50
-pytest                                                   # testes
+python main.py
 ```
 
----
-
-## Risco e Proteções
-
-```
-Nível 1 — Por trade:     Stop Loss (ATR-based), Take Profit, expiração de sinal
-Nível 2 — Por ativo:     Cooldown após loss, máximo de tentativas
-Nível 3 — Por sessão:    Filtro de liquidez, notícias, gap fim de semana
-Nível 4 — Por carteira:  Correlação, exposição total, sinais simultâneos
-Nível 5 — Global:        Perda diária → pausa; perda semanal → circuit breaker
-```
-
----
-
-## Backtesting
+## Backtest
 
 ```bash
-# Walk-forward (mais robusto — separa treino e validação)
-python backtester.py --symbol EURUSD --bars 2000 --walk-forward
-
-# Monte Carlo (robustez por permutação de sequência de trades)
-python backtester.py --symbol XAUUSD --monte-carlo --simulations 1000
-
-# Out-of-sample comparison + relatório de overfitting
-python backtester.py --symbol GBPUSD --oos-report
+python backtester.py --symbol EURUSD --walk-forward
+python backtester.py --symbol XAUUSD --monte-carlo
+pytest
 ```
 
----
+## Parâmetros importantes
 
-## Dashboard
+Estão em `config.py` e `strategy_settings.json`:
 
-Acesse `http://localhost:5000` (local) ou URL do Railway.  
-Autenticação obrigatória em produção via `DASHBOARD_API_TOKEN`.
-
----
-
-## Testes
-
-```bash
-pytest                          # todos
-pytest tests/test_risk.py -v    # risco
-pytest tests/test_performance.py
-pytest tests/test_backtester.py
+```text
+SIMPLE_MIN_SCORE = 8
+ADX_MIN_TREND = 18
+RSI_BUY_MIN = 50
+RSI_BUY_MAX = 68
+RSI_SELL_MIN = 32
+RSI_SELL_MAX = 50
+ATR_SL_MULT = 1.5
+ATR_TP_MULT = 3.0
+MIN_RR = 1.8
+RISK_PERCENT_PER_TRADE = 1.0
 ```
 
----
+## Observação importante
 
-## Deploy Railway
-
-1. Fork o repositório → conecte ao Railway
-2. Configure variáveis em **Variables** (nunca commite `.env`)
-3. `DB_PATH=/data/bot_state.db` (volume persistente)
-4. `Procfile` já configurado: `web: python main.py`
-
-> `bot_state.db` e `bot_app.log` estão no `.gitignore` — não versione esses arquivos.
+Meta de 10–15% ao mês em Forex normalmente exige alavancagem e risco elevados. Use essa versão como base disciplinada para backtest, forward test em conta demo e ajuste por par antes de considerar capital real.

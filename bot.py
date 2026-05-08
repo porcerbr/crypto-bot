@@ -174,9 +174,11 @@ class TradingBot:
             spread_cost = 0.0
             slip_cost = 0.0
             if Config.USE_SPREAD_MODEL:
-                spread_cost = random.uniform(Config.MIN_SPREAD_PIPS, Config.MAX_SPREAD_PIPS) * pf
+                spread_pips = float(getattr(Config, "SPREAD_PIPS", {}).get(sym, 1.0))
+                spread_cost = spread_pips * pf
             if Config.USE_SLIPPAGE_MODEL:
-                slip_cost = random.uniform(0, Config.SLIPPAGE_MAX_PIPS) * pf
+                max_slippage = float(getattr(Config, "SLIPPAGE_PIPS", {}).get(sym, 0.3))
+                slip_cost = random.uniform(0, max_slippage) * pf
             if direction == "BUY":
                 entry_simulated += (spread_cost / 2.0) + slip_cost
             else:

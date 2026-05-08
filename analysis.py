@@ -691,6 +691,7 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
 
     ema9   = closes.ewm(span=9,   adjust=False).mean().iloc[-1]
     ema21  = closes.ewm(span=21,  adjust=False).mean().iloc[-1]
+    ema50  = closes.ewm(span=50,  adjust=False).mean().iloc[-1]
     ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
 
     w     = min(20, len(closes) - 1)
@@ -729,9 +730,11 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
     chg   = float((closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100) if len(closes) >= 10 else 0.0
 
     cen = "NEUTRO"
-    if price > float(ema200) and float(ema9) > float(ema21):
+    # Cenário simplificado: EMA50 + EMA200 definem o lado operacional.
+    # EMA9/21 continuam calculadas apenas para compatibilidade com módulos legados.
+    if price > float(ema200) and float(ema50) > float(ema200):
         cen = "ALTA"
-    elif price < float(ema200) and float(ema9) < float(ema21):
+    elif price < float(ema200) and float(ema50) < float(ema200):
         cen = "BAIXA"
 
     # Candle de força real: body >= 50% do range do candle
@@ -743,7 +746,7 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
 
     return {
         "price": price,
-        "ema9": float(ema9), "ema21": float(ema21), "ema200": float(ema200),
+        "ema9": float(ema9), "ema21": float(ema21), "ema50": float(ema50), "ema200": float(ema200),
         "upper": float(sma20 + 2 * std20), "lower": float(sma20 - 2 * std20),
         "rsi": rsi_val, "atr": round(atr, 5), "adx": round(adx, 1),
         "macd_bull": bool(macd_line.iloc[-1] > sig_line.iloc[-1]),
@@ -836,9 +839,9 @@ def get_multi_timeframe(symbol: str) -> dict:
             # Alta: preço D1 > EMA200 D1 E EMA9 > EMA21 no Daily
             # Baixa: o oposto
             # Neutro: sem consenso claro
-            if d1["price"] > d1["ema200"] and d1["ema9"] > d1["ema21"]:
+            if d1["price"] > d1["ema200"] and d1.get("ema50", d1["ema21"]) > d1["ema200"]:
                 mtf["daily_bias"] = "ALTA"
-            elif d1["price"] < d1["ema200"] and d1["ema9"] < d1["ema21"]:
+            elif d1["price"] < d1["ema200"] and d1.get("ema50", d1["ema21"]) < d1["ema200"]:
                 mtf["daily_bias"] = "BAIXA"
             else:
                 mtf["daily_bias"] = "NEUTRO"
