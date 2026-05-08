@@ -521,34 +521,20 @@ def _trend_signal_core(
     h4_bias: str | None = None,
     require_h4_alignment: bool = True,
 ) -> str | None:
-    adx_min = float(adx_min if adx_min is not None else (16.0 if tf == "M15" else 20.0))
-    min_confluence = max(4, min(8, int(min_confluence or 5)))
-
-    if tf == "M15":
-        pull_range = pull_range or (-0.90, 0.55)
-        required_trigger_score = 2
-    else:
-        pull_range = pull_range or (-0.80, 0.60)
-        required_trigger_score = 2
+    """Sinal enxuto: tendência por EMA200 + confirmação MACD/RSI + filtro ATR."""
+    min_confluence = max(3, min(6, int(min_confluence or 5)))
 
     price = float(res.get("price", 0) or 0)
     atr = float(res.get("atr", 0) or 0)
-    d21 = float(res.get("dist_e21", 0) or 0)
     rsi = float(res.get("rsi", 50) or 50)
-    adx = float(res.get("adx", 0) or 0)
-    adx_prev = float(res.get("adx_prev", adx) or adx)
-    ema9 = float(res.get("ema9", 0) or 0)
     ema21 = float(res.get("ema21", 0) or 0)
     ema21_prev = float(res.get("ema21_prev", ema21) or ema21)
     ema50 = float(res.get("ema50", 0) or 0)
     ema50_prev = float(res.get("ema50_prev", ema50) or ema50)
     ema200 = float(res.get("ema200", 0) or 0)
-    pdi = float(res.get("pdi", 0) or 0)
-    ndi = float(res.get("ndi", 0) or 0)
 
-    if res.get("range_mode", False) and not getattr(Config, "ALLOW_RANGE_REVERSALS", False):
+    if price <= 0 or atr <= 0:
         return None
-
     if not _volatility_ok(price, atr, tf):
         return None
 
@@ -559,75 +545,30 @@ def _trend_signal_core(
             return True
         return str(h4_bias).upper() == direction
 
-    def pull_ok(direction: str) -> bool:
-        lo, hi = pull_range
-        if direction == "BUY":
-            return lo <= d21 <= hi
-        return -hi <= d21 <= -lo
+    macd_buy = bool(res.get("macd_cross_up", False) or res.get("macd_bull", False))
+    macd_sell = bool(res.get("macd_cross_down", False) or res.get("macd_bear", False))
 
-    trend_up = bool(res.get("trend_strong_up", False)) or bool(res.get("trend_up", False)) or (price > ema200 and ema21 >= ema50 and ema21 >= ema21_prev)
-    trend_dn = bool(res.get("trend_strong_dn", False)) or bool(res.get("trend_dn", False)) or (price < ema200 and ema21 <= ema50 and ema21 <= ema21_prev)
-
-    trigger_buy_score = sum(
-        1 for cond in (
-            bool(res.get("macd_cross_up", False)),
-            bool(res.get("rsi_bounce_up", False)),
-            bool(res.get("candle_bull", False) and ema9 >= ema21),
-        ) if cond
-    )
-    trigger_sell_score = sum(
-        1 for cond in (
-            bool(res.get("macd_cross_down", False)),
-            bool(res.get("rsi_bounce_dn", False)),
-            bool(res.get("candle_bear", False) and ema9 <= ema21),
-        ) if cond
-    )
-
-    buy_trigger = trigger_buy_score >= required_trigger_score
-    sell_trigger = trigger_sell_score >= required_trigger_score
-
-    def count(*conds: bool) -> int:
-        return sum(1 for c in conds if c)
-
-    buy_score = count(
-        trend_up,
+    buy_score = sum(1 for cond in (
         price > ema200,
-        ema21 > ema50,
+        ema21 >= ema50,
         ema21 >= ema21_prev,
-        ema50 >= ema50_prev,
-        adx >= adx_min,
-        adx >= adx_prev,
-        pull_ok("BUY"),
-        buy_trigger,
-        43 <= rsi <= 70,
-        pdi >= ndi,
+        macd_buy,
+        50 <= rsi <= 72,
         price >= ema21,
-    )
-    sell_score = count(
-        trend_dn,
+    ) if cond)
+    sell_score = sum(1 for cond in (
         price < ema200,
-        ema21 < ema50,
+        ema21 <= ema50,
         ema21 <= ema21_prev,
-        ema50 <= ema50_prev,
-        adx >= adx_min,
-        adx >= adx_prev,
-        pull_ok("SELL"),
-        sell_trigger,
-        30 <= rsi <= 57,
-        ndi >= pdi,
+        macd_sell,
+        28 <= rsi <= 50,
         price <= ema21,
-    )
+    ) if cond)
 
-    if buy_score >= min_confluence and buy_trigger and pull_ok("BUY") and h4_ok("BUY"):
+    if buy_score >= min_confluence and macd_buy and h4_ok("BUY"):
         return "BUY"
-    if sell_score >= min_confluence and sell_trigger and pull_ok("SELL") and h4_ok("SELL"):
+    if sell_score >= min_confluence and macd_sell and h4_ok("SELL"):
         return "SELL"
-
-    if getattr(Config, "ALLOW_RANGE_REVERSALS", False) and res.get("range_mode", False):
-        if rsi <= 32 and res.get("rsi_bounce_up", False) and res.get("candle_bull", False) and h4_ok("BUY"):
-            return "BUY"
-        if rsi >= 68 and res.get("rsi_bounce_dn", False) and res.get("candle_bear", False) and h4_ok("SELL"):
-            return "SELL"
 
     return None
 
