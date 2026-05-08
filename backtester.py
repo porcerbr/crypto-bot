@@ -22,6 +22,7 @@ import pandas as pd
 from config import Config
 from performance import calculate_metrics_from_history
 from utils import calc_pnl_usd, is_jpy_pair, log, load_strategy_settings, pip_factor, get_sl_tp_atr
+from risk import check_daily_loss_limit, check_weekly_loss_limit, get_adjusted_risk_pct
 
 
 @dataclass
@@ -480,6 +481,7 @@ def _indicators(df: pd.DataFrame) -> dict | None:
         "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
         "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
         "dist_e21": (price - e21) / atr_val if atr_val > 0 else 0.0,
+        "atr_pct": (atr_val / price * 100.0) if price > 0 and atr_val > 0 else 0.0,
         "dist_bb_up": (float(bb_upper.iloc[-1]) - price) / atr_val if atr_val > 0 else 0.0,
         "dist_bb_dn": (price - float(bb_lower.iloc[-1])) / atr_val if atr_val > 0 else 0.0,
         "candle_bull": float(c.iloc[-1]) > float(o.iloc[-1]),
@@ -604,6 +606,7 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 300) -> list[dict | N
             "macd_cross_up":   macd_prev <= sig_prev and macd_now > macd_sig,
             "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
             "dist_e21":        (price - e21) / atr_s,
+            "atr_pct":        (atr_val / price * 100.0) if price > 0 and atr_val > 0 else 0.0,
             "dist_bb_up":      (float(bb_upper.iloc[i]) - price) / atr_s,
             "dist_bb_dn":      (price - float(bb_lower.iloc[i])) / atr_s,
             "candle_bull": float(c.iloc[i]) > float(o_col.iloc[i]),
@@ -652,7 +655,7 @@ def _signal(
     require_h4_alignment: bool = False,
 ) -> str | None:
     adx_min = float(adx_min if adx_min is not None else (15 if tf == "W1" else 18))
-    pull_range = pull_range or ((-1.5, 2.5) if tf == "W1" else (-1.0, 2.0))
+    pull_range = pull_range or ((-1.0, 1.8) if tf == "W1" else (-0.65, 1.20))
     min_confluence = max(1, min(8, int(min_confluence or 5)))
 
     regime = _regime(res, tf)
@@ -674,65 +677,79 @@ def _signal(
             return True
         return str(h4_bias).upper() == direction
 
+    def atr_ok() -> bool:
+        atr_pct = float(res.get("atr_pct", 0) or 0)
+        if atr_pct <= 0:
+            return True
+        return float(getattr(Config, "ATR_MIN_PCT", 0.02)) <= atr_pct <= float(getattr(Config, "ATR_MAX_PCT", 1.50))
+
+    # H1 precisa de confirmação mais séria para evitar overtrading.
+    regime_floor = 5 if tf == "H1" else 3
+    if weekly_trade_target < 2.5:
+        regime_floor += 1
+
     # Trend-following: pullback + momentum trigger
     if regime in ("trend", "transition"):
-        if res["trend_up"]:
+        if res["trend_up"] and pull_ok("BUY") and h4_ok("BUY"):
             score = count(
-                res["trend_up"],
-                pull_ok("BUY"),
-                res["macd_cross_up"] or res["rsi_bounce_up"],
+                res["macd_cross_up"],
+                res["rsi_bounce_up"],
                 res["candle_bull"],
                 res["adx"] >= adx_min,
                 res["pdi"] >= res["ndi"],
-                res["rsi"] >= 40,
-                res["rsi"] <= 70,
+                45 <= res["rsi"] <= 68,
             )
-            if score >= min_confluence and pull_ok("BUY") and h4_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
+            required = max(regime_floor, min_confluence, 4 if tf == "H1" else 3)
+            if regime == "transition":
+                required += 1
+            if atr_ok() and score >= required and (res["macd_cross_up"] or res["rsi_bounce_up"] or res.get("macd_above", False)):
                 return "BUY"
 
-        if res["trend_dn"]:
+        if res["trend_dn"] and pull_ok("SELL") and h4_ok("SELL"):
             score = count(
-                res["trend_dn"],
-                pull_ok("SELL"),
-                res["macd_cross_down"] or res["rsi_bounce_dn"],
+                res["macd_cross_down"],
+                res["rsi_bounce_dn"],
                 res["candle_bear"],
                 res["adx"] >= adx_min,
                 res["ndi"] >= res["pdi"],
-                res["rsi"] <= 60,
-                res["rsi"] >= 30,
+                32 <= res["rsi"] <= 55,
             )
-            if score >= min_confluence and pull_ok("SELL") and h4_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
+            required = max(regime_floor, min_confluence, 4 if tf == "H1" else 3)
+            if regime == "transition":
+                required += 1
+            if atr_ok() and score >= required and (res["macd_cross_down"] or res["rsi_bounce_dn"] or res.get("macd_below", False)):
                 return "SELL"
 
     # Mean reversion in ranges: use extremes + reversals
     if regime == "range":
+        range_floor = max(3, regime_floor)
         buy_score = count(
-            res["rsi"] <= 40,
+            res["rsi"] <= 35,
             price <= res["ema21"],
             res["candle_bull"],
-            res["dist_bb_dn"] >= 1.0,
+            res["dist_bb_dn"] >= 1.2,
             res["rsi_bounce_up"],
             res["macd_cross_up"],
         )
-        if buy_score >= max(3, min_confluence - 1) and h4_ok("BUY"):
+        if atr_ok() and buy_score >= max(range_floor, min_confluence, 4) and h4_ok("BUY"):
             return "BUY"
 
         sell_score = count(
-            res["rsi"] >= 60,
+            res["rsi"] >= 65,
             price >= res["ema21"],
             res["candle_bear"],
-            res["dist_bb_up"] >= 1.0,
+            res["dist_bb_up"] >= 1.2,
             res["rsi_bounce_dn"],
             res["macd_cross_down"],
         )
-        if sell_score >= max(3, min_confluence - 1) and h4_ok("SELL"):
+        if atr_ok() and sell_score >= max(range_floor, min_confluence, 4) and h4_ok("SELL"):
             return "SELL"
 
-    # Light frequency relief: if target trades/week is high, accept slightly weaker transitions
-    if weekly_trade_target >= 3.0 and regime == "transition":
-        if res["trend_up"] and h4_ok("BUY") and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
+    # Transitional relief: só libera quando há momentum real, sem virar gatilho solto.
+    if weekly_trade_target >= 2.5 and regime == "transition":
+        if res["trend_up"] and h4_ok("BUY") and (res["macd_cross_up"] or res.get("macd_above", False)) and res["rsi_bounce_up"] and res["candle_bull"] and res["adx"] >= max(16.0, adx_min):
             return "BUY"
-        if res["trend_dn"] and h4_ok("SELL") and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
+        if res["trend_dn"] and h4_ok("SELL") and (res["macd_cross_down"] or res.get("macd_below", False)) and res["rsi_bounce_dn"] and res["candle_bear"] and res["adx"] >= max(16.0, adx_min):
             return "SELL"
 
     return None
@@ -749,57 +766,42 @@ def _signal_m15(
     rsi_os: float = 32.0,
 ) -> str | None:
     """
-    Estratégia de 3 indicadores — o que traders profissionais realmente usam:
+    Entrada M15 mais estrutural: tendência + pullback + momentum.
 
-        EMA50  →  direção da tendência (filtro estrutural)
-        MACD   →  momentum e timing de entrada (cruzamento de sinal)
-        RSI    →  evita entrar em regiões extremas (sobrecomprado/sobrevendido)
-
-    + H1 bias: descarta sinais contra a tendência do timeframe superior.
-
-    Hard requirements (todos obrigatórios):
-        BUY:  preço > EMA50  +  MACD cruzou para cima  +  RSI < rsi_ob  +  H1 não em baixa
-        SELL: preço < EMA50  +  MACD cruzou para baixo +  RSI > rsi_os  +  H1 não em alta
-
-    Soft conditions (evoluídas pelo genético, 0–3 necessárias):
-        ADX >= adx_min  •  RSI em zona ideal  •  vela confirma direção
-
-    Referência: EMA+RSI+MACD é a combinação #1 usada por traders profissionais de Forex
-    (Axi, XS Broker, Quantified Strategies, LiteFinance — consenso de mercado 2024-2026).
+    A lógica prioriza alinhamento com EMA200/EMA50, ATR saudável,
+    ADX acima do mínimo e viés do H1 quando disponível.
     """
-    rsi    = float(res.get("rsi", 50) or 50)
-    adx    = float(res.get("adx", 0)  or 0)
-    d21    = float(res.get("dist_e21", 0) or 0)
+    rsi = float(res.get("rsi", 50) or 50)
+    adx = float(res.get("adx", 0) or 0)
+    atr_pct = float(res.get("atr_pct", 0) or 0)
+    atr_ok = (atr_pct <= 0) or (float(getattr(Config, "ATR_MIN_PCT", 0.02)) <= atr_pct <= float(getattr(Config, "ATR_MAX_PCT", 1.50)))
 
-    h1_allows_buy  = h1_bias in (None, "NEUTRAL", "BUY")
+    h1_allows_buy = h1_bias in (None, "NEUTRAL", "BUY")
     h1_allows_sell = h1_bias in (None, "NEUTRAL", "SELL")
 
-    # ── BUY ──────────────────────────────────────────────────────────────────
-    if (res.get("above_ema50", False)      # tendência M15 altista
-            and res.get("macd_cross_up", False)  # MACD cruza para cima (trigger)
-            and rsi < rsi_ob               # RSI não sobrecomprado
-            and h1_allows_buy):            # H1 não em queda
+    trend_buy = bool(res.get("above_ema50", False)) and float(res.get("ema50", 0) or 0) > float(res.get("ema200", 0) or 0)
+    trend_sell = bool(res.get("below_ema50", False)) and float(res.get("ema50", 0) or 0) < float(res.get("ema200", 0) or 0)
 
+    # ── BUY ──────────────────────────────────────────────────────────────────
+    if trend_buy and h1_allows_buy and float(res.get("price", 0) or 0) > float(res.get("ema200", 0) or 0) and float(res.get("rsi", 50) or 50) < rsi_ob:
         soft = sum([
-            adx >= adx_min,                # força de tendência (opcional)
-            40 <= rsi <= 65,               # RSI em zona ideal de entrada
-            res.get("candle_bull", False), # vela de confirmação
+            adx >= (adx_min + 1),
+            42 <= rsi <= 68,
+            res.get("candle_bull", False),
+            res.get("macd_above", False),
         ])
-        if soft >= min_confluence:
+        if atr_ok and soft >= max(2, min_confluence):
             return "BUY"
 
     # ── SELL ─────────────────────────────────────────────────────────────────
-    if (res.get("below_ema50", False)
-            and res.get("macd_cross_down", False)
-            and rsi > rsi_os
-            and h1_allows_sell):
-
+    if trend_sell and h1_allows_sell and float(res.get("price", 0) or 0) < float(res.get("ema200", 0) or 0) and float(res.get("rsi", 50) or 50) > rsi_os:
         soft = sum([
-            adx >= adx_min,
-            35 <= rsi <= 60,
+            adx >= (adx_min + 1),
+            32 <= rsi <= 58,
             res.get("candle_bear", False),
+            res.get("macd_below", False),
         ])
-        if soft >= min_confluence:
+        if atr_ok and soft >= max(2, min_confluence):
             return "SELL"
 
     return None
@@ -962,6 +964,7 @@ def run_backtest(
     trades: list[dict] = []
     active: dict | None = None
     cooldown = 0
+    loss_streak = 0
 
     for i in range(wb, len(bars)):
         bar = bars[i]
@@ -1026,11 +1029,25 @@ def run_backtest(
                 })
                 active = None
                 if result == "LOSS":
-                    cooldown = cooldown_after_loss
+                    loss_streak += 1
+                    cooldown = max(cooldown_after_loss, 2 if loss_streak < 3 else 6)
+                else:
+                    loss_streak = 0
             continue
 
         if cooldown > 0:
             cooldown -= 1
+            continue
+
+        day_trades = [t for t in trades if str(t.get("closed_at", ""))[:10] == bar.timestamp.date().isoformat()]
+        week_trades = [
+            t for t in trades
+            if datetime.fromisoformat(str(t.get("closed_at", bar.timestamp.isoformat())).replace("Z", "+00:00")).isocalendar()[:2]
+            == bar.timestamp.isocalendar()[:2]
+        ]
+        daily_guard = check_daily_loss_limit(day_trades, balance)
+        weekly_guard = check_weekly_loss_limit(week_trades, balance)
+        if daily_guard.get("blocked") or weekly_guard.get("blocked"):
             continue
 
         if not _in_session(bar, symbol, tf):
@@ -1075,7 +1092,9 @@ def run_backtest(
 
         cs = 100 if symbol == "XAUUSD" else 100_000
         sl_dist = abs(entry - sl)
-        max_risk_usd = balance * max(0.1, float(risk_pct)) / 100.0
+        risk_regime = _regime(res, tf)
+        risk_pct_eff = get_adjusted_risk_pct(float(risk_pct), regime=str(risk_regime).upper(), consecutive_losses=loss_streak)
+        max_risk_usd = balance * max(0.1, float(risk_pct_eff)) / 100.0
         if sl_dist <= 0:
             continue
 

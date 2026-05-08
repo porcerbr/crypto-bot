@@ -63,25 +63,29 @@ def generate_param_grid(grid: str = "quick") -> list[dict]:
 
     if grid == "quick":
         space = {
-            "min_confluence": [1, 2],
-            "adx_min": [16, 20, 24],
+            "min_confluence": [3, 4, 5],
+            "adx_min": [20, 24, 28],
             "atr_sl_mult": [1.2, 1.5],
-            "atr_tp_mult": [2.0, 2.5, 3.0],
-            "risk_pct": [0.5, 1.0],
-            "rsi_ob": [66, 70],
-            "rsi_os": [30, 34],
-            "max_bars_in_trade": [16, 24],
+            "atr_tp_mult": [3.0, 3.5, 4.0],
+            "risk_pct": [0.10, 0.25, 0.50],
+            "rsi_ob": [68, 70],
+            "rsi_os": [30, 32],
+            "max_bars_in_trade": [10, 16, 24],
+            "weekly_trade_target": [2.0, 3.0],
+            "pull_hi": [1.20, 1.35, 1.50],
         }
     else:
         space = {
-            "min_confluence": [0, 1, 2, 3],
-            "adx_min": [14, 18, 22, 26],
+            "min_confluence": [3, 4, 5, 6],
+            "adx_min": [18, 22, 26, 30],
             "atr_sl_mult": [1.0, 1.2, 1.5, 1.8, 2.0],
-            "atr_tp_mult": [1.8, 2.2, 2.6, 3.0, 3.5],
-            "risk_pct": [0.25, 0.5, 0.75, 1.0],
-            "rsi_ob": [64, 68, 72],
-            "rsi_os": [28, 32, 36],
-            "max_bars_in_trade": [12, 20, 32, 48],
+            "atr_tp_mult": [2.5, 3.0, 3.5, 4.0, 4.5],
+            "risk_pct": [0.10, 0.25, 0.40, 0.50],
+            "rsi_ob": [66, 68, 72],
+            "rsi_os": [28, 31, 34],
+            "max_bars_in_trade": [10, 16, 24, 32],
+            "weekly_trade_target": [2.0, 3.0, 4.0],
+            "pull_hi": [1.10, 1.25, 1.40, 1.60],
         }
 
     keys = list(space.keys())
@@ -151,6 +155,7 @@ def score_candidate(metrics: dict, yearly: list[dict]) -> float:
     trades = _safe_float(metrics.get("total_trades"))
     wr = _safe_float(metrics.get("winrate"))
     freq = _safe_float(metrics.get("trade_frequency_per_week"))
+    sharpe = _safe_float(metrics.get("sharpe_ratio"))
 
     losing_years = sum(1 for y in yearly if _safe_float(y.get("total_pnl")) < 0)
     active_years = max(1, len(yearly))
@@ -158,18 +163,28 @@ def score_candidate(metrics: dict, yearly: list[dict]) -> float:
 
     trade_penalty = 0.0
     if trades < 20:
-        trade_penalty += (20 - trades) * 2.5
-    if freq > 30:
-        trade_penalty += (freq - 30) * 1.5
+        trade_penalty += (20 - trades) * 3.0
+    if freq > 25:
+        trade_penalty += (freq - 25) * 2.0
+
+    hard_penalty = 0.0
+    if pf < 1.0:
+        hard_penalty += (1.0 - pf) * 120.0
+    if dd > 25:
+        hard_penalty += (dd - 25) * 3.0
+    if wr < 45:
+        hard_penalty += (45 - wr) * 1.5
 
     return round(
-        ret * 0.55
-        + pf * 12.0
-        + wr * 0.10
-        + consistency * 25.0
-        - dd * 1.35
-        - losing_years * 8.0
-        - trade_penalty,
+        ret * 0.45
+        + pf * 18.0
+        + wr * 0.12
+        + consistency * 30.0
+        + max(0.0, sharpe) * 4.0
+        - dd * 2.60
+        - losing_years * 12.0
+        - trade_penalty
+        - hard_penalty,
         4,
     )
 
@@ -190,6 +205,7 @@ def run_lab(
 
     ranking: list[LabCandidate] = []
     for params in params_list:
+        pull_hi = float(params.get("pull_hi", 1.4))
         result: BacktestResult = run_backtest(
             bars,
             symbol=symbol,
@@ -199,6 +215,8 @@ def run_lab(
             atr_sl_mult=float(params.get("atr_sl_mult", 1.5)),
             atr_tp_mult=float(params.get("atr_tp_mult", 3.0)),
             risk_pct=float(params.get("risk_pct", 1.0)),
+            pull_range=(-0.65, pull_hi),
+            weekly_trade_target=float(params.get("weekly_trade_target", 3.0)),
             max_bars_in_trade=int(params.get("max_bars_in_trade", 20)),
             rsi_ob=float(params.get("rsi_ob", 68)),
             rsi_os=float(params.get("rsi_os", 32)),

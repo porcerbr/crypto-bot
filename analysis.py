@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import Config
-from utils import log, asset_name
+from utils import log, log_throttled, asset_name
 
 # ── Mapeamento interno → Twelve Data ────────────────────────
 TD_SYMBOLS = {
@@ -23,7 +23,7 @@ _INVALID_LOG_COOLDOWN = 10 * 60  # loga no máximo 1x a cada 10 min por símbolo
 def _log_invalid_candle(symbol: str):
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
+        log_throttled(f"analysis-invalid-{symbol}", f"[ANÁLISE] {symbol}: candle inválido, ignorando", every_seconds=_INVALID_LOG_COOLDOWN)
         _invalid_candle_logged[symbol] = now
 
 _cache: dict = {}
@@ -539,7 +539,7 @@ def _get_df(symbol: str):
 
     if age >= (_CACHE_TTL + _BACKGROUND_REFRESH_GRACE):
         meta = _cache_meta.get(symbol, {})
-        log(f"[FEED] {symbol}: cache stale-safe ({int(age)}s | source={meta.get('source', 'unknown')})")
+        log_throttled(f"feed-stale-{symbol}", f"[FEED] {symbol}: cache stale-safe ({int(age)}s | source={meta.get('source', 'unknown')})", every_seconds=300)
 
     return df.copy()
 
@@ -766,12 +766,12 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
     """Retorna indicadores H1 para o símbolo (usa cache interno)."""
     df = _get_df(symbol)
     if df is None or len(df) < 50:
-        log(f"[ANÁLISE] {symbol}: sem dados no cache")
+        log_throttled(f"analysis-empty-{symbol}", f"[ANÁLISE] {symbol}: sem dados no cache", every_seconds=300)
         return None
 
     df = _strip_open_candle(df)
     if not _validate_last_candle(df):
-        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
+        log_throttled(f"analysis-invalid-{symbol}", f"[ANÁLISE] {symbol}: candle inválido, ignorando", every_seconds=_INVALID_LOG_COOLDOWN)
         return None
 
     ind = _calc_indicators(df)
@@ -819,7 +819,7 @@ def get_multi_timeframe(symbol: str) -> dict:
         mtf["aligned"]    = h1["cenario"] == h4["cenario"] and h1["cenario"] != "NEUTRO"
         mtf["h4_cenario"] = h4["cenario"]
     else:
-        log(f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)")
+        log_throttled(f"mtf-h4-short-{symbol}", f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)", every_seconds=900)
 
     # ── D1 (Daily bias) ───────────────────────────────────────
     # Resampla H1 → D1 para capturar a tendência macro
@@ -846,6 +846,6 @@ def get_multi_timeframe(symbol: str) -> dict:
             else:
                 mtf["daily_bias"] = "NEUTRO"
     except Exception as e:
-        log(f"[MTF] {symbol}: erro no D1: {e}")
+        log_throttled(f"mtf-d1-error-{symbol}", f"[MTF] {symbol}: erro no D1: {e}", every_seconds=900)
 
     return mtf

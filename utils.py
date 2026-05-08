@@ -37,8 +37,28 @@ def fmt(value: float) -> str:
     return f"{value:.6f}"
 
 
+_LOG_LAST_SEEN: dict[tuple[str, str], float] = {}
+
+
 def log(msg: str):
     _logger.info(msg)
+
+
+def log_throttled(key: str, msg: str, every_seconds: int = 60, level: str = "info"):
+    """Emite uma mensagem no máximo uma vez por janela de tempo.
+
+    Útil para sinais repetitivos de mercado/cache que aparecem a cada ciclo.
+    """
+    try:
+        now = datetime.utcnow().timestamp()
+        slot = (level, key)
+        last = _LOG_LAST_SEEN.get(slot, 0.0)
+        if now - last < max(1, int(every_seconds)):
+            return
+        _LOG_LAST_SEEN[slot] = now
+        getattr(_logger, level if hasattr(_logger, level) else "info")(msg)
+    except Exception:
+        _logger.info(msg)
 
 def asset_name(symbol):
     return Config.FXGOLD_ASSETS.get(symbol, symbol)
