@@ -80,7 +80,7 @@ GENOME_KEYS: list[str] = GENOME_KEYS_M15  # padrão M15
 
 # Ranges completos (ambos TFs)
 RANGES: dict[str, tuple[float, float]] = {
-    "MIN_CONFLUENCE": (0, 2),
+    "MIN_CONFLUENCE": (1, 3),   # mínimo 1 soft condition — nunca 0 (torna ADX/RSI irrelevantes)
     "ADX_MIN":        (10, 28),
     "ATR_MULT_SL":    (1.3, 2.5),   # mínimo 1.3 para sobreviver spread M15
     "ATR_MULT_TP":    (2.0, 4.0),
@@ -99,7 +99,7 @@ if _is_h1():
     GENOME_KEYS = GENOME_KEYS_H1
     RANGES["ATR_MULT_SL"]    = (1.0, 2.2)
     RANGES["ATR_MULT_TP"]    = (2.0, 4.5)
-    RANGES["MIN_CONFLUENCE"] = (4, 8)
+    RANGES["MIN_CONFLUENCE"] = (3, 8)
     RANGES["ADX_MIN"]        = (18, 34)
     RANGES["WEEKLY_TARGET"]  = (1.5, 4.0)
     RANGES["MAX_BARS_IN_TRADE"] = (16, 72)
@@ -370,10 +370,28 @@ def _tournament(population, scores):
 def evolve(population: list[Genome], scores: list[float]) -> list[Genome]:
     if not population:
         return [random_genome() for _ in range(POPULATION_SIZE)]
+
     paired = sorted(zip(population, scores), key=lambda x: x[1], reverse=True)
-    new_pop = [copy.deepcopy(g) for g, _ in paired[:ELITE_COUNT]]
-    while len(new_pop) < POPULATION_SIZE:
-        new_pop.append(crossover(_tournament(population, scores), _tournament(population, scores)))
+    best_score = paired[0][1]
+
+    # Injeção de diversidade: se a população convergiu para resultados ruins,
+    # substitui metade com genomas aleatórios para escapar do mínimo local.
+    # Isso evita o problema de 50 e 200 gerações dando resultado idêntico.
+    top_scores = [s for _, s in paired[:ELITE_COUNT]]
+    all_bad    = all(s < -0.8 for s in top_scores)
+    score_range = max(top_scores) - min(top_scores)
+    converged  = score_range < 0.05 and len(paired) >= ELITE_COUNT
+
+    if all_bad or converged:
+        # Mantém os 2 melhores, injeta o resto como aleatórios
+        elites  = [copy.deepcopy(g) for g, _ in paired[:2]]
+        new_pop = elites + [random_genome() for _ in range(POPULATION_SIZE - 2)]
+    else:
+        elites  = [copy.deepcopy(g) for g, _ in paired[:ELITE_COUNT]]
+        new_pop = elites[:]
+        while len(new_pop) < POPULATION_SIZE:
+            new_pop.append(crossover(_tournament(population, scores), _tournament(population, scores)))
+
     return new_pop[:POPULATION_SIZE]
 
 

@@ -512,60 +512,70 @@ def _signal(res: dict, tf: str, min_confluence: int = 5, adx_min: float | None =
 # Signal logic — M15 (EMA50 + MACD + RSI, multi-timeframe H1 bias)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _signal_m15(res: dict, min_confluence: int = 1, adx_min: float = 20.0,
-                pull_range=None, weekly_trade_target: float = 8.0,
-                h1_bias: str | None = None,
-                rsi_ob: float = 68.0, rsi_os: float = 32.0) -> str | None:
+def _signal_m15(
+    res: dict,
+    min_confluence: int = 1,
+    adx_min: float = 20.0,
+    pull_range=None,
+    weekly_trade_target: float = 8.0,
+    h1_bias: str | None = None,
+    rsi_ob: float = 68.0,
+    rsi_os: float = 32.0,
+) -> str | None:
     """
-    Estratégia M15 — os 3 indicadores que traders profissionais realmente usam:
-    EMA50 (tendência) + MACD (momentum trigger) + RSI (zona de entrada).
-    H1 bias filtra a direção do timeframe superior.
+    Estratégia M15 de alta probabilidade.
 
-    Hard requirements (todos obrigatórios):
-      BUY:  preço > EMA50 + MACD cruzou para cima (ou RSI bounce) + RSI < rsi_ob + H1 não em queda
-      SELL: preço < EMA50 + MACD cruzou para baixo (ou RSI bounce) + RSI > rsi_os + H1 não em alta
+    Três camadas de filtro:
+    1. H1 bias (obrigatório forte): H1 deve estar CONFIRMANDO a direção —
+       não basta H1 neutro. Isso elimina a maioria das entradas erradas.
+    2. EMA50 M15 (obrigatório): preço na direção da tendência de médio prazo.
+    3. Trigger qualificado: MACD cross + RSI em zona saudável + vela confirmando.
+       RSI bounce sozinho não é mais suficiente — muito ruído em M15.
+    4. ADX (soft): força de tendência confirma o setup.
 
-    Soft (0–2 conforme min_confluence):
-      ADX >= adx_min  •  RSI em zona ideal  •  vela confirma
+    WR alvo: 45–55% | R:R alvo: 1.8–2.5:1 | Frequência: 3–8 trades/dia.
     """
     rsi = float(res.get("rsi", 50) or 50)
     adx = float(res.get("adx", 0) or 0)
 
-    h1_ok_buy  = h1_bias in (None, "NEUTRAL", "BUY")
-    h1_ok_sell = h1_bias in (None, "NEUTRAL", "SELL")
+    # H1 deve estar CLARAMENTE a favor — neutralidade não basta
+    h1_strong_up   = h1_bias == "BUY"
+    h1_strong_dn   = h1_bias == "SELL"
+    h1_neutral_up  = h1_bias in (None, "NEUTRAL")  # permite, mas sem bônus
+    h1_neutral_dn  = h1_bias in (None, "NEUTRAL")
 
-    # BUY ─────────────────────────────────────────────────────────────────────
-    buy_trigger = res.get("macd_cross_up", False) or res.get("rsi_bounce_up", False)
-    if (res.get("above_ema50", False)
-            and buy_trigger
-            and rsi < rsi_ob
-            and rsi >= 35
-            and h1_ok_buy):
+    # ── BUY ──────────────────────────────────────────────────────────────────
+    # H1 deve permitir BUY (BUY ou NEUTRO, nunca SELL)
+    if h1_bias == "SELL":
+        pass  # bloqueia BUY se H1 claramente em queda
+    elif (res.get("above_ema50", False)           # M15 tendência de alta
+            and res.get("macd_cross_up", False)   # MACD cruzou (trigger preciso)
+            and rsi_os + 10 <= rsi < rsi_ob       # RSI em zona saudável (nem extremo)
+            and res.get("candle_bull", False)):    # vela confirma (obrigatório)
         soft = sum([
-            adx >= adx_min,
-            40 <= rsi <= 68,
-            res.get("candle_bull", False),
+            adx >= adx_min,                        # força de tendência (soft)
+            h1_strong_up,                          # H1 fortemente a favor (bônus)
+            45 <= rsi <= 65,                       # RSI em zona ideal
         ])
         if soft >= min_confluence:
             return "BUY"
 
-    # SELL ────────────────────────────────────────────────────────────────────
-    sell_trigger = res.get("macd_cross_down", False) or res.get("rsi_bounce_dn", False)
-    if (res.get("below_ema50", False)
-            and sell_trigger
-            and rsi > rsi_os
-            and rsi <= 65
-            and h1_ok_sell):
+    # ── SELL ─────────────────────────────────────────────────────────────────
+    if h1_bias == "BUY":
+        pass  # bloqueia SELL se H1 claramente em alta
+    elif (res.get("below_ema50", False)
+            and res.get("macd_cross_down", False)
+            and rsi_os < rsi <= rsi_ob - 10
+            and res.get("candle_bear", False)):
         soft = sum([
             adx >= adx_min,
-            32 <= rsi <= 60,
-            res.get("candle_bear", False),
+            h1_strong_dn,
+            35 <= rsi <= 55,
         ])
         if soft >= min_confluence:
             return "SELL"
 
     return None
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SL / TP
