@@ -151,7 +151,8 @@ def _rand_gene(key: str) -> float | int:
 
 def random_genome() -> Genome:
     g = {k: _rand_gene(k) for k in GENOME_KEYS}
-    if g["PULL_MIN"] > g["PULL_MAX"]:
+    # H1: garante PULL_MIN < PULL_MAX
+    if "PULL_MIN" in g and "PULL_MAX" in g and g["PULL_MIN"] > g["PULL_MAX"]:
         g["PULL_MIN"], g["PULL_MAX"] = g["PULL_MAX"], g["PULL_MIN"]
     return g
 
@@ -164,9 +165,12 @@ def crossover(g1: Genome, g2: Genome) -> Genome:
         if random.random() < MUTATION_RATE:
             child[k] = _rand_gene(k)
     for k in GENOME_KEYS:
+        if k not in RANGES:
+            continue
         lo, hi = RANGES[k]
         child[k] = max(lo, min(hi, child[k]))
-    if child["PULL_MIN"] > child["PULL_MAX"]:
+    # H1: garante PULL_MIN < PULL_MAX
+    if "PULL_MIN" in child and "PULL_MAX" in child and child["PULL_MIN"] > child["PULL_MAX"]:
         child["PULL_MIN"], child["PULL_MAX"] = child["PULL_MAX"], child["PULL_MIN"]
     return child
 
