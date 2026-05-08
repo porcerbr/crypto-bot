@@ -1066,7 +1066,7 @@ def run_backtest(
             continue
 
         entry = _apply_cost(bar.close, direction, symbol)
-        sl, tp = _sl_tp(entry, direction, res["atr"], atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)
+        sl, tp, _, _ = get_sl_tp_atr(entry, res["atr"], direction, atr_sl_mult=atr_sl_mult, atr_tp_mult=atr_tp_mult)
 
         if direction == "BUY" and (sl >= entry or tp <= entry):
             continue
