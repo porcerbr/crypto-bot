@@ -492,6 +492,140 @@ def _indicators(df: pd.DataFrame) -> dict | None:
     }
 
 
+
+def build_indicator_cache(bars: list[Bar], lookback: int = 300) -> list[dict | None]:
+    """
+    Computa indicadores técnicos para cada barra de forma vetorizada.
+
+    Retorna uma lista de dicts (um por barra) com todos os indicadores pré-calculados.
+    Usada para evitar recalcular indicadores a cada barra no loop de backtest.
+
+    Args:
+        bars:     lista de Bar em ordem cronológica
+        lookback: não usado (mantido por compatibilidade de assinatura) — usa a série completa
+
+    Returns:
+        lista[dict | None] — None para as primeiras barras (sem histórico suficiente)
+    """
+    if not bars:
+        return []
+
+    df = bars_to_dataframe(bars)
+    n  = len(df)
+
+    if n < 40:
+        return [None] * n
+
+    c     = df["Close"]
+    h_col = df["High"]
+    l_col = df["Low"]
+    o_col = df["Open"]
+
+    # EMAs
+    ema9   = c.ewm(span=9,   adjust=False).mean()
+    ema21  = c.ewm(span=21,  adjust=False).mean()
+    ema50  = c.ewm(span=50,  adjust=False).mean()
+    ema200 = c.ewm(span=200, adjust=False).mean()
+
+    # MACD
+    macd_line   = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+
+    # RSI
+    d    = c.diff()
+    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean()
+    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean()
+    rsi  = 100 - 100 / (1 + gain / loss.replace(0, 1e-10))
+
+    # ATR e ADX
+    tr = pd.concat(
+        [h_col - l_col, (h_col - c.shift()).abs(), (l_col - c.shift()).abs()], axis=1
+    ).max(axis=1)
+    atr = tr.ewm(span=14, adjust=False).mean()
+
+    up_move   = h_col.diff()
+    down_move = -l_col.diff()
+    plus_dm   = ((up_move > down_move) & (up_move > 0)) * up_move.clip(lower=0)
+    minus_dm  = ((down_move > up_move) & (down_move > 0)) * down_move.clip(lower=0)
+    atr_safe  = atr.replace(0, 1e-10)
+    plus_di   = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    minus_di  = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr_safe
+    adx       = (
+        (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10) * 100
+    ).ewm(span=14, adjust=False).mean()
+
+    # Bollinger Bands
+    bb_mid   = c.rolling(20).mean()
+    bb_std   = c.rolling(20).std(ddof=0).fillna(0)
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+
+    regime_adx = getattr(Config, "REGIME_ADX_RANGING", 18)
+    cache: list[dict | None] = []
+
+    for i in range(n):
+        if i < 26:          # aguarda MACD (26 períodos mínimo)
+            cache.append(None)
+            continue
+
+        price    = float(c.iloc[i])
+        atr_val  = float(atr.iloc[i])
+        if math.isnan(atr_val):
+            atr_val = 0.0
+        atr_s    = atr_val if atr_val > 0 else 1e-10
+
+        e9   = float(ema9.iloc[i])
+        e21  = float(ema21.iloc[i])
+        e50  = float(ema50.iloc[i])
+        e200 = float(ema200.iloc[i])
+
+        rsi_val  = float(rsi.iloc[i])
+        rsi_prev = float(rsi.iloc[i - 1]) if i >= 1 else rsi_val
+
+        macd_now  = float(macd_line.iloc[i])
+        macd_sig  = float(macd_signal.iloc[i])
+        macd_prev = float(macd_line.iloc[i - 1]) if i >= 1 else macd_now
+        sig_prev  = float(macd_signal.iloc[i - 1]) if i >= 1 else macd_sig
+
+        e9_prev  = float(ema9.iloc[i - 1])  if i >= 1 else e9
+        e21_prev = float(ema21.iloc[i - 1]) if i >= 1 else e21
+
+        cache.append({
+            "price": price,
+            "ema9": e9, "ema21": e21, "ema50": e50, "ema200": e200,
+            "atr": atr_val,
+            "adx": float(adx.iloc[i]),
+            "pdi": float(plus_di.iloc[i]),
+            "ndi": float(minus_di.iloc[i]),
+            "rsi": rsi_val,
+            "rsi_prev": rsi_prev,
+            "macd_above":      macd_now > macd_sig,
+            "macd_below":      macd_now < macd_sig,
+            "macd_cross_up":   macd_prev <= sig_prev and macd_now > macd_sig,
+            "macd_cross_down": macd_prev >= sig_prev and macd_now < macd_sig,
+            "dist_e21":        (price - e21) / atr_s,
+            "dist_bb_up":      (float(bb_upper.iloc[i]) - price) / atr_s,
+            "dist_bb_dn":      (price - float(bb_lower.iloc[i])) / atr_s,
+            "candle_bull": float(c.iloc[i]) > float(o_col.iloc[i]),
+            "candle_bear": float(c.iloc[i]) < float(o_col.iloc[i]),
+            "rsi_bounce_up": rsi_prev < 42 and rsi_val >= 42,
+            "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
+            "trend_up":  price > e200 and e21 > e50,
+            "trend_dn":  price < e200 and e21 < e50,
+            "range_mode": float(adx.iloc[i]) <= regime_adx,
+            # M15: EMA9/21 cross + posição relativa
+            "ema9_above_ema21": e9 > e21,
+            "ema9_cross_up":    e9_prev <= e21_prev and e9 > e21,
+            "ema9_cross_dn":    e9_prev >= e21_prev and e9 < e21,
+            "above_ema50":  price > e50,
+            "below_ema50":  price < e50,
+            "above_ema21":  price > e21,
+            "below_ema21":  price < e21,
+        })
+
+    return cache
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Signal logic
 # ──────────────────────────────────────────────────────────────────────────────
