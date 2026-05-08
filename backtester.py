@@ -470,6 +470,10 @@ def _indicators(df: pd.DataFrame) -> dict | None:
         "ndi": float(minus_di.iloc[-1]),
         "rsi": rsi_val,
         "rsi_prev": rsi_prev,
+        "ema9_prev": float(ema9.iloc[-2]) if n >= 2 else e9,
+        "ema21_prev": float(ema21.iloc[-2]) if n >= 2 else e21,
+        "ema50_prev": float(ema50.iloc[-2]) if n >= 2 else e50,
+        "adx_prev": float(adx.iloc[-2]) if n >= 2 else float(adx.iloc[-1]),
         "macd_above": macd_now > macd_sig,
         "macd_below": macd_now < macd_sig,
         "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
@@ -483,6 +487,8 @@ def _indicators(df: pd.DataFrame) -> dict | None:
         "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
         "trend_up": price > e200 and e21 > e50,
         "trend_dn": price < e200 and e21 < e50,
+        "trend_strong_up": price > e200 and e21 > e50 and (e21 >= float(ema21.iloc[-2]) if n >= 2 else True),
+        "trend_strong_dn": price < e200 and e21 < e50 and (e21 <= float(ema21.iloc[-2]) if n >= 2 else True),
         "range_mode": float(adx.iloc[-1]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
     }
 
@@ -504,6 +510,7 @@ def _volatility_ok(price: float, atr: float, tf: str) -> bool:
     return 0.00025 <= atr_pct <= 0.015
 
 
+
 def _trend_signal_core(
     res: dict,
     tf: str,
@@ -515,17 +522,26 @@ def _trend_signal_core(
     require_h4_alignment: bool = True,
 ) -> str | None:
     adx_min = float(adx_min if adx_min is not None else (16.0 if tf == "M15" else 20.0))
-    min_confluence = max(3, min(8, int(min_confluence or 5)))
-    pull_range = pull_range or ((-1.2, 0.7) if tf == "M15" else (-1.0, 0.8))
+    min_confluence = max(4, min(8, int(min_confluence or 5)))
+
+    if tf == "M15":
+        pull_range = pull_range or (-0.90, 0.55)
+        required_trigger_score = 2
+    else:
+        pull_range = pull_range or (-0.80, 0.60)
+        required_trigger_score = 2
 
     price = float(res.get("price", 0) or 0)
     atr = float(res.get("atr", 0) or 0)
     d21 = float(res.get("dist_e21", 0) or 0)
     rsi = float(res.get("rsi", 50) or 50)
     adx = float(res.get("adx", 0) or 0)
+    adx_prev = float(res.get("adx_prev", adx) or adx)
     ema9 = float(res.get("ema9", 0) or 0)
     ema21 = float(res.get("ema21", 0) or 0)
+    ema21_prev = float(res.get("ema21_prev", ema21) or ema21)
     ema50 = float(res.get("ema50", 0) or 0)
+    ema50_prev = float(res.get("ema50_prev", ema50) or ema50)
     ema200 = float(res.get("ema200", 0) or 0)
     pdi = float(res.get("pdi", 0) or 0)
     ndi = float(res.get("ndi", 0) or 0)
@@ -549,13 +565,26 @@ def _trend_signal_core(
             return lo <= d21 <= hi
         return -hi <= d21 <= -lo
 
-    ema_stack_up = price > ema9 > ema21 > ema50 > ema200
-    ema_stack_dn = price < ema9 < ema21 < ema50 < ema200
-    trend_up = bool(res.get("trend_up", False)) or ema_stack_up
-    trend_dn = bool(res.get("trend_dn", False)) or ema_stack_dn
+    trend_up = bool(res.get("trend_strong_up", False)) or bool(res.get("trend_up", False)) or (price > ema200 and ema21 >= ema50 and ema21 >= ema21_prev)
+    trend_dn = bool(res.get("trend_strong_dn", False)) or bool(res.get("trend_dn", False)) or (price < ema200 and ema21 <= ema50 and ema21 <= ema21_prev)
 
-    buy_trigger = bool(res.get("macd_cross_up", False) or res.get("rsi_bounce_up", False) or (res.get("candle_bull", False) and ema9 >= ema21))
-    sell_trigger = bool(res.get("macd_cross_down", False) or res.get("rsi_bounce_dn", False) or (res.get("candle_bear", False) and ema9 <= ema21))
+    trigger_buy_score = sum(
+        1 for cond in (
+            bool(res.get("macd_cross_up", False)),
+            bool(res.get("rsi_bounce_up", False)),
+            bool(res.get("candle_bull", False) and ema9 >= ema21),
+        ) if cond
+    )
+    trigger_sell_score = sum(
+        1 for cond in (
+            bool(res.get("macd_cross_down", False)),
+            bool(res.get("rsi_bounce_dn", False)),
+            bool(res.get("candle_bear", False) and ema9 <= ema21),
+        ) if cond
+    )
+
+    buy_trigger = trigger_buy_score >= required_trigger_score
+    sell_trigger = trigger_sell_score >= required_trigger_score
 
     def count(*conds: bool) -> int:
         return sum(1 for c in conds if c)
@@ -564,32 +593,36 @@ def _trend_signal_core(
         trend_up,
         price > ema200,
         ema21 > ema50,
+        ema21 >= ema21_prev,
+        ema50 >= ema50_prev,
         adx >= adx_min,
+        adx >= adx_prev,
         pull_ok("BUY"),
         buy_trigger,
-        42 <= rsi <= 72,
+        43 <= rsi <= 70,
         pdi >= ndi,
+        price >= ema21,
     )
     sell_score = count(
         trend_dn,
         price < ema200,
         ema21 < ema50,
+        ema21 <= ema21_prev,
+        ema50 <= ema50_prev,
         adx >= adx_min,
+        adx >= adx_prev,
         pull_ok("SELL"),
         sell_trigger,
-        28 <= rsi <= 58,
+        30 <= rsi <= 57,
         ndi >= pdi,
+        price <= ema21,
     )
-
-    if weekly_trade_target >= 4.0:
-        min_confluence = max(3, min_confluence - 1)
 
     if buy_score >= min_confluence and buy_trigger and pull_ok("BUY") and h4_ok("BUY"):
         return "BUY"
     if sell_score >= min_confluence and sell_trigger and pull_ok("SELL") and h4_ok("SELL"):
         return "SELL"
 
-    # Reversão de range só quando explicitamente ativada.
     if getattr(Config, "ALLOW_RANGE_REVERSALS", False) and res.get("range_mode", False):
         if rsi <= 32 and res.get("rsi_bounce_up", False) and res.get("candle_bull", False) and h4_ok("BUY"):
             return "BUY"
@@ -621,22 +654,25 @@ def _signal(
     )
 
 
+
 def _signal_m15(
     res: dict,
     min_confluence: int = 4,
     adx_min: float = 16.0,
     pull_range: tuple[float, float] | None = None,
     weekly_trade_target: float = 8.0,
+    h4_bias: str | None = None,
+    require_h4_alignment: bool = True,
 ) -> str | None:
     return _trend_signal_core(
         res,
         "M15",
         min_confluence=min_confluence,
         adx_min=adx_min,
-        pull_range=pull_range or (-1.2, 0.7),
+        pull_range=pull_range or (-0.90, 0.55),
         weekly_trade_target=weekly_trade_target,
-        h4_bias=None,
-        require_h4_alignment=False,
+        h4_bias=h4_bias,
+        require_h4_alignment=require_h4_alignment,
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -731,6 +767,10 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | N
             "ndi": float(minus_di.iloc[i]),
             "rsi": rsi_val,
             "rsi_prev": rsi_prev,
+            "ema9_prev": float(ema9.iloc[i - 1]) if i >= 1 else e9,
+            "ema21_prev": float(ema21.iloc[i - 1]) if i >= 1 else e21,
+            "ema50_prev": float(ema50.iloc[i - 1]) if i >= 1 else e50,
+            "adx_prev": float(adx.iloc[i - 1]) if i >= 1 else float(adx.iloc[i]),
             "macd_above": macd_now > macd_sig,
             "macd_below": macd_now < macd_sig,
             "macd_cross_up": macd_prev <= sig_prev and macd_now > macd_sig,
@@ -744,6 +784,8 @@ def build_indicator_cache(bars: list[Bar], lookback: int = 260) -> list[dict | N
             "rsi_bounce_dn": rsi_prev > 58 and rsi_val <= 58,
             "trend_up": price > e200 and e21 > e50,
             "trend_dn": price < e200 and e21 < e50,
+            "trend_strong_up": price > e200 and e21 > e50 and (e21 >= float(ema21.iloc[i - 1]) if i >= 1 else True),
+            "trend_strong_dn": price < e200 and e21 < e50 and (e21 <= float(ema21.iloc[i - 1]) if i >= 1 else True),
             "range_mode": float(adx.iloc[i]) <= getattr(Config, "REGIME_ADX_RANGING", 18),
             # M15-specific: EMA9/EMA21 cross signals
             "ema9_above_ema21": float(ema9.iloc[i]) > float(ema21.iloc[i]),
@@ -938,6 +980,8 @@ def run_backtest(
                 adx_min=adx_min if adx_min is not None else 16.0,
                 pull_range=pull_range,
                 weekly_trade_target=weekly_trade_target,
+                h4_bias=h4_bias,
+                require_h4_alignment=True,
             )
         else:
             direction = _signal(

@@ -39,17 +39,17 @@ GENOME_KEYS = [
 ]
 
 RANGES: dict[str, tuple[float, float]] = {
-    "MIN_CONFLUENCE": (3, 8),
-    "ADX_MIN": (14, 30),
-    "ATR_MULT_SL": (1.0, 2.2),
-    "ATR_MULT_TP": (2.0, 4.8),
-    "PULL_MIN": (-2.2, -0.4),
-    "PULL_MAX": (0.8, 3.0),
-    "RISK_PCT": (0.5, 2.5),
-    "WEEKLY_TARGET": (1.5, 5.0),
-    "MIN_RR": (1.2, 3.5),
-    "WARMUP_BARS": (40, 160),
-    "MAX_BARS_IN_TRADE": (8, 120),
+    "MIN_CONFLUENCE": (4, 8),
+    "ADX_MIN": (16, 34),
+    "ATR_MULT_SL": (0.8, 1.8),
+    "ATR_MULT_TP": (1.1, 2.8),
+    "PULL_MIN": (-1.8, -0.2),
+    "PULL_MAX": (0.3, 2.0),
+    "RISK_PCT": (0.2, 1.2),
+    "WEEKLY_TARGET": (1.0, 6.0),
+    "MIN_RR": (0.8, 2.2),
+    "WARMUP_BARS": (60, 240),
+    "MAX_BARS_IN_TRADE": (8, 96),
 }
 
 def _get_tf() -> str:
@@ -63,28 +63,30 @@ def _is_h1_mode() -> bool:
 
 
 if _is_m15_mode():
-    # M15: mais frequente, SL/TP mais curtos, mais trades por semana
-    RANGES["MIN_CONFLUENCE"] = (4, 7)
-    RANGES["ADX_MIN"]        = (16, 28)
-    RANGES["ATR_MULT_SL"]    = (0.8, 1.6)
-    RANGES["ATR_MULT_TP"]    = (1.6, 3.0)
-    RANGES["PULL_MIN"]       = (-2.0, -0.2)
-    RANGES["PULL_MAX"]       = (0.4, 2.5)
-    RANGES["RISK_PCT"]       = (0.3, 1.25)
-    RANGES["WEEKLY_TARGET"]  = (5.0, 18.0)   # M15: busca qualidade sem overtrade
-    RANGES["MIN_RR"]         = (1.2, 2.2)
-    RANGES["WARMUP_BARS"]    = (80, 220)
-    RANGES["MAX_BARS_IN_TRADE"] = (6, 40)    # M15: dá tempo ao movimento sem abrir demais
+    # M15: seletivo, buscando qualidade e evitando entradas frenéticas
+    RANGES["MIN_CONFLUENCE"] = (5, 8)
+    RANGES["ADX_MIN"]        = (18, 32)
+    RANGES["ATR_MULT_SL"]    = (0.7, 1.4)
+    RANGES["ATR_MULT_TP"]    = (1.1, 2.2)
+    RANGES["PULL_MIN"]       = (-1.4, -0.15)
+    RANGES["PULL_MAX"]       = (0.25, 1.6)
+    RANGES["RISK_PCT"]       = (0.2, 0.9)
+    RANGES["WEEKLY_TARGET"]  = (2.0, 10.0)
+    RANGES["MIN_RR"]         = (0.8, 1.8)
+    RANGES["WARMUP_BARS"]    = (100, 260)
+    RANGES["MAX_BARS_IN_TRADE"] = (8, 36)
 elif _is_h1_mode():
     RANGES["MIN_CONFLUENCE"] = (5, 8)
-    RANGES["ADX_MIN"]        = (20, 34)
-    RANGES["ATR_MULT_SL"]    = (1.0, 1.8)
-    RANGES["ATR_MULT_TP"]    = (1.8, 3.6)
-    RANGES["RISK_PCT"]       = (0.3, 1.0)
-    RANGES["WEEKLY_TARGET"]  = (1.5, 3.5)
-    RANGES["MIN_RR"]         = (1.4, 2.8)
-    RANGES["WARMUP_BARS"]    = (80, 220)
-    RANGES["MAX_BARS_IN_TRADE"] = (18, 96)
+    RANGES["ADX_MIN"]        = (20, 36)
+    RANGES["ATR_MULT_SL"]    = (0.9, 1.6)
+    RANGES["ATR_MULT_TP"]    = (1.0, 2.1)
+    RANGES["PULL_MIN"]       = (-1.3, -0.1)
+    RANGES["PULL_MAX"]       = (0.25, 1.4)
+    RANGES["RISK_PCT"]       = (0.2, 0.8)
+    RANGES["WEEKLY_TARGET"]  = (0.8, 3.0)
+    RANGES["MIN_RR"]         = (0.8, 1.6)
+    RANGES["WARMUP_BARS"]    = (100, 260)
+    RANGES["MAX_BARS_IN_TRADE"] = (12, 72)
 
 
 # Pares correlacionados usados na validação multi-pair (quando disponíveis via API).
@@ -284,14 +286,17 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     test_exp  = _safe_float(test_metrics.get("expectancy", 0.0), 0.0)
 
     # Estratégia perdedora é descartada cedo.
-    if train_pf < 1.0 or test_pf < 1.0:
-        return -6.0 - abs(min(train_pf, test_pf) - 1.0)
-    if train_wr < 35 or test_wr < 35:
-        return -5.0 - (35 - min(train_wr, test_wr)) / 10.0
-    if train_exp <= 0 or test_exp <= 0:
-        return -4.0
+    wr_floor = 40.0 if (_is_m15_mode() or _is_h1_mode()) else 35.0
+    pf_floor = 1.03
+    dd_limit = 12.0 if _is_m15_mode() else (15.0 if _is_h1_mode() else 22.0)
 
-    dd_limit = 14.0 if _is_m15_mode() else (18.0 if _is_h1_mode() else 24.0)
+    if train_pf < pf_floor or test_pf < pf_floor:
+        return -8.0 - abs(min(train_pf, test_pf) - pf_floor)
+    if train_wr < wr_floor or test_wr < wr_floor:
+        return -7.0 - (wr_floor - min(train_wr, test_wr)) / 10.0
+    if train_exp <= 0 or test_exp <= 0:
+        return -6.0
+
     dd_penalty = 0.0
     if max(train_dd, test_dd) > dd_limit:
         dd_penalty += min(1.5, (max(train_dd, test_dd) - dd_limit) / dd_limit)
@@ -306,23 +311,64 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     trade_balance = min(1.0, test_trades / max(1.0, train_trades))
 
     raw = (
-        0.30 * test_score +
+        0.34 * test_score +
         0.18 * train_score +
-        0.15 * robustness +
+        0.16 * robustness +
         0.12 * (1.0 - pf_gap) +
         0.08 * (1.0 - wr_gap) +
-        0.10 * trade_balance +
-        0.07 * max(0.0, min(1.0, test_sh / 3.0))
+        0.08 * trade_balance +
+        0.04 * max(0.0, min(1.0, test_sh / 3.0))
     )
-    raw -= (0.10 * dd_penalty) + (0.08 * sh_penalty)
+    raw -= (0.14 * dd_penalty) + (0.10 * sh_penalty)
 
     # Bônus para tração com frequência adequada, mas sem overtrade.
     freq = _safe_float(test_metrics.get("trade_frequency_per_week", 0.0), 0.0)
     freq_target = max(1.0, target_week)
     freq_score = max(0.0, 1.0 - abs(freq - freq_target) / freq_target)
-    raw += 0.05 * freq_score
+    raw += 0.04 * freq_score
 
-    return raw - 0.25
+
+def live_viability_reason(train_metrics: dict, test_metrics: dict) -> tuple[bool, str]:
+    train_trades = int(train_metrics.get("total_trades", 0) or 0)
+    test_trades = int(test_metrics.get("total_trades", 0) or 0)
+    train_pf = _safe_float(train_metrics.get("profit_factor", 0.0), 0.0)
+    test_pf = _safe_float(test_metrics.get("profit_factor", 0.0), 0.0)
+    train_wr = _safe_float(train_metrics.get("winrate", 0.0), 0.0)
+    test_wr = _safe_float(test_metrics.get("winrate", 0.0), 0.0)
+    train_dd = _safe_float(train_metrics.get("max_drawdown_pct", 100.0), 100.0)
+    test_dd = _safe_float(test_metrics.get("max_drawdown_pct", 100.0), 100.0)
+    train_exp = _safe_float(train_metrics.get("expectancy", 0.0), 0.0)
+    test_exp = _safe_float(test_metrics.get("expectancy", 0.0), 0.0)
+
+    wr_floor = 40.0 if (_is_m15_mode() or _is_h1_mode()) else 35.0
+    pf_floor = 1.05
+    dd_limit = 12.0 if _is_m15_mode() else (15.0 if _is_h1_mode() else 22.0)
+    min_trades = 25 if _is_m15_mode() else (18 if _is_h1_mode() else 10)
+
+    if train_trades < max(MIN_TRADES, min_trades) or test_trades < min_trades:
+        return False, "poucas operações"
+    if train_pf < pf_floor or test_pf < pf_floor:
+        return False, "profit factor insuficiente"
+    if train_wr < wr_floor or test_wr < wr_floor:
+        return False, "win rate abaixo do mínimo"
+    if train_exp <= 0 or test_exp <= 0:
+        return False, "expectancy negativa"
+    if max(train_dd, test_dd) > dd_limit:
+        return False, "drawdown acima do limite"
+
+    return True, "ok"
+
+
+def select_best_live_result(results: list[GenerationResult]) -> tuple[GenerationResult, bool, str]:
+    if not results:
+        raise ValueError("Nenhum resultado de otimização disponível.")
+    viable = [r for r in results if live_viability_reason(r.best_train_metrics, r.best_test_metrics)[0]]
+    if viable:
+        best = max(viable, key=lambda r: r.best_fitness)
+        return best, True, "ok"
+    best = max(results, key=lambda r: r.best_fitness)
+    _, reason = live_viability_reason(best.best_train_metrics, best.best_test_metrics)
+    return best, False, reason
 
 # ─── Avaliação de um genoma em walk-forward (serial, sem global state) ─────────
 # FIX #1 + #2: Removido ProcessPoolExecutor e global _GENETIC_WORKER_CTX.
@@ -592,18 +638,45 @@ def run_evolution(
     return results
 
 
-def save_best_genome(result: GenerationResult, path: str = "best_genome.json"):
+def save_best_genome(result: GenerationResult, path: str = "best_genome.json") -> bool:
+    live_ok, reason = live_viability_reason(result.best_train_metrics, result.best_test_metrics)
     data = {
         "generation": result.generation,
         "fitness": round(result.best_fitness, 4),
         "genome": result.best_genome,
         "train_metrics": result.best_train_metrics,
         "test_metrics": result.best_test_metrics,
+        "live_viable": live_ok,
+        "live_viability_reason": reason,
         "generated_at": __import__("datetime").datetime.now().isoformat(),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-    log(f"[GENETIC] Melhor genoma salvo em {path}")
+    if live_ok:
+        saved_settings = {
+            "profile": "hedge_fund",
+            "min_confluence":       int(result.best_genome["MIN_CONFLUENCE"]),
+            "adx_min":              float(result.best_genome["ADX_MIN"]),
+            "atr_sl_mult":          float(result.best_genome["ATR_MULT_SL"]),
+            "atr_tp_mult":          float(result.best_genome["ATR_MULT_TP"]),
+            "pull_min":             float(result.best_genome["PULL_MIN"]),
+            "pull_max":             float(result.best_genome["PULL_MAX"]),
+            "risk_pct":             float(result.best_genome["RISK_PCT"]),
+            "weekly_trade_target":  float(result.best_genome["WEEKLY_TARGET"]),
+            "min_rr":               float(result.best_genome["MIN_RR"]),
+            "warmup_bars":          int(result.best_genome["WARMUP_BARS"]),
+            "max_bars_in_trade":    int(result.best_genome["MAX_BARS_IN_TRADE"]),
+            "optimization_mode": "robust",
+        }
+        try:
+            save_strategy_settings(saved_settings)
+            log(f"[GENETIC] Melhor genoma salvo em {path} e aplicado ao strategy_settings.json")
+        except Exception as e:
+            log(f"[GENETIC] Falha ao salvar strategy_settings.json: {e}")
+        return True
+
+    log(f"[GENETIC] Melhor genoma salvo em {path}, mas NÃO aplicado: {reason}")
+    return False
 
 
 def main():
@@ -632,28 +705,10 @@ def main():
         args.symbol, args.balance, args.generations,
     )
 
-    overall_best = max(results, key=lambda r: r.best_fitness)
+    overall_best, live_ok, reason = select_best_live_result(results)
     save_best_genome(overall_best, args.output)
-
-    saved_settings = {
-        "profile": "hedge_fund",
-        "min_confluence":       int(overall_best.best_genome["MIN_CONFLUENCE"]),
-        "adx_min":              float(overall_best.best_genome["ADX_MIN"]),
-        "atr_sl_mult":          float(overall_best.best_genome["ATR_MULT_SL"]),
-        "atr_tp_mult":          float(overall_best.best_genome["ATR_MULT_TP"]),
-        "pull_min":             float(overall_best.best_genome["PULL_MIN"]),
-        "pull_max":             float(overall_best.best_genome["PULL_MAX"]),
-        "risk_pct":             float(overall_best.best_genome["RISK_PCT"]),
-        "weekly_trade_target":  float(overall_best.best_genome["WEEKLY_TARGET"]),
-        "min_rr":               float(overall_best.best_genome["MIN_RR"]),
-        "warmup_bars":          int(overall_best.best_genome["WARMUP_BARS"]),
-        "max_bars_in_trade":    int(overall_best.best_genome["MAX_BARS_IN_TRADE"]),
-        "optimization_mode": "robust",
-    }
-    try:
-        save_strategy_settings(saved_settings)
-    except Exception as e:
-        log(f"[GENETIC] Falha ao salvar strategy_settings.json: {e}")
+    if not live_ok:
+        log(f"[GENETIC] Nenhum genoma atingiu os critérios mínimos de live: {reason}")
 
     print()
     print("═" * 50)
