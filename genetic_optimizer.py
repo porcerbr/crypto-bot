@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+from statistics import median
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,20 +25,20 @@ from config import Config
 from utils import log, save_strategy_settings
 
 
-# Para M15: RSI_OB e RSI_OS substituem PULL_MIN/PULL_MAX (mais relevantes)
-# Para H1: mantém PULL_MIN/PULL_MAX (pullback zone é importante no H1)
+# O genético precisa otimizar poucos controles que realmente mudam o comportamento.
+# Mantemos gestão e filtros-chave, mas removemos variáveis que “negociavam a própria meta”,
+# como WEEKLY_TARGET, porque isso encoraja pouca frequência e overfitting de objetivo.
 GENOME_KEYS_M15 = [
-    "MIN_CONFLUENCE",    # soft conditions exigidas além dos 3 hard reqs (0-2)
-    "ADX_MIN",           # filtro de força de tendência (soft, opcional)
-    "ATR_MULT_SL",       # multiplicador SL por ATR
-    "ATR_MULT_TP",       # multiplicador TP por ATR
-    "RSI_OB",            # RSI overbought: não compra acima deste valor (62-75)
-    "RSI_OS",            # RSI oversold: não vende abaixo deste valor (25-38)
-    "RISK_PCT",          # risco por trade (%)
-    "WEEKLY_TARGET",     # meta de trades/semana (fitness)
-    "MIN_RR",            # R:R mínimo exigido
-    "WARMUP_BARS",       # barras de aquecimento antes de operar
-    "MAX_BARS_IN_TRADE", # expiração do trade em barras
+    "MIN_CONFLUENCE",    # força mínima do setup
+    "ADX_MIN",           # filtro de tendência
+    "ATR_MULT_SL",       # stop por ATR
+    "ATR_MULT_TP",       # take por ATR
+    "RSI_OB",            # evita comprar esticado
+    "RSI_OS",            # evita vender esticado
+    "RISK_PCT",          # risco por trade
+    "MIN_RR",            # RR mínimo exigido
+    "WARMUP_BARS",       # aquecimento do cache
+    "MAX_BARS_IN_TRADE", # expiração do trade
 ]
 
 GENOME_KEYS_H1 = [
@@ -48,7 +49,6 @@ GENOME_KEYS_H1 = [
     "PULL_MIN",
     "PULL_MAX",
     "RISK_PCT",
-    "WEEKLY_TARGET",
     "MIN_RR",
     "WARMUP_BARS",
     "MAX_BARS_IN_TRADE",
@@ -68,7 +68,6 @@ RANGES: dict[str, tuple[float, float]] = {
     "RSI_OB": (62, 75),
     "RSI_OS": (25, 38),
     "RISK_PCT": (0.5, 2.5),
-    "WEEKLY_TARGET": (1.5, 5.0),
     "MIN_RR": (1.2, 3.5),
     "WARMUP_BARS": (40, 160),
     "MAX_BARS_IN_TRADE": (8, 120),
@@ -85,23 +84,20 @@ def _is_h1_mode() -> bool:
 
 
 if _is_m15_mode():
-    # M15: estratégia EMA50 + MACD + RSI (3 indicadores dos pros)
-    # Genome controla: quando entrar (RSI_OB/OS), filtros opcionais (ADX, confluence)
-    # e gestão (SL/TP/risco)
-    GENOME_KEYS = GENOME_KEYS_M15   # usa RSI_OB/RSI_OS em vez de PULL_MIN/PULL_MAX
-    RANGES["MIN_CONFLUENCE"] = (0, 2)        # 0=puro EMA+MACD+RSI; 2=mais filtrado
-    RANGES["ADX_MIN"]        = (12, 28)      # filtro opcional de força de tendência
+    # M15: estratégia EMA50 + MACD + RSI
+    GENOME_KEYS = GENOME_KEYS_M15
+    RANGES["MIN_CONFLUENCE"] = (0, 2)
+    RANGES["ADX_MIN"]        = (12, 28)
     RANGES["ATR_MULT_SL"]    = (0.8, 2.0)
-    RANGES["ATR_MULT_TP"]    = (1.4, 3.0)   # R:R 1.4–3.0, break-even em 25–42%
-    RANGES["RSI_OB"]         = (62, 75)      # não compra quando RSI > este valor
-    RANGES["RSI_OS"]         = (25, 38)      # não vende quando RSI < este valor
+    RANGES["ATR_MULT_TP"]    = (1.4, 3.0)
+    RANGES["RSI_OB"]         = (62, 75)
+    RANGES["RSI_OS"]         = (25, 38)
     RANGES["RISK_PCT"]       = (0.8, 2.5)
-    RANGES["WEEKLY_TARGET"]  = (5.0, 25.0)
     RANGES["MIN_RR"]         = (1.2, 2.8)
     RANGES["WARMUP_BARS"]    = (60, 200)
     RANGES["MAX_BARS_IN_TRADE"] = (4, 32)
 elif _is_h1_mode():
-    GENOME_KEYS = GENOME_KEYS_H1   # usa PULL_MIN/PULL_MAX para H1
+    GENOME_KEYS = GENOME_KEYS_H1
     RANGES["MIN_CONFLUENCE"] = (5, 7)
     RANGES["ADX_MIN"]        = (20, 30)
     RANGES["ATR_MULT_SL"]    = (1.0, 1.8)
@@ -109,7 +105,6 @@ elif _is_h1_mode():
     RANGES["PULL_MIN"]       = (-1.5, -0.3)
     RANGES["PULL_MAX"]       = (0.8, 2.2)
     RANGES["RISK_PCT"]       = (0.5, 1.2)
-    RANGES["WEEKLY_TARGET"]  = (2.0, 4.0)
     RANGES["MIN_RR"]         = (1.7, 3.0)
     RANGES["WARMUP_BARS"]    = (100, 240)
     RANGES["MAX_BARS_IN_TRADE"] = (12, 48)
@@ -129,15 +124,15 @@ SYMBOL_PEERS: dict[str, list[str]] = {
     "XAUUSD": ["EURUSD", "USDJPY"],
 }
 
-POPULATION_SIZE    = 16
-ELITE_COUNT        = 4
-MUTATION_RATE      = 0.22
+POPULATION_SIZE    = 20
+ELITE_COUNT        = 5
+MUTATION_RATE      = 0.25
 TOURNAMENT_SIZE    = 4
-# FIX #3: MIN_TRADES reduzido — 24 era muito agressivo para folds walk-forward menores
-# M15 gera muito mais trades por janela — MIN_TRADES maior é razoável
-MIN_TRADES         = 18 if _is_m15_mode() else (12 if _is_h1_mode() else 10)
-TARGET_TRADES_WEEK = 12.0 if _is_m15_mode() else (2.5 if _is_h1_mode() else 3.0)
-MAX_WALK_FORWARD_FOLDS = 3
+MIN_TRADES         = 14 if _is_m15_mode() else (12 if _is_h1_mode() else 10)
+TARGET_TRADES_WEEK = 10.0 if _is_m15_mode() else (3.0 if _is_h1_mode() else 3.0)
+MIN_TRADE_FREQ_WK  = 5.0 if _is_m15_mode() else (1.2 if _is_h1_mode() else 1.0)
+MIN_OOS_COVERAGE   = 0.67
+MAX_WALK_FORWARD_FOLDS = 4
 
 Genome = dict[str, Any]
 
@@ -184,6 +179,77 @@ def _safe_float(value, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _aggregate_metrics(metrics_list: list[dict]) -> dict:
+    empty = {
+        "initial_balance": float(Config.INITIAL_BALANCE),
+        "current_balance": float(Config.INITIAL_BALANCE),
+        "total_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "winrate": 0.0,
+        "profit_factor": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "expectancy": 0.0,
+        "max_drawdown_pct": 100.0,
+        "total_pnl": 0.0,
+        "active_trades_count": 0,
+        "pending_trades_count": 0,
+        "sharpe_ratio": 0.0,
+        "trade_frequency_per_week": 0.0,
+        "avg_bars_per_trade": 0.0,
+    }
+    if not metrics_list:
+        return empty
+
+    total_trades = sum(int(m.get("total_trades", 0) or 0) for m in metrics_list)
+    wins = sum(int(m.get("wins", 0) or 0) for m in metrics_list)
+    losses = sum(int(m.get("losses", 0) or 0) for m in metrics_list)
+    pnl = sum(_safe_float(m.get("total_pnl", 0.0), 0.0) for m in metrics_list)
+    avg_win_vals = [float(m.get("avg_win", 0.0) or 0.0) for m in metrics_list if int(m.get("wins", 0) or 0) > 0]
+    avg_loss_vals = [float(m.get("avg_loss", 0.0) or 0.0) for m in metrics_list if int(m.get("losses", 0) or 0) > 0]
+    pf_vals = [float(m.get("profit_factor", 0.0) or 0.0) for m in metrics_list if m.get("profit_factor") not in (None, "inf")]
+    exp_vals = [float(m.get("expectancy", 0.0) or 0.0) for m in metrics_list]
+    dd_vals = [float(m.get("max_drawdown_pct", 0.0) or 0.0) for m in metrics_list]
+    sh_vals = [float(m.get("sharpe_ratio", 0.0) or 0.0) for m in metrics_list]
+    freq_vals = [float(m.get("trade_frequency_per_week", 0.0) or 0.0) for m in metrics_list]
+    bars_vals = [float(m.get("avg_bars_per_trade", 0.0) or 0.0) for m in metrics_list]
+
+    winrate = round(wins / max(1, total_trades) * 100.0, 1)
+    avg_win = round(sum(avg_win_vals) / len(avg_win_vals), 2) if avg_win_vals else 0.0
+    avg_loss = round(sum(avg_loss_vals) / len(avg_loss_vals), 2) if avg_loss_vals else 0.0
+    expectancy = round(sum(exp_vals) / len(exp_vals), 2) if exp_vals else 0.0
+    profit_factor = round(median(pf_vals), 2) if pf_vals else 0.0
+    max_dd = round(max(dd_vals), 2) if dd_vals else 100.0
+    sharpe = round(median(sh_vals), 3) if sh_vals else 0.0
+    freq = round(sum(freq_vals) / len(freq_vals), 2) if freq_vals else 0.0
+    avg_bars = round(sum(bars_vals) / len(bars_vals), 2) if bars_vals else 0.0
+
+    return {
+        "initial_balance": round(float(Config.INITIAL_BALANCE), 2),
+        "current_balance": round(float(Config.INITIAL_BALANCE) + pnl, 2),
+        "total_trades": int(total_trades),
+        "wins": int(wins),
+        "losses": int(losses),
+        "winrate": winrate,
+        "profit_factor": profit_factor,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "expectancy": expectancy,
+        "max_drawdown_pct": max_dd,
+        "total_pnl": round(pnl, 2),
+        "active_trades_count": 0,
+        "pending_trades_count": 0,
+        "sharpe_ratio": sharpe,
+        "trade_frequency_per_week": freq,
+        "avg_bars_per_trade": avg_bars,
+    }
 
 
 def _unique_preserve_order(items: list[str]) -> list[str]:
@@ -255,7 +321,7 @@ def _run_segment(
         pull_range=pull,
         risk_pct=float(genome["RISK_PCT"]),
         warmup_bars=int(genome["WARMUP_BARS"]),
-        weekly_trade_target=float(genome["WEEKLY_TARGET"]),
+        weekly_trade_target=float(TARGET_TRADES_WEEK),
         max_bars_in_trade=int(genome["MAX_BARS_IN_TRADE"]),
         indicator_cache=indicator_cache,
         prepared_bars=prepared_bars,
@@ -275,37 +341,55 @@ def _metric_score(metrics: dict, target_trades_week: float) -> float:
     dd  = _safe_float(metrics.get("max_drawdown_pct", 100.0), 100.0) / 100.0
     exp = _safe_float(metrics.get("expectancy", 0.0), 0.0)
     pnl = _safe_float(metrics.get("total_pnl", 0.0), 0.0)
-    initial_balance = max(1.0, _safe_float(metrics.get("initial_balance", Config.INITIAL_BALANCE), Config.INITIAL_BALANCE))
     freq = _safe_float(metrics.get("trade_frequency_per_week", 0.0), 0.0)
+    bars = _safe_float(metrics.get("avg_bars_per_trade", 0.0), 0.0)
 
-    pf_score   = min(max(pf, 0.0), 3.0) / 3.0
-    wr_score   = max(0.0, min(1.0, wr))
-    dd_score   = max(0.0, 1.0 - min(dd, 0.30) / 0.30)
-    freq_score = max(0.0, 1.0 - abs(freq - target_trades_week) / max(1.0, target_trades_week))
-    exp_score  = max(-1.0, min(1.0, exp / max(1.0, initial_balance * 0.01)))
-    pnl_score  = max(-1.0, min(1.0, pnl / max(1.0, initial_balance * 0.20)))
+    # Trade frequency é a primeira trava real do genetic: sem volume mínimo,
+    # o score cai mesmo que o PF pareça bonito em poucos trades.
+    if freq < MIN_TRADE_FREQ_WK:
+        freq_score = max(0.0, freq / max(1e-6, MIN_TRADE_FREQ_WK)) * 0.35
+    else:
+        freq_score = 1.0 - abs(freq - target_trades_week) / max(1.0, target_trades_week)
+        freq_score = _clamp(freq_score, 0.0, 1.0)
+
+    # Padrão conservador: buscamos consistência, não picos de amostra.
+    pf_score   = _clamp((pf - 0.85) / 1.65, 0.0, 1.0)
+    wr_score   = _clamp((wr - 0.35) / 0.35, 0.0, 1.0)
+    dd_score   = _clamp(1.0 - dd / 0.25, 0.0, 1.0)
+    exp_score  = _clamp(exp / max(1.0, float(Config.INITIAL_BALANCE) * 0.008), -1.0, 1.0)
+    pnl_score  = _clamp(pnl / max(1.0, float(Config.INITIAL_BALANCE) * 0.18), -1.0, 1.0)
+    bars_score = _clamp(1.0 - abs(bars - 24.0) / 36.0, 0.0, 1.0)
+
+    if total < MIN_TRADES:
+        size_penalty = (MIN_TRADES - total) / max(1.0, MIN_TRADES)
+    else:
+        size_penalty = 0.0
 
     return (
-        0.28 * pf_score +
+        0.24 * pf_score +
         0.20 * wr_score +
         0.20 * dd_score +
-        0.17 * freq_score +
-        0.08 * (exp_score + 1) / 2 +
-        0.07 * (pnl_score + 1) / 2
+        0.20 * freq_score +
+        0.08 * ((exp_score + 1.0) / 2.0) +
+        0.04 * ((pnl_score + 1.0) / 2.0) +
+        0.04 * bars_score -
+        0.18 * size_penalty
     )
 
 
 def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     train_trades = int(train_metrics.get("total_trades", 0) or 0)
     test_trades  = int(test_metrics.get("total_trades", 0) or 0)
-    min_test     = max(8, MIN_TRADES // 2)
-
-    if train_trades < MIN_TRADES or test_trades < min_test:
+    if train_trades < MIN_TRADES or test_trades < max(8, MIN_TRADES // 2):
         return -5.0
 
-    target_week = float(genome.get("WEEKLY_TARGET", TARGET_TRADES_WEEK) or TARGET_TRADES_WEEK)
-    train_score = _metric_score(train_metrics, target_week)
-    test_score  = _metric_score(test_metrics,  target_week)
+    train_freq = _safe_float(train_metrics.get("trade_frequency_per_week", 0.0), 0.0)
+    test_freq  = _safe_float(test_metrics.get("trade_frequency_per_week", 0.0), 0.0)
+    if train_freq < MIN_TRADE_FREQ_WK * 0.75 or test_freq < MIN_TRADE_FREQ_WK * 0.75:
+        return -4.0
+
+    train_score = _metric_score(train_metrics, TARGET_TRADES_WEEK)
+    test_score  = _metric_score(test_metrics,  TARGET_TRADES_WEEK)
 
     train_pf = _safe_float(train_metrics.get("profit_factor", 0.0), 0.0)
     test_pf  = _safe_float(test_metrics.get("profit_factor", 0.0), 0.0)
@@ -313,31 +397,34 @@ def fitness(genome: Genome, train_metrics: dict, test_metrics: dict) -> float:
     test_dd  = _safe_float(test_metrics.get("max_drawdown_pct", 100.0), 100.0)
 
     pf_penalty = 0.0
-    if train_pf < 1.05:
-        pf_penalty += (1.05 - train_pf) * 0.8
+    if train_pf < 1.0:
+        pf_penalty += (1.0 - train_pf) * 1.3
     if test_pf < 1.0:
-        pf_penalty += (1.0 - test_pf) * 1.0
+        pf_penalty += (1.0 - test_pf) * 1.6
 
     dd_limit = 16.0 if _is_h1_mode() else 20.0
     if max(train_dd, test_dd) > dd_limit:
-        pf_penalty += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.8
+        pf_penalty += min(1.0, (max(train_dd, test_dd) - dd_limit) / dd_limit) * 0.9
 
     robustness     = 1.0 - min(1.0, abs(train_score - test_score))
     pf_gap_penalty = min(1.0, abs(train_pf - test_pf) / 2.0)
     dd_penalty     = min(1.0, max(train_dd, test_dd) / 30.0)
     trade_balance  = min(1.0, test_trades / max(1.0, train_trades))
+    freq_balance   = 1.0 - min(1.0, abs(train_freq - test_freq) / max(1.0, TARGET_TRADES_WEEK))
 
     raw = (
-        0.60 * test_score +
+        0.52 * test_score +
         0.18 * train_score +
-        0.12 * robustness +
-        0.05 * (1.0 - pf_gap_penalty) +
-        0.05 * trade_balance -
-        0.08 * dd_penalty
+        0.10 * robustness +
+        0.08 * (1.0 - pf_gap_penalty) +
+        0.06 * trade_balance +
+        0.04 * freq_balance +
+        0.02 * (1.0 - dd_penalty)
     )
     return raw - pf_penalty
 
 
+# ─── Avaliação de um genoma em walk-forward (serial, sem global state) ─────────
 # ─── Avaliação de um genoma em walk-forward (serial, sem global state) ─────────
 # FIX #1 + #2: Removido ProcessPoolExecutor e global _GENETIC_WORKER_CTX.
 # Toda avaliação agora é serial e recebe o contexto diretamente como argumento.
@@ -395,17 +482,36 @@ def _evaluate_on_single_symbol(
     balance: float,
 ) -> dict[str, Any]:
     """Avalia um genoma em walk-forward cronológico dentro de um único par."""
-    empty = {"total_trades": 0, "winrate": 0, "profit_factor": 0, "max_drawdown_pct": 100, "trade_frequency_per_week": 0}
+    empty = {
+        "total_trades": 0,
+        "winrate": 0.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 100.0,
+        "trade_frequency_per_week": 0.0,
+        "avg_bars_per_trade": 0.0,
+    }
 
     if len(prepared) < 300 or not folds:
-        return {"fitness": -5.0, "primary_train": empty, "primary_test": empty, "folds": 0, "avg_test_trades": 0.0, "avg_train_trades": 0.0}
+        return {
+            "fitness": -5.0,
+            "primary_train": empty,
+            "primary_test": empty,
+            "folds": 0,
+            "avg_test_trades": 0.0,
+            "avg_train_trades": 0.0,
+            "fold_scores": [],
+            "oos_coverage": 0.0,
+            "test_summary": empty,
+            "train_summary": empty,
+        }
 
     fold_scores: list[float] = []
-    primary_train: dict | None = None
-    primary_test:  dict | None = None
+    train_metrics: list[dict] = []
+    test_metrics: list[dict] = []
     train_trades_total = 0
     test_trades_total  = 0
-    penalty_total      = 0.0
+    trade_cover_count   = 0
+    penalty_total       = 0.0
 
     for fold_idx, (train_slice, test_slice) in enumerate(folds):
         train_bars  = prepared[train_slice]
@@ -426,48 +532,91 @@ def _evaluate_on_single_symbol(
             train_m = empty.copy()
             test_m  = empty.copy()
 
+        train_metrics.append(train_m)
+        test_metrics.append(test_m)
+
         train_trades = int(train_m.get("total_trades", 0) or 0)
         test_trades  = int(test_m.get("total_trades", 0) or 0)
         train_trades_total += train_trades
         test_trades_total  += test_trades
-
-        if primary_train is None:
-            primary_train = train_m
-            primary_test  = test_m
+        if test_trades > 0:
+            trade_cover_count += 1
 
         fold_f = fitness(genome, train_m, test_m)
         fold_scores.append(fold_f)
 
-        # Penalidade suave por falta de trades — não agressiva
-        min_test_trades = max(6, MIN_TRADES // 2)
+        # Penalidades suaves por amostra fraca ou fold “mudo”.
         if train_trades < MIN_TRADES:
-            penalty_total += 0.3
-        if test_trades < min_test_trades:
-            penalty_total += 0.2
-
+            penalty_total += 0.25
+        if test_trades < max(6, MIN_TRADES // 2):
+            penalty_total += 0.40
+        if _safe_float(test_m.get("trade_frequency_per_week", 0.0), 0.0) < MIN_TRADE_FREQ_WK:
+            penalty_total += 0.40
+        if _safe_float(test_m.get("profit_factor", 0.0), 0.0) < 1.0:
+            penalty_total += 0.30
         pf_gap = abs(
             _safe_float(train_m.get("profit_factor", 0.0), 0.0) -
             _safe_float(test_m.get("profit_factor", 0.0), 0.0)
         )
-        if pf_gap > 1.5:
-            penalty_total += min(0.2, (pf_gap - 1.5) / 10.0)
+        if pf_gap > 0.75:
+            penalty_total += min(0.25, (pf_gap - 0.75) / 4.0)
 
-    avg_score       = sum(fold_scores) / max(1, len(fold_scores))
-    avg_train       = train_trades_total / max(1, len(folds))
-    avg_test        = test_trades_total  / max(1, len(folds))
-    robustness_bonus = max(0.0, 1.0 - min(1.0, penalty_total / max(1, len(folds))))
-    final_fitness   = avg_score * 0.85 + robustness_bonus * 0.15
+    avg_score   = sum(fold_scores) / max(1, len(fold_scores))
+    med_score   = median(fold_scores) if fold_scores else -5.0
+    worst_score = min(fold_scores) if fold_scores else -5.0
+    std_score   = 0.0
+    if len(fold_scores) > 1:
+        mu = avg_score
+        var = sum((x - mu) ** 2 for x in fold_scores) / (len(fold_scores) - 1)
+        std_score = var ** 0.5
+
+    avg_train = train_trades_total / max(1, len(folds))
+    avg_test  = test_trades_total  / max(1, len(folds))
+    oos_coverage = trade_cover_count / max(1, len(folds))
+    if oos_coverage < MIN_OOS_COVERAGE:
+        penalty_total += (MIN_OOS_COVERAGE - oos_coverage) * 1.5
+
+    train_summary = _aggregate_metrics(train_metrics)
+    test_summary  = _aggregate_metrics(test_metrics)
+    train_summary["oos_coverage"] = oos_coverage
+    test_summary["oos_coverage"]  = oos_coverage
+    train_summary["fold_count"] = len(folds)
+    test_summary["fold_count"]  = len(folds)
+
+    agg_score = fitness(genome, train_summary, test_summary)
+
+    consistency = 1.0 - _clamp(std_score / max(0.35, abs(avg_score) + 0.35), 0.0, 1.0)
+    coverage_bonus = _clamp(oos_coverage, 0.0, 1.0)
+    trade_bonus = _clamp(test_summary.get("trade_frequency_per_week", 0.0) / max(1.0, TARGET_TRADES_WEEK), 0.0, 1.0)
+    worst_penalty = _clamp(abs(min(0.0, worst_score)) / 5.0, 0.0, 1.0)
+    penalty_norm = min(1.0, penalty_total / max(1, len(folds)))
+
+    final_fitness = (
+        0.42 * agg_score +
+        0.24 * med_score +
+        0.14 * avg_score +
+        0.08 * consistency +
+        0.06 * coverage_bonus +
+        0.06 * trade_bonus -
+        0.08 * worst_penalty -
+        0.12 * penalty_norm
+    )
 
     return {
         "fitness": final_fitness,
-        "primary_train": primary_train or empty,
-        "primary_test":  primary_test  or empty,
+        "primary_train": train_summary,
+        "primary_test":  test_summary,
         "folds": len(folds),
         "avg_test_trades": avg_test,
         "avg_train_trades": avg_train,
+        "fold_scores": fold_scores,
+        "oos_coverage": oos_coverage,
+        "test_summary": test_summary,
+        "train_summary": train_summary,
     }
 
 
+@dataclass
 @dataclass
 class GenerationResult:
     generation: int
@@ -589,7 +738,8 @@ def run_evolution(
         log(
             f"[GENETIC] Gen {gen}: fitness={best_f:.3f} | "
             f"WR(t)={best_test.get('winrate', 0)}% | PF(t)={best_test.get('profit_factor', 0)} | "
-            f"DD(t)={best_test.get('max_drawdown_pct', 0)}% | Trades(t)={best_test.get('total_trades', 0)}"
+            f"DD(t)={best_test.get('max_drawdown_pct', 0)}% | Trades(t)={best_test.get('total_trades', 0)} | "
+            f"Freq(t)={best_test.get('trade_frequency_per_week', 0)} | OOS={best_test.get('oos_coverage', 0):.0%}"
         )
 
         results.append(GenerationResult(
@@ -658,7 +808,7 @@ def main():
         "atr_sl_mult":          float(g["ATR_MULT_SL"]),
         "atr_tp_mult":          float(g["ATR_MULT_TP"]),
         "risk_pct":             float(g["RISK_PCT"]),
-        "weekly_trade_target":  float(g["WEEKLY_TARGET"]),
+        "weekly_trade_target":  float(TARGET_TRADES_WEEK),
         "min_rr":               float(g["MIN_RR"]),
         "warmup_bars":          int(g["WARMUP_BARS"]),
         "max_bars_in_trade":    int(g["MAX_BARS_IN_TRADE"]),
@@ -689,6 +839,7 @@ def main():
     print(f"  Drawdown:  {m.get('max_drawdown_pct', 0)}%")
     print(f"  Trades:    {m.get('total_trades', 0)}")
     print(f"  Trades/wk: {m.get('trade_frequency_per_week', 0)}")
+    print(f"  OOS Cov.:  {m.get('oos_coverage', 0):.0%}")
     print("═" * 50)
 
 
