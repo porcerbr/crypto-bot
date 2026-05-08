@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import Config
-from utils import log, log_throttled, asset_name
+from utils import log, asset_name
 
 # ── Mapeamento interno → Twelve Data ────────────────────────
 TD_SYMBOLS = {
@@ -23,7 +23,7 @@ _INVALID_LOG_COOLDOWN = 10 * 60  # loga no máximo 1x a cada 10 min por símbolo
 def _log_invalid_candle(symbol: str):
     now = time.time()
     if now - _invalid_candle_logged.get(symbol, 0) >= _INVALID_LOG_COOLDOWN:
-        log_throttled(f"analysis-invalid-{symbol}", f"[ANÁLISE] {symbol}: candle inválido, ignorando", every_seconds=_INVALID_LOG_COOLDOWN)
+        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
         _invalid_candle_logged[symbol] = now
 
 _cache: dict = {}
@@ -539,7 +539,7 @@ def _get_df(symbol: str):
 
     if age >= (_CACHE_TTL + _BACKGROUND_REFRESH_GRACE):
         meta = _cache_meta.get(symbol, {})
-        log_throttled(f"feed-stale-{symbol}", f"[FEED] {symbol}: cache stale-safe ({int(age)}s | source={meta.get('source', 'unknown')})", every_seconds=300)
+        log(f"[FEED] {symbol}: cache stale-safe ({int(age)}s | source={meta.get('source', 'unknown')})")
 
     return df.copy()
 
@@ -691,7 +691,6 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
 
     ema9   = closes.ewm(span=9,   adjust=False).mean().iloc[-1]
     ema21  = closes.ewm(span=21,  adjust=False).mean().iloc[-1]
-    ema50  = closes.ewm(span=50,  adjust=False).mean().iloc[-1]
     ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
 
     w     = min(20, len(closes) - 1)
@@ -730,11 +729,9 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
     chg   = float((closes.iloc[-1] - closes.iloc[-10]) / closes.iloc[-10] * 100) if len(closes) >= 10 else 0.0
 
     cen = "NEUTRO"
-    # Cenário simplificado: EMA50 + EMA200 definem o lado operacional.
-    # EMA9/21 continuam calculadas apenas para compatibilidade com módulos legados.
-    if price > float(ema200) and float(ema50) > float(ema200):
+    if price > float(ema200) and float(ema9) > float(ema21):
         cen = "ALTA"
-    elif price < float(ema200) and float(ema50) < float(ema200):
+    elif price < float(ema200) and float(ema9) < float(ema21):
         cen = "BAIXA"
 
     # Candle de força real: body >= 50% do range do candle
@@ -746,7 +743,7 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
 
     return {
         "price": price,
-        "ema9": float(ema9), "ema21": float(ema21), "ema50": float(ema50), "ema200": float(ema200),
+        "ema9": float(ema9), "ema21": float(ema21), "ema200": float(ema200),
         "upper": float(sma20 + 2 * std20), "lower": float(sma20 - 2 * std20),
         "rsi": rsi_val, "atr": round(atr, 5), "adx": round(adx, 1),
         "macd_bull": bool(macd_line.iloc[-1] > sig_line.iloc[-1]),
@@ -766,12 +763,12 @@ def get_analysis(symbol: str, timeframe: str = None) -> dict | None:
     """Retorna indicadores H1 para o símbolo (usa cache interno)."""
     df = _get_df(symbol)
     if df is None or len(df) < 50:
-        log_throttled(f"analysis-empty-{symbol}", f"[ANÁLISE] {symbol}: sem dados no cache", every_seconds=300)
+        log(f"[ANÁLISE] {symbol}: sem dados no cache")
         return None
 
     df = _strip_open_candle(df)
     if not _validate_last_candle(df):
-        log_throttled(f"analysis-invalid-{symbol}", f"[ANÁLISE] {symbol}: candle inválido, ignorando", every_seconds=_INVALID_LOG_COOLDOWN)
+        log(f"[ANÁLISE] {symbol}: candle inválido, ignorando")
         return None
 
     ind = _calc_indicators(df)
@@ -819,7 +816,7 @@ def get_multi_timeframe(symbol: str) -> dict:
         mtf["aligned"]    = h1["cenario"] == h4["cenario"] and h1["cenario"] != "NEUTRO"
         mtf["h4_cenario"] = h4["cenario"]
     else:
-        log_throttled(f"mtf-h4-short-{symbol}", f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)", every_seconds=900)
+        log(f"[MTF] {symbol}: dados H4 insuficientes ({len(df_4h)} candles)")
 
     # ── D1 (Daily bias) ───────────────────────────────────────
     # Resampla H1 → D1 para capturar a tendência macro
@@ -839,13 +836,13 @@ def get_multi_timeframe(symbol: str) -> dict:
             # Alta: preço D1 > EMA200 D1 E EMA9 > EMA21 no Daily
             # Baixa: o oposto
             # Neutro: sem consenso claro
-            if d1["price"] > d1["ema200"] and d1.get("ema50", d1["ema21"]) > d1["ema200"]:
+            if d1["price"] > d1["ema200"] and d1["ema9"] > d1["ema21"]:
                 mtf["daily_bias"] = "ALTA"
-            elif d1["price"] < d1["ema200"] and d1.get("ema50", d1["ema21"]) < d1["ema200"]:
+            elif d1["price"] < d1["ema200"] and d1["ema9"] < d1["ema21"]:
                 mtf["daily_bias"] = "BAIXA"
             else:
                 mtf["daily_bias"] = "NEUTRO"
     except Exception as e:
-        log_throttled(f"mtf-d1-error-{symbol}", f"[MTF] {symbol}: erro no D1: {e}", every_seconds=900)
+        log(f"[MTF] {symbol}: erro no D1: {e}")
 
     return mtf

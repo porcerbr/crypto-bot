@@ -1,14 +1,17 @@
 {
-  "profile": "simple_trend_pullback",
-  "description": "EMA50/EMA200 + RSI14 + ATR14 + ADX14. Sem MACD, Bollinger, SMC, COT ou IA no sinal ao vivo.",
-  "min_confluence": 8,
-  "adx_min": 18,
+  "profile": "hedge_fund",
+  "min_confluence": 4,
+  "adx_min": 20,
   "atr_sl_mult": 1.5,
   "atr_tp_mult": 3.0,
-  "min_rr": 1.8,
-  "risk_pct": 1.0,
-  "weekly_trade_target": 3,
-  "warmup_bars": 220,
+  "pull_min": -1.0,
+  "pull_max": 2.0,
+  "risk_pct": 2.5,
+  "weekly_trade_target": 3.0,
+  "min_rr": 2.0,
+  "trend_adx": 25,
+  "range_adx": 18,
+  "warmup_bars": 80,
   "max_bars_in_trade": 60,
-  "optimization_mode": "conservative"
+  "optimization_mode": "robust"
 }

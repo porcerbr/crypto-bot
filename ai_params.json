@@ -1,16 +1,22 @@
 {
-  "min_confluence": 8,
+  "min_confluence": 5,
   "blocked_pairs": [],
-  "session_strictness": "strict",
-  "min_adx": 18,
-  "min_rr": 1.8,
-  "market_regime": "trend",
-  "favored_sessions": ["London Open", "NY Open"],
+  "session_strictness": "normal",
+  "min_adx": 16,
+  "min_rr": 1.4,
+  "last_suggestion": null,
+  "market_regime": "neutral",
+  "regime_pairs": {},
+  "favored_sessions": [
+    "London Open",
+    "NY Open"
+  ],
   "avoid_hours_utc": [],
-  "strategy_bias": "conservative",
-  "live_regime": "trend",
+  "strategy_bias": "aggressive",
+  "opus_summary": null,
+  "opus_updated_at": null,
+  "live_regime": "neutral",
   "live_adx_avg": 0,
-  "live_confluence": 8,
-  "updated_at": "2026-05-08T00:00:00Z",
-  "note": "IA removida do bloqueio de sinais. Mantido apenas para compatibilidade com telas antigas."
+  "live_confluence": 5,
+  "updated_at": "2026-05-04T00:00:00Z"
 }

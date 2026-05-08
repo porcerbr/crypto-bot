@@ -91,14 +91,14 @@ class Config:
 
     # Em modo sinalizador, sessão e notícias viram preferência de qualidade,
     # não veto absoluto. Isso evita o bot ficar parado por longos períodos.
-    SESSION_HARD_BLOCK = True
-    NEWS_HARD_BLOCK = True
-    MAX_SYMBOLS_PER_REFRESH = 3
+    SESSION_HARD_BLOCK = False
+    NEWS_HARD_BLOCK = False
+    MAX_SYMBOLS_PER_REFRESH = 6
     MAX_CORRELATED_SIGNALS_PER_GROUP = 2
     PAIR_PERFORMANCE_LOOKBACK = 12
     MIN_RECENT_PAIR_WR = 0.40
-    MIN_AI_CONFIDENCE  = 0       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
-    USE_COT_FILTER     = False    # desativado no motor simples para reduzir ruído
+    MIN_AI_CONFIDENCE  = 5       # sinais com nota IA abaixo disso são descartados (0 = filtro desativado)
+    USE_COT_FILTER     = True    # filtra sinais contra o posicionamento institucional (CFTC/COT)
     SIGNAL_COOLDOWN_SECONDS = 1800
 
     FXGOLD_ASSETS = {
@@ -111,18 +111,18 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     # ALAVANCAGEM
     # ═══════════════════════════════════════════════════════════════════════════════
-    DEFAULT_LEVERAGE   = int(os.getenv("DEFAULT_LEVERAGE", "100"))
+    DEFAULT_LEVERAGE   = int(os.getenv("DEFAULT_LEVERAGE", "500"))
     USE_FIXED_LEVERAGE = True
     USE_DYNAMIC_LEVERAGE = True  # prevalece sobre USE_FIXED quando True
 
     # Tabela de alavancagem dinâmica por faixa de capital
     DYNAMIC_LEVERAGE_TABLE = {
-        500:           100,   # sinalizador: evitar viés de alavancagem excessiva
-        2000:           50,
-        5000:           30,
-        10000:          20,
-        30000:          10,
-        float('inf'):    5,
+        500:           500,   # $0-$500
+        2000:          200,
+        5000:          100,
+        10000:          50,
+        30000:          30,
+        float('inf'):   20,   # $30k+
     }
 
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -152,33 +152,16 @@ class Config:
     SL_MIN_PCT            = 0.5
     TP_SL_RATIO           = 2.5
 
-    # Estratégia simples: SL por ATR e alvo com R:R 1:2.
-    ATR_SL_MULT = 1.5
+    ATR_SL_MULT = 2.0
     ATR_TP_MULT = 3.0
-    MIN_RR = 1.8
-
-    # Indicadores usados pelo motor novo — somente o necessário.
-    EMA_FAST_PERIOD = 50
-    EMA_SLOW_PERIOD = 200
-    RSI_PERIOD = 14
-    ATR_PERIOD = 14
-    ADX_PERIOD = 14
-
-    SIMPLE_MIN_SCORE = 8
-    ADX_MIN_TREND = 18
-    RSI_BUY_MIN = 50
-    RSI_BUY_MAX = 68
-    RSI_SELL_MIN = 32
-    RSI_SELL_MAX = 50
-    ATR_MIN_PCT = 0.02
-    ATR_MAX_PCT = 1.50
-    PULLBACK_ATR_MAX = 1.4
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # SISTEMA DE PESOS PARA CONFLUÊNCIA — INDICADORES ESSENCIAIS
-    # Total máximo: 11 pontos no motor simplificado.
-    # Mantidos: EMA50/EMA200, RSI, ATR, ADX e confirmação H4/D1.
-    # Removidos do sinal ao vivo: MACD, Bollinger, FVG, OB, Sweep, COT e IA.
+    # Total máximo: 16 pontos
+    # Indicadores removidos (redundantes): EMA9/21, Bandas de Bollinger,
+    #   padrão de candle, estrutura e MTF EMA200.
+    # Mantidos: EMA200, ADX, RSI, MACD (base técnica) +
+    #           FVG, OB, Sweep, MTF Aligned (SMC/confluência).
     # ═══════════════════════════════════════════════════════════════════════════════
     CONFLUENCE_WEIGHTS = {
         # ── Base técnica (indicadores principais) ──────────────────
@@ -193,8 +176,8 @@ class Config:
         # ── Multi-timeframe (H4) ───────────────────────────────────
         "mtf_aligned":     2,  # H4 alinhado com H1
     }
-    CONFLUENCE_MAX_SCORE = 11  # soma dos pesos do motor simplificado
-    MIN_CONFLUENCE_WEIGHTED = 8
+    CONFLUENCE_MAX_SCORE = 16  # soma dos pesos acima
+    MIN_CONFLUENCE_WEIGHTED = 8  # score mínimo para gerar sinal (~50% do total)
 
     # Legado — mantido para compatibilidade
     MIN_CONFLUENCE = 5
@@ -204,13 +187,10 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     # Ajustado proporcionalmente ao novo CONFLUENCE_MAX_SCORE = 16
     REGIME_MIN_CONFLUENCE = {
-        "trend": 8,
-        "weak_trend": 9,
-        "mixed_mtf": 9,
-        "wait": 99,
-        "range": 99,
-        "transition": 9,
-        "neutral": 9,
+        "trend": 9,       # ~56% do total (antes 11/21 ≈ 52%)
+        "range": 7,       # ~44% do total (antes  9/21 ≈ 43%)
+        "transition": 8,  # ~50% do total (antes 10/21 ≈ 48%)
+        "neutral": 8,     # ~50% do total (antes 10/21 ≈ 48%)
     }
     REGIME_MIN_RR = {
         "trend": 2.0,
@@ -238,7 +218,7 @@ class Config:
     # CAPITAL E RISCO
     # ═══════════════════════════════════════════════════════════════════════════════
     INITIAL_BALANCE        = float(os.getenv("START_BALANCE", "150"))
-    RISK_PERCENT_PER_TRADE = 1.0
+    RISK_PERCENT_PER_TRADE = 2.0
 
     # ═══════════════════════════════════════════════════════════════════════════════
     # MULTI-CONTA / ESCALA DE CAPITAL / PROTEÇÃO INTELIGENTE
