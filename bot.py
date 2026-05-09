@@ -3,7 +3,9 @@ import requests
 from datetime import datetime
 from config import Config
 from utils import log, fmt, is_jpy_pair, jpy_to_usd, max_leverage
-from risk import calc_trade_plan, contract_size_for, calc_margin
+from risk import calc_trade_plan, contract_size_for, calc_margin, calc_lot_for_risk
+from copytrade import build_route_payload
+from hedgefund import build_hedgefund_budget, hedgefund_snapshot, risk_override
 from db import save_state
 from portfolio import init_accounts, ensure_accounts, choose_account, account_risk_pct, can_trade_account, reserve_margin, release_margin, portfolio_snapshot, portfolio_report_lines, total_equity
 
@@ -162,9 +164,16 @@ class TradingBot:
             log(f"[SIGNAL] {sym}: correlacao — {msg_corr}")
             return False
 
-        lot = float(pend.get("suggested_lot", Config.MIN_LOT) or Config.MIN_LOT)
-        if lot < Config.MIN_LOT:
-            lot = Config.MIN_LOT
+        route = build_route_payload(self, pend)
+        account_id = route.get("account_id", "signal_only")
+        account_name = route.get("account_name", "Signal Desk")
+        base_risk_pct = float(route.get("risk_pct", Config.RISK_PERCENT_PER_TRADE) or Config.RISK_PERCENT_PER_TRADE)
+
+        budget = build_hedgefund_budget(self, signal=pend)
+        risk_pct = risk_override(base_risk_pct, budget)
+        if risk_pct <= 0:
+            log(f"[SIGNAL] {sym}: hedge fund guard bloqueou o trade ({budget.reason})")
+            return False
 
         # ── Spread + Slippage (execução simulada, sem relação com capital) ─────
         entry_simulated = pend["entry"]
@@ -174,9 +183,11 @@ class TradingBot:
             spread_cost = 0.0
             slip_cost = 0.0
             if Config.USE_SPREAD_MODEL:
-                spread_cost = random.uniform(Config.MIN_SPREAD_PIPS, Config.MAX_SPREAD_PIPS) * pf
+                spread_pips = float(getattr(Config, "SPREAD_PIPS", {}).get(sym, 1.0))
+                spread_cost = spread_pips * pf
             if Config.USE_SLIPPAGE_MODEL:
-                slip_cost = random.uniform(0, Config.SLIPPAGE_MAX_PIPS) * pf
+                max_slippage = float(getattr(Config, "SLIPPAGE_PIPS", {}).get(sym, 0.3))
+                slip_cost = random.uniform(0, max_slippage) * pf
             if direction == "BUY":
                 entry_simulated += (spread_cost / 2.0) + slip_cost
             else:
@@ -188,23 +199,54 @@ class TradingBot:
         max_score = float(pend.get("max_score", 0) or 0)
         quality_10 = max(1, min(10, int(round((score / max_score) * 10)))) if max_score > 0 else 1
 
+        effective_leverage = self.get_current_leverage()
+        lot, risk_usd, risk_pct_real = calc_lot_for_risk(
+            sym,
+            entry_simulated,
+            pend["sl"],
+            max(1.0, float(self.balance or 0.0)),
+            risk_pct=risk_pct,
+            atr=pend.get("atr"),
+            atr_mult=float(getattr(Config, "ATR_MULT_FOR_RISK", 2.0)),
+        )
+        lot = max(Config.MIN_LOT, round(float(lot or Config.MIN_LOT), 2))
+        margin_required = calc_margin(sym, entry_simulated, effective_leverage, lot)
+        commission = round(float(pend.get("commission", 0.0) or 0.0), 2)
+
+        if account_id != "signal_only":
+            ok_acc, msg_acc = self.account_can_trade(account_id, margin_required)
+            if not ok_acc:
+                log(f"[SIGNAL] {sym}: conta {account_id} bloqueada — {msg_acc}")
+                return False
+            self.account_reserve(account_id, margin_required)
+
         trade = {
             **pend,
             "entry": entry_simulated,
             "lot": round(lot, 2),
-            "margin_required": 0.0,
-            "commission": 0.0,
+            "margin_required": round(float(margin_required), 2),
+            "commission": commission,
             "opened_at": pend["created_at"],
-            "wallet_before": 0.0,
+            "wallet_before": round(float(self.balance), 2),
             "trailing_activated": False,
-            "effective_leverage": Config.DEFAULT_LEVERAGE,
+            "effective_leverage": effective_leverage,
             "ai_approved": pend.get("ai_approved", True),
             "ai_confidence": pend.get("ai_confidence", 0),
-            "account_id": "signal_only",
-            "account_name": "Signal Desk",
-            "account_risk_pct": 0.0,
+            "account_id": account_id,
+            "account_name": account_name,
+            "account_risk_pct": round(risk_pct, 2),
             "signal_only": True,
+            "copytrade_profile": route.get("profile", "signal_only"),
+            "copytrade_master": route.get("master_account", "signal_only"),
+            "copytrade_followers": route.get("follower_accounts", []),
             "quality_10": quality_10,
+            "hedgefund_mode": budget.mode,
+            "hedgefund_reason": budget.reason,
+            "hedgefund_var_pct": budget.var_95_pct,
+            "hedgefund_cvar_pct": budget.cvar_95_pct,
+            "hedgefund_stress_pct": budget.stress_loss_pct,
+            "hedgefund_risk_pct": round(risk_pct, 2),
+            "hedgefund_recommended_risk_pct": budget.recommended_risk_pct,
         }
 
         # Cooldown do par/direção para evitar spam e melhorar a filtragem.
@@ -262,6 +304,7 @@ class TradingBot:
             "📊 RR: 1:" + str(trade["rr"]) + " | Score: " + str(trade["score"]) + "/" + str(trade["max_score"]),
             "🔄 Regime: " + regime + " | Setup: " + setup,
             "🧮 Qualidade: " + str(trade.get("quality_10", 1)) + "/10",
+            "🏦 Hedge: " + str(trade.get("hedgefund_mode", "balanced")).upper() + " | " + str(trade.get("hedgefund_reason", "OK")),
             "——————————————————",
             kz_str,
             bias_str,
@@ -442,6 +485,7 @@ class TradingBot:
             "quality_10":    trade.get("quality_10", 1),
         })
 
+        account_id = trade.get("account_id", "signal_only")
         if result == "WIN":
             self.wins += 1
             self.consecutive_losses = 0
@@ -454,6 +498,10 @@ class TradingBot:
             if self.consecutive_losses >= Config.MAX_CONSECUTIVE_LOSSES:
                 self.paused_until = time.time() + Config.PAUSE_DURATION
                 self.send("CIRCUIT BREAKER – 3 losses consecutivos. Pausa de 1h.")
+
+        if account_id != "signal_only":
+            self.account_release(account_id, trade.get("margin_required", 0.0), profit, result)
+
         self.active_trades.remove(trade)
 
         total = self.wins + self.losses
@@ -652,6 +700,7 @@ class TradingBot:
         if hasattr(self, "_last_signal_ts") and self._last_signal_ts:
             last_signal_age_s = int(_time.time() - self._last_signal_ts)
 
+        hf = hedgefund_snapshot(self) if hasattr(self, "history") else {}
         return {
             "status": "PAUSADO" if self.is_paused() else "OPERANDO",
             "is_paused": self.is_paused(),
@@ -669,4 +718,5 @@ class TradingBot:
             "weekly_limit_pct": loss_limits.get("weekly", {}).get("limit_pct", 10.0),
             "last_signal_age_s": last_signal_age_s,
             "signal_only_mode": getattr(Config, "BOT_IS_SIGNAL_ONLY", True),
+            "hedgefund": hf,
         }

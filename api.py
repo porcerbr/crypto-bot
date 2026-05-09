@@ -506,6 +506,11 @@ def create_api(bot):
     @require_auth
     def health():
         """Endpoint leve para Railway health-check."""
+        try:
+            from hedgefund import hedgefund_snapshot
+            hf = hedgefund_snapshot(bot)
+        except Exception:
+            hf = {}
         return jsonify({
             "ok":          True,
             "balance":     round(bot.balance, 2),
@@ -513,6 +518,7 @@ def create_api(bot):
             "pending":     len(bot.pending_trades),
             "paused":      bot.is_paused(),
             "signal_only": Config.BOT_IS_SIGNAL_ONLY,
+            "hedgefund":   hf,
         })
 
     @app.route("/api/backtest/upload", methods=["POST"])
@@ -972,6 +978,37 @@ def create_api(bot):
     @require_auth
     def portfolio():
         from portfolio import portfolio_snapshot
-        return jsonify(portfolio_snapshot(getattr(bot, "accounts", {})))
+        try:
+            from hedgefund import hedgefund_snapshot
+            hf = hedgefund_snapshot(bot)
+        except Exception:
+            hf = {}
+        return jsonify({
+            "portfolio": portfolio_snapshot(getattr(bot, "accounts", {})),
+            "hedgefund": hf,
+        })
+
+    @app.route("/api/copytrade")
+    @require_auth
+    def copytrade():
+        try:
+            from copytrade import build_route_payload
+            sample = getattr(bot, "active_trades", [])[-1] if getattr(bot, "active_trades", []) else {}
+            payload = build_route_payload(bot, sample)
+            payload["active_trades"] = len(getattr(bot, "active_trades", []) or [])
+            payload["signal_only"] = bool(getattr(bot, "signal_only", True))
+            return jsonify({"ok": True, "copytrade": payload})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+
+    @app.route("/api/hedgefund")
+    @require_auth
+    def hedgefund():
+        try:
+            from hedgefund import hedgefund_snapshot
+            return jsonify({"ok": True, "hedgefund": hedgefund_snapshot(bot)})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "hedgefund": {}}), 500
 
     return app

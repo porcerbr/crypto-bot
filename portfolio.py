@@ -243,6 +243,28 @@ def account_risk_pct(account_id: str, accounts: dict[str, dict], balance: float,
             q_factor -= 0.05
 
     pct = base * mult * q_factor
+
+    # Ajuste hedge fund: afina risco conforme cauda, drawdown e stress.
+    try:
+        from hedgefund import build_hedgefund_budget, risk_override
+        dummy_bot = type(
+            "_HF",
+            (),
+            {
+                "balance": balance,
+                "history": [],
+                "active_trades": [],
+                "pending_trades": [],
+                "sync_accounts": lambda self=None: accounts,
+                "choose_account_for_signal": lambda self, sig: account_id,
+                "portfolio_snapshot": lambda self=None: {},
+            },
+        )()
+        budget = build_hedgefund_budget(dummy_bot, signal=signal)
+        pct = risk_override(pct, budget)
+    except Exception:
+        pass
+
     floor = getattr(Config, "MIN_RISK_PCT", 0.5)
     cap = getattr(Config, "MAX_RISK_PCT", 2.2)
     return round(max(floor, min(cap, pct)), 2)
