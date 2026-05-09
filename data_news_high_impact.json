@@ -1,0 +1,4 @@
+[
+  {"time": "2026-01-01T00:00:00Z", "symbol": "EURUSD", "impact": "low", "title": "Sample"},
+  {"time": "2026-01-01T00:00:00Z", "symbol": "XAUUSD", "impact": "medium", "title": "Sample"}
+]
