@@ -60,11 +60,11 @@ def _mtf_ok(direction: str, mtf: dict | None) -> bool:
 
     h4 = mtf.get("h4") or {}
     h4_dir = _trend_direction(h4) if h4 else "NEUTRO"
-    daily_bias = mtf.get("daily_bias", "NEUTRO")
+    daily_bias = str(mtf.get("daily_bias", "NEUTRO")).upper()
     opposite_daily = "BAIXA" if direction == "BUY" else "ALTA"
 
-    # H4 deve confirmar ou, no mínimo, o diário não pode estar contra.
-    return h4_dir == direction or daily_bias != opposite_daily
+    # O H4 precisa confirmar; o diário apenas não pode estar contra.
+    return h4_dir == direction and daily_bias != opposite_daily
 
 
 def _market_regime(res: dict, mtf: dict | None = None) -> str:
@@ -87,8 +87,8 @@ def _setup_for_regime(regime: str, direction: str) -> str:
 
 def _rsi_ok(direction: str, rsi: float) -> bool:
     if direction == "BUY":
-        return float(_cfg("RSI_BUY_MIN", 50)) <= rsi <= float(_cfg("RSI_BUY_MAX", 68))
-    return float(_cfg("RSI_SELL_MIN", 32)) <= rsi <= float(_cfg("RSI_SELL_MAX", 50))
+        return float(_cfg("RSI_BUY_MIN", 52)) <= rsi <= float(_cfg("RSI_BUY_MAX", 66))
+    return float(_cfg("RSI_SELL_MIN", 34)) <= rsi <= float(_cfg("RSI_SELL_MAX", 48))
 
 
 def _atr_ok(price: float, atr: float) -> bool:
@@ -139,9 +139,11 @@ def calc_confluence(res: dict, direction: str, mtf: dict | None = None):
     if direction == "BUY":
         add("Preço acima da EMA200", price > ema200, 2)
         add("EMA50 acima da EMA200", ema50 > ema200, 2)
+        add("Preço acima da EMA50", price > ema50, 1)
     else:
         add("Preço abaixo da EMA200", price < ema200, 2)
         add("EMA50 abaixo da EMA200", ema50 < ema200, 2)
+        add("Preço abaixo da EMA50", price < ema50, 1)
 
     add("H4/D1 não estão contra", mtf_ok, 2)
     add("RSI em zona operacional", rsi_ok, 2)
@@ -151,7 +153,7 @@ def calc_confluence(res: dict, direction: str, mtf: dict | None = None):
 
     score = sum(weight for _, ok, weight in weighted if ok)
     total = sum(weight for _, _, weight in weighted)
-    min_score = int(_cfg("SIMPLE_MIN_SCORE", 8))
+    min_score = int(_cfg("SIMPLE_MIN_SCORE", 9))
 
     regime = _market_regime(res, mtf)
     setup_type = _setup_for_regime(regime, direction)
@@ -390,7 +392,7 @@ def get_confluence_snapshot() -> list[dict]:
 
 
 def check_near_signals(bot) -> None:
-    min_score = int(_cfg("SIMPLE_MIN_SCORE", 8))
+    min_score = int(_cfg("SIMPLE_MIN_SCORE", 9))
     near_threshold = max(1, min_score - int(_cfg("PRE_SIGNAL_GAP", 2)))
 
     if not hasattr(bot, "_near_signal_cooldown"):

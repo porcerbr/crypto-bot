@@ -644,18 +644,21 @@ def _regime(res: dict, tf: str) -> str:
 def _signal(
     res: dict,
     tf: str,
-    min_confluence: int = 5,
+    min_confluence: int = 6,
     adx_min: float | None = None,
     pull_range: tuple[float, float] | None = None,
-    weekly_trade_target: float = 3.0,
+    weekly_trade_target: float = 1.5,
     h4_bias: str | None = None,
     require_h4_alignment: bool = False,
 ) -> str | None:
-    adx_min = float(adx_min if adx_min is not None else (15 if tf == "W1" else 18))
-    pull_range = pull_range or ((-1.5, 2.5) if tf == "W1" else (-1.0, 2.0))
-    min_confluence = max(1, min(8, int(min_confluence or 5)))
+    adx_min = float(adx_min if adx_min is not None else (20 if tf == "W1" else 22))
+    pull_range = pull_range or ((-0.8, 1.6) if tf == "H1" else (-1.0, 2.0))
+    min_confluence = max(4, min(9, int(min_confluence or 6)))
 
     regime = _regime(res, tf)
+    if regime not in ("trend", "transition"):
+        return None
+
     price = res["price"]
     d21 = res["dist_e21"]
 
@@ -674,65 +677,42 @@ def _signal(
             return True
         return str(h4_bias).upper() == direction
 
-    # Trend-following: pullback + momentum trigger
-    if regime in ("trend", "transition"):
-        if res["trend_up"]:
-            score = count(
-                res["trend_up"],
-                pull_ok("BUY"),
-                res["macd_cross_up"] or res["rsi_bounce_up"],
-                res["candle_bull"],
-                res["adx"] >= adx_min,
-                res["pdi"] >= res["ndi"],
-                res["rsi"] >= 40,
-                res["rsi"] <= 70,
-            )
-            if score >= min_confluence and pull_ok("BUY") and h4_ok("BUY") and (res["macd_cross_up"] or res["rsi_bounce_up"]):
-                return "BUY"
-
-        if res["trend_dn"]:
-            score = count(
-                res["trend_dn"],
-                pull_ok("SELL"),
-                res["macd_cross_down"] or res["rsi_bounce_dn"],
-                res["candle_bear"],
-                res["adx"] >= adx_min,
-                res["ndi"] >= res["pdi"],
-                res["rsi"] <= 60,
-                res["rsi"] >= 30,
-            )
-            if score >= min_confluence and pull_ok("SELL") and h4_ok("SELL") and (res["macd_cross_down"] or res["rsi_bounce_dn"]):
-                return "SELL"
-
-    # Mean reversion in ranges: use extremes + reversals
-    if regime == "range":
-        buy_score = count(
-            res["rsi"] <= 40,
-            price <= res["ema21"],
+    # Trend-only: não tentamos reverter ranges de forma agressiva no lab profissional.
+    if res["trend_up"] and price > res["ema50"] and price > res["ema200"]:
+        score = count(
+            res["trend_up"],
+            price > res["ema50"],
+            price > res["ema200"],
+            pull_ok("BUY"),
+            (res["macd_cross_up"] or res["rsi_bounce_up"]),
             res["candle_bull"],
-            res["dist_bb_dn"] >= 1.0,
-            res["rsi_bounce_up"],
-            res["macd_cross_up"],
+            res["adx"] >= adx_min,
+            res["pdi"] >= res["ndi"],
+            50 <= res["rsi"] <= 68,
         )
-        if buy_score >= max(3, min_confluence - 1) and h4_ok("BUY"):
+        if score >= min_confluence and pull_ok("BUY") and h4_ok("BUY"):
             return "BUY"
 
-        sell_score = count(
-            res["rsi"] >= 60,
-            price >= res["ema21"],
+    if res["trend_dn"] and price < res["ema50"] and price < res["ema200"]:
+        score = count(
+            res["trend_dn"],
+            price < res["ema50"],
+            price < res["ema200"],
+            pull_ok("SELL"),
+            (res["macd_cross_down"] or res["rsi_bounce_dn"]),
             res["candle_bear"],
-            res["dist_bb_up"] >= 1.0,
-            res["rsi_bounce_dn"],
-            res["macd_cross_down"],
+            res["adx"] >= adx_min,
+            res["ndi"] >= res["pdi"],
+            32 <= res["rsi"] <= 50,
         )
-        if sell_score >= max(3, min_confluence - 1) and h4_ok("SELL"):
+        if score >= min_confluence and pull_ok("SELL") and h4_ok("SELL"):
             return "SELL"
 
-    # Light frequency relief: if target trades/week is high, accept slightly weaker transitions
-    if weekly_trade_target >= 3.0 and regime == "transition":
-        if res["trend_up"] and h4_ok("BUY") and res["macd_cross_up"] and res["adx"] >= max(14.0, adx_min - 2):
+    # Pequena folga apenas em transição bem alinhada.
+    if weekly_trade_target >= 1.5 and regime == "transition":
+        if res["trend_up"] and h4_ok("BUY") and res["macd_cross_up"] and res["adx"] >= max(18.0, adx_min - 2):
             return "BUY"
-        if res["trend_dn"] and h4_ok("SELL") and res["macd_cross_down"] and res["adx"] >= max(14.0, adx_min - 2):
+        if res["trend_dn"] and h4_ok("SELL") and res["macd_cross_down"] and res["adx"] >= max(18.0, adx_min - 2):
             return "SELL"
 
     return None
@@ -915,14 +895,14 @@ def run_backtest(
     bars: list[Bar],
     symbol: str,
     initial_balance: float | None = None,
-    min_confluence: int = 5,
+    min_confluence: int = 6,
     adx_min: float | None = None,
-    atr_sl_mult: float = 1.5,
-    atr_tp_mult: float = 3.0,
+    atr_sl_mult: float = 1.2,
+    atr_tp_mult: float = 2.5,
     pull_range: tuple[float, float] | None = None,
-    risk_pct: float = 2.0,
+    risk_pct: float = 0.5,
     warmup_bars: int | None = None,
-    weekly_trade_target: float = 3.0,
+    weekly_trade_target: float = 1.5,
     max_bars_in_trade: int | None = None,
     indicator_cache: list[dict | None] | None = None,
     prepared_bars: bool = False,

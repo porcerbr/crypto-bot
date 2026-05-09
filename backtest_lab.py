@@ -33,6 +33,7 @@ class LabCandidate:
     params: dict
     metrics: dict
     trades: list[dict] = field(default_factory=list)
+    valid: bool = False
 
 
 @dataclass
@@ -45,6 +46,7 @@ class LabResult:
     tested: int
     ranking: list[LabCandidate]
     yearly_best: list[dict]
+    qualified: int = 0
 
     @property
     def best(self) -> LabCandidate | None:
@@ -63,25 +65,25 @@ def generate_param_grid(grid: str = "quick") -> list[dict]:
 
     if grid == "quick":
         space = {
-            "min_confluence": [1, 2],
-            "adx_min": [16, 20, 24],
-            "atr_sl_mult": [1.2, 1.5],
+            "min_confluence": [6, 7],
+            "adx_min": [22, 26],
+            "atr_sl_mult": [1.0, 1.25],
             "atr_tp_mult": [2.0, 2.5, 3.0],
-            "risk_pct": [0.5, 1.0],
-            "rsi_ob": [66, 70],
-            "rsi_os": [30, 34],
-            "max_bars_in_trade": [16, 24],
+            "risk_pct": [0.25, 0.5],
+            "rsi_ob": [64, 66],
+            "rsi_os": [34, 36],
+            "max_bars_in_trade": [12, 20],
         }
     else:
         space = {
-            "min_confluence": [0, 1, 2, 3],
-            "adx_min": [14, 18, 22, 26],
-            "atr_sl_mult": [1.0, 1.2, 1.5, 1.8, 2.0],
-            "atr_tp_mult": [1.8, 2.2, 2.6, 3.0, 3.5],
-            "risk_pct": [0.25, 0.5, 0.75, 1.0],
-            "rsi_ob": [64, 68, 72],
-            "rsi_os": [28, 32, 36],
-            "max_bars_in_trade": [12, 20, 32, 48],
+            "min_confluence": [6, 7, 8, 9],
+            "adx_min": [20, 22, 24, 28],
+            "atr_sl_mult": [0.9, 1.0, 1.2, 1.5],
+            "atr_tp_mult": [2.0, 2.5, 3.0, 3.5],
+            "risk_pct": [0.25, 0.5, 0.75],
+            "rsi_ob": [62, 64, 66],
+            "rsi_os": [34, 36, 38],
+            "max_bars_in_trade": [10, 16, 24, 32],
         }
 
     keys = list(space.keys())
@@ -140,10 +142,29 @@ def yearly_metrics(trades: list[dict], initial_balance: float) -> list[dict]:
     return rows
 
 
+def candidate_is_robust(metrics: dict, yearly: list[dict]) -> bool:
+    trades = _safe_float(metrics.get("total_trades"))
+    wr = _safe_float(metrics.get("winrate"))
+    pf = _safe_float(metrics.get("profit_factor"))
+    dd = _safe_float(metrics.get("max_drawdown_pct"))
+    ret = _safe_float(metrics.get("return_pct"))
+    if trades < 25:
+        return False
+    if wr < 45:
+        return False
+    if pf < 1.05:
+        return False
+    if dd > 25:
+        return False
+    if ret <= 0:
+        return False
+    losing_years = sum(1 for y in yearly if _safe_float(y.get("total_pnl")) < 0)
+    return losing_years <= max(1, len(yearly) // 3)
+
+
 def score_candidate(metrics: dict, yearly: list[dict]) -> float:
     """
-    Score conservador: premia retorno e profit factor, penaliza drawdown,
-    poucas operações e anos negativos. Não é uma promessa de lucro futuro.
+    Score conservador + penalidade forte para estratégias que não passam no filtro.
     """
     ret = _safe_float(metrics.get("return_pct"))
     dd = _safe_float(metrics.get("max_drawdown_pct"))
@@ -159,19 +180,23 @@ def score_candidate(metrics: dict, yearly: list[dict]) -> float:
     trade_penalty = 0.0
     if trades < 20:
         trade_penalty += (20 - trades) * 2.5
-    if freq > 30:
-        trade_penalty += (freq - 30) * 1.5
+    if freq > 12:
+        trade_penalty += (freq - 12) * 2.0
 
-    return round(
+    score = (
         ret * 0.55
-        + pf * 12.0
-        + wr * 0.10
+        + pf * 14.0
+        + wr * 0.12
         + consistency * 25.0
-        - dd * 1.35
-        - losing_years * 8.0
-        - trade_penalty,
-        4,
+        - dd * 1.60
+        - losing_years * 10.0
+        - trade_penalty
     )
+
+    if not candidate_is_robust(metrics, yearly):
+        score -= 150.0
+
+    return round(score, 4)
 
 
 def run_lab(
@@ -189,6 +214,7 @@ def run_lab(
         raise ValueError("Nenhuma configuração para testar.")
 
     ranking: list[LabCandidate] = []
+    qualified = 0
     for params in params_list:
         result: BacktestResult = run_backtest(
             bars,
@@ -204,10 +230,12 @@ def run_lab(
             rsi_os=float(params.get("rsi_os", 32)),
         )
         yearly = yearly_metrics(result.trades, balance)
+        valid = candidate_is_robust(result.metrics, yearly)
+        qualified += 1 if valid else 0
         score = score_candidate(result.metrics, yearly)
-        ranking.append(LabCandidate(rank=0, score=score, params=dict(params), metrics=result.metrics, trades=result.trades))
+        ranking.append(LabCandidate(rank=0, score=score, params=dict(params), metrics=result.metrics, trades=result.trades, valid=valid))
 
-    ranking.sort(key=lambda c: (c.score, _safe_float(c.metrics.get("return_pct")), -_safe_float(c.metrics.get("max_drawdown_pct"))), reverse=True)
+    ranking.sort(key=lambda c: (c.valid, c.score, _safe_float(c.metrics.get("return_pct")), -_safe_float(c.metrics.get("max_drawdown_pct"))), reverse=True)
     for i, c in enumerate(ranking, start=1):
         c.rank = i
 
@@ -223,6 +251,7 @@ def run_lab(
         tested=len(params_list),
         ranking=ranking[: max(1, int(top))],
         yearly_best=yearly_best,
+        qualified=qualified,
     )
 
 
@@ -275,6 +304,7 @@ def save_lab_result(result: LabResult, out_dir: str | Path = "reports") -> dict[
         "tested": result.tested,
         "best": _flatten_row(result.best) if result.best else None,
         "yearly_best": result.yearly_best,
+        "qualified": result.qualified,
         "warning": "Backtest não garante lucro futuro; use forward test em conta demo antes de operar real.",
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -296,9 +326,9 @@ def format_lab_summary(result: LabResult, max_rows: int = 5) -> str:
     lines = [
         f"🧪 BACKTEST LAB — {result.symbol} {result.timeframe}",
         f"Candles: {result.bars} | Período: {str(result.start)[:10]} → {str(result.end)[:10]}",
-        f"Configurações testadas: {result.tested}",
+        f"Configurações testadas: {result.tested} | Robustas: {result.qualified}",
         "—" * 18,
-        f"🏆 Melhor score: {best.score}",
+        f"🏆 Melhor score: {best.score}{' (robusta)' if getattr(best, 'valid', False) else ' (não robusta)'}",
         f"Trades: {m.get('total_trades', 0)} | WR: {m.get('winrate', 0)}% | PF: {m.get('profit_factor', 0)}",
         f"Retorno: {m.get('return_pct', 0)}% | DD máx.: {m.get('max_drawdown_pct', 0)}% | P&L: ${m.get('total_pnl', 0)}",
         f"Parâmetros: {json.dumps(p, ensure_ascii=False)}",
@@ -315,7 +345,11 @@ def format_lab_summary(result: LabResult, max_rows: int = 5) -> str:
             lines.append(f"… +{len(result.yearly_best) - max_rows} ano(s)")
     else:
         lines.append("Sem trades fechados suficientes para separar por ano.")
-    lines.append("⚠️ Backtest não garante lucro futuro; valide em demo/forward test.")
+
+    if not getattr(best, 'valid', False):
+        lines.append("⚠️ Nenhuma configuração passou no filtro de robustez; não usar este setup ao vivo.")
+    else:
+        lines.append("✅ Configuração passou no filtro de robustez; ainda assim valide em demo/forward test.")
     return "\n".join(lines)
 
 

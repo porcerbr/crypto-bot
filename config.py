@@ -63,7 +63,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════════
     # FALLBACK DE DADOS — Yahoo Finance
     # ═══════════════════════════════════════════════════════════════════════════════
-    USE_YAHOO_FALLBACK  = False     # Railway bloqueia Yahoo Finance — usar stale cache
+    USE_YAHOO_FALLBACK  = True      # fallback de dados para manter a análise ativa quando Twelve Data falhar
     YAHOO_FALLBACK_TTL  = 30 * 60
 
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -164,7 +164,7 @@ class Config:
     ATR_PERIOD = 14
     ADX_PERIOD = 14
 
-    SIMPLE_MIN_SCORE = 8
+    SIMPLE_MIN_SCORE = 9
     ADX_MIN_TREND = 18
     RSI_BUY_MIN = 50
     RSI_BUY_MAX = 68
